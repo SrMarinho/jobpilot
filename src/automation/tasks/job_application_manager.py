@@ -25,7 +25,7 @@ class JobApplicationManager:
         self.max_pages = max_pages
         self.page = JobsSearchPage(driver, url)
         self.evaluator = JobEvaluator(resume_path, preferences=preferences, level=level)
-        self.salary_estimator = SalaryEstimator()
+        self.salary_estimator = SalaryEstimator(resume=self.evaluator.resume)
         self.handler = JobApplicationHandler(driver, resume=self.evaluator.resume)
         self.tracker = AppliedJobsTracker()
         self.applied_count = 0

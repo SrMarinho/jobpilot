@@ -4,9 +4,24 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.support.select import Select
 from selenium.common.exceptions import NoSuchElementException
 from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
 from src.config.settings import logger
+
+# React-aware value setter — triggers React's synthetic onChange
+_REACT_SET_VALUE = """
+(function(el, val) {
+    var setter = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
+    if (setter && setter.set) {
+        setter.set.call(el, val);
+    } else {
+        el.value = val;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+})(arguments[0], arguments[1]);
+"""
 
 
 class JobApplicationHandler:
@@ -21,8 +36,7 @@ class JobApplicationHandler:
             for step in range(self.MAX_STEPS):
                 time.sleep(1.5)
 
-                self._fill_salary_fields(salary_expectation)
-                self._fill_custom_fields()
+                self._fill_all_fields(salary_expectation)
 
                 if self._has_unanswered_required_fields():
                     logger.warning("Required fields not filled — skipping")
@@ -45,6 +59,134 @@ class JobApplicationHandler:
             logger.error(f"Error during Easy Apply: {e}")
             self._close_modal()
             return False
+
+    # ── field filling ────────────────────────────────────────────────────────
+
+    def _fill_all_fields(self, salary: int | None) -> None:
+        """Fill all visible unfilled required fields on the current step."""
+        try:
+            # Text / number inputs
+            inputs = self.driver.find_elements(
+                By.XPATH,
+                "//input[@required and @type!='hidden' and (@type='text' or @type='number' or @type='tel')]"
+            )
+            for inp in inputs:
+                if not inp.is_displayed() or inp.get_attribute("value"):
+                    continue
+                question = self._get_field_label(inp)
+                answer = self._decide_answer(question, salary)
+                if answer:
+                    self._set_input_value(inp, str(answer))
+                    logger.info(f"Filled '{question}' → '{answer}'")
+
+            # Select dropdowns
+            selects = self.driver.find_elements(By.XPATH, "//select[@required]")
+            for sel in selects:
+                if not sel.is_displayed() or sel.get_attribute("value"):
+                    continue
+                question = self._get_field_label(sel)
+                options = [o.text.strip() for o in Select(sel).options if o.get_attribute("value")]
+                if not options:
+                    continue
+                answer = self._ask_claude_choice(question, options)
+                if answer:
+                    try:
+                        Select(sel).select_by_visible_text(answer)
+                        logger.info(f"Selected '{answer}' for '{question}'")
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            logger.debug(f"Error filling fields: {e}")
+
+    def _decide_answer(self, question: str, salary: int | None) -> str | None:
+        """Return salary for salary fields, or ask Claude for everything else."""
+        if not question or question == "(unknown)":
+            return None
+        salary_keywords = ["salário", "salario", "salary", "remuneração", "pretensão", "compensation"]
+        if salary and any(kw in question.lower() for kw in salary_keywords):
+            return str(salary)
+        return self._ask_claude(question)
+
+    def _set_input_value(self, element, value: str) -> None:
+        """Set input value in a React-aware way."""
+        try:
+            self.driver.execute_script(_REACT_SET_VALUE, element, value)
+            time.sleep(0.2)
+        except Exception:
+            try:
+                element.clear()
+                element.send_keys(value)
+            except Exception:
+                pass
+
+    # ── Claude helpers ───────────────────────────────────────────────────────
+
+    def _ask_claude(self, question: str) -> str | None:
+        try:
+            return asyncio.run(self._ask_claude_async(question))
+        except Exception:
+            return None
+
+    def _ask_claude_choice(self, question: str, options: list[str]) -> str | None:
+        try:
+            return asyncio.run(self._ask_claude_choice_async(question, options))
+        except Exception:
+            return None
+
+    async def _ask_claude_async(self, question: str) -> str | None:
+        prompt = f"""Based on this candidate's resume, answer the following job application form question.
+
+RESUME:
+{self.resume}
+
+QUESTION: {question}
+
+Reply with ONLY the answer value — a number, short word, or brief phrase suitable for a form field.
+Do not include explanations or punctuation. Examples:
+- "Há quantos anos com Python?" → 3
+- "Nível de inglês?" → Intermediário
+- "Você mora em São Paulo?" → Não
+- "Anos de experiência com backend?" → 3
+- "Telefone / celular?" → (leave blank, reply with empty string if you don't know)"""
+
+        result = ""
+        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1)):
+            if isinstance(message, ResultMessage):
+                result = message.result.strip()
+
+        return result if result else None
+
+    async def _ask_claude_choice_async(self, question: str, options: list[str]) -> str | None:
+        options_str = "\n".join(f"- {o}" for o in options)
+        prompt = f"""Based on this candidate's resume, choose the best option for this job application form field.
+
+RESUME:
+{self.resume}
+
+QUESTION: {question}
+
+OPTIONS:
+{options_str}
+
+Reply with ONLY the exact text of the chosen option, copied exactly as written above. No explanations."""
+
+        result = ""
+        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1)):
+            if isinstance(message, ResultMessage):
+                result = message.result.strip()
+
+        # Validate the answer is one of the options
+        for opt in options:
+            if opt.lower() == result.lower():
+                return opt
+        # Fuzzy fallback: first option that contains the answer
+        for opt in options:
+            if result.lower() in opt.lower() or opt.lower() in result.lower():
+                return opt
+        return None
+
+    # ── form navigation ──────────────────────────────────────────────────────
 
     def _click_btn(self, btn) -> bool:
         try:
@@ -99,78 +241,7 @@ class JobApplicationHandler:
             pass
         return False
 
-    def _fill_salary_fields(self, salary: int | None) -> None:
-        if not salary:
-            return
-        try:
-            salary_keywords = [
-                "salário", "salario", "salary", "remuneração", "remuneracao",
-                "pretensão", "pretensao", "compensation", "pay"
-            ]
-            inputs = self.driver.find_elements(By.XPATH, "//input[@type='text' or @type='number']")
-            for inp in inputs:
-                if not inp.is_displayed():
-                    continue
-                combined = self._get_field_label(inp).lower()
-                if any(kw in combined for kw in salary_keywords):
-                    if not inp.get_attribute("value"):
-                        inp.clear()
-                        inp.send_keys(str(salary))
-                        logger.info(f"Filled salary field with R${salary:,}")
-        except Exception as e:
-            logger.debug(f"Error filling salary fields: {e}")
-
-    def _fill_custom_fields(self) -> None:
-        """Use Claude to answer custom required text/number questions."""
-        if not self.resume:
-            return
-        try:
-            inputs = self.driver.find_elements(
-                By.XPATH, "//input[@required and (@type='text' or @type='number') and not(@type='hidden')]"
-            )
-            for inp in inputs:
-                if not inp.is_displayed():
-                    continue
-                if inp.get_attribute("value"):
-                    continue
-                question = self._get_field_label(inp)
-                if not question or question == "(unknown)":
-                    continue
-                answer = self._ask_claude(question)
-                if answer:
-                    inp.clear()
-                    inp.send_keys(answer)
-                    logger.info(f"Filled '{question}' → '{answer}'")
-        except Exception as e:
-            logger.debug(f"Error filling custom fields: {e}")
-
-    def _ask_claude(self, question: str) -> str | None:
-        try:
-            return asyncio.run(self._ask_claude_async(question))
-        except Exception:
-            return None
-
-    async def _ask_claude_async(self, question: str) -> str | None:
-        prompt = f"""Based on this candidate's resume, answer the following job application form question.
-
-RESUME:
-{self.resume}
-
-QUESTION: {question}
-
-Reply with ONLY the answer value — a number, short word, or brief phrase suitable for a form field.
-Do not include explanations. Examples:
-- "Há quantos anos com Python?" → 3
-- "Nível de inglês?" → Intermediário
-- "Você mora em São Paulo?" → Não
-- "Anos de experiência com backend?" → 3"""
-
-        result = ""
-        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1)):
-            if isinstance(message, ResultMessage):
-                result = message.result.strip()
-
-        return result if result else None
+    # ── validation ───────────────────────────────────────────────────────────
 
     def _has_unanswered_required_fields(self) -> bool:
         try:
@@ -205,6 +276,8 @@ Do not include explanations. Examples:
             return placeholder or aria_label or "(unknown)"
         except Exception:
             return "(unknown)"
+
+    # ── modal control ─────────────────────────────────────────────────────────
 
     def _close_modal(self) -> None:
         try:
