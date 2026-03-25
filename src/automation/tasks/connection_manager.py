@@ -1,22 +1,24 @@
 from selenium.webdriver.remote.webdriver import WebDriver
 from src.core.use_cases import ConnectionHandler
-from src.automation.pages import RecruiterSearchPage
+from src.automation.pages import PeopleSearchPage
 from src.config.settings import logger
 
-
 class ConnectionManager:
-    def __init__(self, driver: WebDriver):
+    def __init__(self, driver: WebDriver, url: str, max_pages: int = 100):
         self.driver = driver
-        self.searched_page = RecruiterSearchPage(self.driver)
+        self.base_url = url
+        self.max_pages = max_pages
+        self.searched_page = PeopleSearchPage(self.driver, url=self.base_url)
         self.connect_people = ConnectionHandler(self.searched_page)
 
     def run(self):
-        self.searched_page.navigate()
-
-        while True:
+        for page in range(1, self.max_pages + 1):
+            url = self.base_url if page == 1 else f"{self.base_url}&page={page}"
+            logger.info(f"Navegando para página {page}")
+            self.driver.get(url)
             self.connect_people.run()
-            next_page = self.searched_page.btn_next_page()
-            if not next_page:
+
+            if self.connect_people.limit_reached:
                 break
-            next_page.click()
+
         logger.info(f"Número de pessoas conectadas: {self.connect_people.invite_sended}")
