@@ -4,6 +4,7 @@ import src.config.settings as setting
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from src.automation.tasks.connection_manager import ConnectionManager
+from src.automation.tasks.job_application_manager import JobApplicationManager
 from src.config.settings import logger
 from dotenv import load_dotenv
 
@@ -38,9 +39,19 @@ def setup():
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="LinkedIn connection automation")
-    parser.add_argument("--url", type=str, required=True, help="URL da página de busca do LinkedIn")
-    parser.add_argument("--max-pages", type=int, default=100, help="Número máximo de páginas (padrão: 100)")
+    parser = argparse.ArgumentParser(description="LinkedIn RPA")
+    subparsers = parser.add_subparsers(dest="task", required=True)
+
+    connect_parser = subparsers.add_parser("connect", help="Send connection requests")
+    connect_parser.add_argument("--url", type=str, required=True, help="LinkedIn people search URL")
+    connect_parser.add_argument("--max-pages", type=int, default=100, help="Max pages to process (default: 100)")
+
+    apply_parser = subparsers.add_parser("apply", help="Apply to jobs via Easy Apply")
+    apply_parser.add_argument("--url", type=str, required=True, help="LinkedIn jobs search URL")
+    apply_parser.add_argument("--resume", type=str, default="resume.txt", help="Path to resume file (default: resume.txt)")
+    apply_parser.add_argument("--preferences", type=str, default="", help="Job preferences to guide evaluation (e.g. 'prefer backend roles, Python, remote')")
+    apply_parser.add_argument("--max-pages", type=int, default=100, help="Max pages to process (default: 100)")
+
     return parser.parse_args()
 
 
@@ -48,7 +59,10 @@ def main():
     args = parse_args()
     with setup() as driver:
         try:
-            ConnectionManager(driver, url=args.url, max_pages=args.max_pages).run()
+            if args.task == "connect":
+                ConnectionManager(driver, url=args.url, max_pages=args.max_pages).run()
+            elif args.task == "apply":
+                JobApplicationManager(driver, url=args.url, resume_path=args.resume, preferences=args.preferences, max_pages=args.max_pages).run()
             driver.save_screenshot(f"{setting.screenshots_path}.png")
         except Exception as e:
             logger.critical(f"{str(e)}")

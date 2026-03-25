@@ -60,3 +60,4 @@ temp/
 drivers/**/*
 !drivers/
 screenshots/*
+resume.txt
