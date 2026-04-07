@@ -53,7 +53,7 @@ def parse_args():
     apply_parser.add_argument("--url", type=str, required=True, help="Job search URL")
     apply_parser.add_argument("--resume", type=str, default="resume.txt", help="Path to resume file (default: resume.txt)")
     apply_parser.add_argument("--preferences", type=str, default="", help="Job preferences to guide evaluation")
-    apply_parser.add_argument("--level", type=str, default="", help="Required seniority level (junior, pleno, senior)")
+    apply_parser.add_argument("--level", type=str, nargs="+", default=[], help="Accepted seniority levels (e.g. --level junior pleno)")
     apply_parser.add_argument("--max-pages", type=int, default=100, help="Max pages to process (default: 100)")
 
     return parser.parse_args()

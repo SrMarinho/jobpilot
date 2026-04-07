@@ -35,6 +35,10 @@ class AppliedJobsTracker:
 
     def _job_id(self, url: str) -> str:
         """Extract a stable job ID from URL. Tries common patterns, falls back to sanitized URL."""
+        # Glassdoor synthetic: glassdoor://job/NNN
+        match = re.search(r"glassdoor://job/(\d+)", url)
+        if match:
+            return f"gd_{match.group(1)}"
         # LinkedIn: currentJobId=123 or /jobs/view/123
         match = re.search(r"currentJobId=(\d+)|/jobs/view/(\d+)", url)
         if match:

@@ -5,7 +5,7 @@ from src.config.settings import logger
 
 
 class JobEvaluator:
-    def __init__(self, resume_path: str, preferences: str = "", level: str = ""):
+    def __init__(self, resume_path: str, preferences: str = "", level: str | list[str] = ""):
         path = Path(resume_path)
         if path.suffix.lower() == ".pdf":
             from pypdf import PdfReader
@@ -15,7 +15,11 @@ class JobEvaluator:
             with open(resume_path, "r", encoding="utf-8") as f:
                 self.resume = f.read()
         self.preferences = preferences
-        self.level = level
+        # Normalize to list
+        if isinstance(level, str):
+            self.levels = [level] if level else []
+        else:
+            self.levels = [l for l in level if l]
 
     def evaluate(self, title: str, description: str) -> bool:
         return asyncio.run(self._evaluate_async(title, description))
@@ -27,12 +31,14 @@ class JobEvaluator:
             else ""
         )
 
-        level_rule = (
-            f"2. Seniority level: only accept jobs explicitly targeting '{self.level}' level. "
-            f"If the job is clearly for a different level (e.g. Pleno or Sênior when '{self.level}' is requested), answer NO.\n"
-            if self.level
-            else "2. Seniority level: accept any level.\n"
-        )
+        if self.levels:
+            accepted = " or ".join(f"'{l}'" for l in self.levels)
+            level_rule = (
+                f"2. Seniority level: only accept jobs targeting {accepted} level(s). "
+                f"If the job is clearly for a different level, answer NO.\n"
+            )
+        else:
+            level_rule = "2. Seniority level: accept any level.\n"
 
         prompt = f"""You are a career advisor. Evaluate if this job is a good match for the candidate.
 

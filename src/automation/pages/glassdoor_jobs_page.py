@@ -92,6 +92,12 @@ class GlassdoorJobsPage:
         logger.info("No native apply button found")
         return None
 
+    def get_card_job_id(self, card: WebElement) -> str | None:
+        try:
+            return card.get_attribute("data-jobid")
+        except Exception:
+            return None
+
     def next_page_url(self, base_url: str, page_num: int) -> str:
         if page_num == 1:
             return base_url

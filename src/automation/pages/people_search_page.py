@@ -42,37 +42,62 @@ class PeopleSearchPage:
             logger.error("No modal appeared after clicking Connect")
             return None
 
+        # Check for "withdraw invite" modal (PT or EN)
         try:
-            self.driver.find_element(By.CSS_SELECTOR, "button[aria-label='Retirar convite']")
-            logger.info("'Withdraw invite' modal detected, skipping")
+            self.driver.find_element(
+                By.XPATH,
+                "//button[contains(@aria-label,'Retirar convite') or contains(@aria-label,'Withdraw')]"
+            )
+            logger.info("Withdraw invite modal detected, skipping")
             return None
         except Exception:
             pass
 
+        # Look for "Send without note" button (PT or EN)
+        for selector in [
+            "button[aria-label='Enviar sem nota']",
+            "button[aria-label='Send without a note']",
+            "button[aria-label='Send now']",
+        ]:
+            try:
+                btn: WebElement = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if btn.get_attribute("disabled"):
+                    logger.info("Confirm button is disabled")
+                    return None
+                return btn
+            except Exception:
+                pass
+
+        # Fallback: any button with "Send" or "Enviar" in the modal
         try:
-            btn: WebElement = self.driver.find_element(
-                By.CSS_SELECTOR, "button[aria-label='Enviar sem nota']"
+            btn = self.driver.find_element(
+                By.XPATH,
+                "//*[@data-test-modal-container]//button[contains(normalize-space(),'Send') or contains(normalize-space(),'Enviar')]"
             )
-            if btn.get_attribute("disabled"):
-                logger.info("'Send without note' button is disabled")
-                return None
-            return btn
+            if not btn.get_attribute("disabled"):
+                return btn
         except Exception as e:
-            logger.error(f"'Send without note' button not found. {e}")
+            logger.error(f"Confirm button not found. {e}")
         return None
 
     def get_connect_btn(self) -> WebElement | None:
         time.sleep(0.2)
-        try:
-            logger.info("No target found yet, continuing...")
-            btn = WebDriverWait(self.driver, 10).until(
-                lambda d: d.find_element(
-                    By.XPATH,
-                    "//button[contains(@aria-label,'Convidar') and contains(@aria-label,'conectar')]",
-                )
-            )
-            time.sleep(0.2)
-            return btn
-        except Exception:
-            logger.info("No connect buttons found on page")
+        xpaths = [
+            # PT-BR: "Convidar [Nome] para se conectar"
+            "//button[contains(@aria-label,'Convidar') and contains(@aria-label,'conectar')]",
+            # EN: "Connect with [Name]" or "Invite [Name] to connect"
+            "//button[contains(@aria-label,'Connect with') or contains(@aria-label,'Invite') and contains(@aria-label,'connect')]",
+            # Fallback: any visible button with text "Conectar" or "Connect"
+            "//button[normalize-space()='Conectar' or normalize-space()='Connect']",
+        ]
+        for xpath in xpaths:
+            try:
+                btns = self.driver.find_elements(By.XPATH, xpath)
+                for btn in btns:
+                    if btn.is_displayed() and btn.is_enabled():
+                        logger.info(f"Found connect button: '{btn.get_attribute('aria-label') or btn.text}'")
+                        return btn
+            except Exception:
+                pass
+        logger.info("No connect buttons found on page")
         return None

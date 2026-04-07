@@ -19,6 +19,12 @@ def _detect_site(url: str) -> str:
     return "linkedin"
 
 
+def _normalize_url(url: str, site: str) -> str:
+    if site == "linkedin":
+        return url.replace("/jobs/search-results/", "/jobs/search/")
+    return url
+
+
 class JobApplicationManager:
     PAGE_SIZE = 25
 
@@ -35,6 +41,7 @@ class JobApplicationManager:
         self.base_url = url
         self.max_pages = max_pages
         self.site = _detect_site(url)
+        self.base_url = _normalize_url(url, self.site)
 
         if self.site == "indeed":
             self.page = IndeedJobsPage(driver, url)
@@ -93,13 +100,22 @@ class JobApplicationManager:
                     self.page.close_modal()
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", card)
                 time.sleep(0.3)
+
+                # Read job_url BEFORE clicking (card element may go stale after click)
+                if self.site == "glassdoor" and hasattr(self.page, "get_card_job_id"):
+                    job_id = self.page.get_card_job_id(card)
+                    job_url = f"glassdoor://job/{job_id}" if job_id else None
+                else:
+                    job_url = None
+
                 try:
                     card.click()
                 except Exception:
                     self.driver.execute_script("arguments[0].click();", card)
                 time.sleep(1.5)
 
-                job_url = self.driver.current_url
+                if not job_url:
+                    job_url = self.driver.current_url
                 title = self.page.get_job_title()
                 description = self.page.get_job_description()
 
