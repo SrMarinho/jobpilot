@@ -1,7 +1,5 @@
 import os
-import urllib.request
-import urllib.parse
-import json
+import requests
 from src.config.settings import logger
 
 
@@ -13,12 +11,10 @@ def send_telegram(message: str) -> None:
         return
 
     try:
-        payload = json.dumps({"chat_id": chat_id, "text": message, "parse_mode": "HTML"}).encode()
-        req = urllib.request.Request(
+        requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            data=payload,
-            headers={"Content-Type": "application/json"},
+            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
+            timeout=10,
         )
-        urllib.request.urlopen(req, timeout=10)
     except Exception as e:
         logger.warning(f"Telegram notification failed: {e}")
