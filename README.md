@@ -74,6 +74,7 @@ uv run python main.py connect --url "PEOPLE_SEARCH_URL"
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `--url` | Yes | LinkedIn people search URL |
+| `--start-page` | No | Page to start from (default: 1) |
 | `--max-pages` | No | Max pages to process (default: 100) |
 
 ---
