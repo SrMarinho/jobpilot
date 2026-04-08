@@ -1,5 +1,7 @@
 import threading
 import os
+import sys
+import time
 from pathlib import Path
 import requests
 from src.config.settings import logger
@@ -133,7 +135,9 @@ class TelegramBot:
                 "/apply &lt;url&gt; — aplicar vagas\n"
                 "/resume — atualizar currículo\n"
                 "/status — ver se tem tarefa rodando\n"
-                "/stop — parar tarefa atual"
+                "/stop — parar tarefa atual\n"
+                "/ping — verificar se o bot está vivo\n"
+                "/reiniciar — reiniciar o bot"
             )
 
         elif cmd == "/status":
@@ -153,6 +157,15 @@ class TelegramBot:
             self._form = {}
             self._step = "connect_url"
             self.send("🔗 <b>Novo Connect</b>\n\nQual a URL da busca de pessoas?")
+
+        elif cmd == "/ping":
+            start = time.time()
+            self.send(f"🏓 Pong! <code>{(time.time() - start) * 1000:.0f}ms</code>")
+
+        elif cmd == "/reiniciar":
+            self.send("🔄 Reiniciando...")
+            logger.info("Restart requested via Telegram")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
         elif cmd == "/resume":
             self._step = "awaiting_resume"
@@ -320,12 +333,14 @@ class TelegramBot:
             requests.post(
                 f"{self.base_url}/setMyCommands",
                 json={"commands": [
-                    {"command": "connect", "description": "Enviar conexões"},
-                    {"command": "apply",   "description": "Aplicar vagas — /apply <url>"},
-                    {"command": "resume",  "description": "Atualizar currículo"},
-                    {"command": "status",  "description": "Ver se tem tarefa rodando"},
-                    {"command": "stop",    "description": "Parar tarefa atual"},
-                    {"command": "help",    "description": "Ver todos os comandos"},
+                    {"command": "connect",   "description": "Enviar conexões"},
+                    {"command": "apply",     "description": "Aplicar vagas — /apply <url>"},
+                    {"command": "resume",    "description": "Atualizar currículo"},
+                    {"command": "status",    "description": "Ver se tem tarefa rodando"},
+                    {"command": "stop",      "description": "Parar tarefa atual"},
+                    {"command": "ping",      "description": "Verificar se o bot está vivo"},
+                    {"command": "reiniciar", "description": "Reiniciar o bot"},
+                    {"command": "help",      "description": "Ver todos os comandos"},
                 ]},
                 timeout=10,
             )
