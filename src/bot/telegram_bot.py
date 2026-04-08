@@ -88,10 +88,14 @@ class TelegramBot:
             return []
 
     def _handle_document(self, doc: dict) -> None:
+        if self._step != "awaiting_resume":
+            return
+
         name = doc.get("file_name", "")
         if not (name.endswith(".pdf") or name.endswith(".txt")):
             self.send("❌ Envie o currículo em PDF ou TXT.")
             return
+
         try:
             file_info = requests.get(
                 f"{self.base_url}/getFile",
@@ -103,13 +107,14 @@ class TelegramBot:
                 f"https://api.telegram.org/file/bot{self.token}/{file_path}",
                 timeout=30,
             ).content
-            ext = ".pdf" if name.endswith(".pdf") else ".txt"
-            dest = Path(f"resume{ext}")
+            dest = Path(name)
             dest.write_bytes(content)
             self.resume_path = str(dest)
-            self.send(f"✅ Currículo atualizado: <code>{dest.name}</code>")
+            self._step = ""
+            self.send(f"✅ Currículo definido: <code>{dest.name}</code>")
             logger.info(f"Resume updated: {dest}")
         except Exception as e:
+            self._step = ""
             self.send("❌ Erro ao salvar o currículo.")
             logger.error(f"Failed to save resume: {e}")
 
@@ -125,6 +130,7 @@ class TelegramBot:
                 "📋 <b>Comandos disponíveis:</b>\n\n"
                 "/connect — enviar conexões\n"
                 "/apply &lt;url&gt; — aplicar vagas\n"
+                "/resume — atualizar currículo\n"
                 "/status — ver se tem tarefa rodando\n"
                 "/stop — parar tarefa atual"
             )
@@ -146,6 +152,10 @@ class TelegramBot:
             self._form = {}
             self._step = "connect_url"
             self.send("🔗 <b>Novo Connect</b>\n\nQual a URL da busca de pessoas?")
+
+        elif cmd == "/resume":
+            self._step = "awaiting_resume"
+            self.send("📄 Envie o arquivo do currículo (PDF ou TXT).")
 
         elif cmd == "/apply":
             if not arg:
@@ -311,6 +321,7 @@ class TelegramBot:
                 json={"commands": [
                     {"command": "connect", "description": "Enviar conexões"},
                     {"command": "apply",   "description": "Aplicar vagas — /apply <url>"},
+                    {"command": "resume",  "description": "Atualizar currículo"},
                     {"command": "status",  "description": "Ver se tem tarefa rodando"},
                     {"command": "stop",    "description": "Parar tarefa atual"},
                     {"command": "help",    "description": "Ver todos os comandos"},
