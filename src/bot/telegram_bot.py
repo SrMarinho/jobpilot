@@ -1,7 +1,5 @@
 import threading
 import os
-import argparse
-import shlex
 import requests
 from src.config.settings import logger
 
@@ -17,6 +15,10 @@ class TelegramBot:
         self.resume_path = resume_path
         self.stop_event = threading.Event()
         self.current_task: threading.Thread | None = None
+
+        # form state
+        self._form: dict = {}   # current form data being collected
+        self._step: str = ""    # current step name
 
     # ── Telegram API ─────────────────────────────────────────────────────────
 
@@ -72,13 +74,7 @@ class TelegramBot:
                 self.send("Nenhuma tarefa ativa.")
 
         elif cmd == "/connect":
-            if not arg:
-                self.send(
-                    "Uso: /connect &lt;url&gt; [--start-page N] [--max-pages N]\n\n"
-                    "Exemplo:\n<code>/connect https://linkedin.com/... --start-page 5 --max-pages 20</code>"
-                )
-                return
-            self._start_task("connect", arg)
+            self._start_connect_form()
 
         elif cmd == "/apply":
             if not arg:
@@ -89,38 +85,71 @@ class TelegramBot:
         else:
             self.send("Comando não reconhecido. Digite /help.")
 
-    def _parse_connect_args(self, arg: str) -> tuple[str, int, int] | None:
-        parser = argparse.ArgumentParser(exit_on_error=False)
-        parser.add_argument("url")
-        parser.add_argument("--start-page", type=int, default=1)
-        parser.add_argument("--max-pages", type=int, default=100)
-        try:
-            parsed = parser.parse_args(shlex.split(arg))
-            return parsed.url, parsed.start_page, parsed.max_pages
-        except Exception:
-            self.send(
-                "❌ Parâmetros inválidos.\n\n"
-                "Uso: /connect &lt;url&gt; [--start-page N] [--max-pages N]"
-            )
-            return None
+    # ── Form (step-by-step) ───────────────────────────────────────────────────
+
+    def _start_connect_form(self) -> None:
+        self._form = {}
+        self._step = "connect_url"
+        self.send("🔗 <b>Novo Connect</b>\n\nQual a URL da busca de pessoas?")
+
+    def _handle_form(self, text: str) -> None:
+        if text.startswith("/"):
+            self._form = {}
+            self._step = ""
+            self._handle(text)
+            return
+
+        if self._step == "connect_url":
+            self._form["url"] = text.strip()
+            self._step = "connect_start_page"
+            self.send("A partir de qual página? <i>(padrão: 1 — responda com o número ou <b>pular</b>)</i>")
+
+        elif self._step == "connect_start_page":
+            if text.strip().lower() == "pular":
+                self._form["start_page"] = 1
+            else:
+                try:
+                    self._form["start_page"] = int(text.strip())
+                except ValueError:
+                    self.send("❌ Digite um número ou <b>pular</b>.")
+                    return
+            self._step = "connect_max_pages"
+            self.send("Máximo de páginas? <i>(padrão: 100 — responda com o número ou <b>pular</b>)</i>")
+
+        elif self._step == "connect_max_pages":
+            if text.strip().lower() == "pular":
+                self._form["max_pages"] = 100
+            else:
+                try:
+                    self._form["max_pages"] = int(text.strip())
+                except ValueError:
+                    self.send("❌ Digite um número ou <b>pular</b>.")
+                    return
+            self._step = ""
+            self._launch_connect()
+
+    def _launch_connect(self) -> None:
+        if self.current_task and self.current_task.is_alive():
+            self.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+            return
+        url = self._form["url"]
+        start_page = self._form["start_page"]
+        max_pages = self._form["max_pages"]
+        self._form = {}
+        self.stop_event.clear()
+        self.send(f"🔗 Iniciando conexões a partir da página {start_page} (máx: {max_pages})...")
+        self.current_task = threading.Thread(
+            target=self._run_connect, args=(url, start_page, max_pages), daemon=True
+        )
+        self.current_task.start()
 
     def _start_task(self, task: str, arg: str) -> None:
         if self.current_task and self.current_task.is_alive():
             self.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
             return
         self.stop_event.clear()
-        if task == "connect":
-            result = self._parse_connect_args(arg)
-            if not result:
-                return
-            url, start_page, max_pages = result
-            self.send(f"🔗 Iniciando conexões a partir da página {start_page}...")
-            self.current_task = threading.Thread(
-                target=self._run_connect, args=(url, start_page, max_pages), daemon=True
-            )
-        else:
-            self.send("📋 Iniciando candidaturas...")
-            self.current_task = threading.Thread(target=self._run_apply, args=(arg,), daemon=True)
+        self.send("📋 Iniciando candidaturas...")
+        self.current_task = threading.Thread(target=self._run_apply, args=(arg,), daemon=True)
         self.current_task.start()
 
     # ── Task runners ──────────────────────────────────────────────────────────
@@ -193,5 +222,7 @@ class TelegramBot:
                 text = msg.get("text", "")
                 if chat_id != self.admin_id:
                     continue
-                if text.startswith("/"):
+                if self._step:
+                    self._handle_form(text)
+                elif text.startswith("/"):
                     self._handle(text)
