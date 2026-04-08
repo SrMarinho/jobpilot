@@ -347,7 +347,21 @@ class TelegramBot:
         except Exception as e:
             logger.warning(f"Failed to register commands: {e}")
 
+    def _flush_pending_updates(self) -> None:
+        """Discard all updates that arrived before this startup."""
+        try:
+            resp = requests.get(
+                f"{self.base_url}/getUpdates",
+                params={"offset": -1, "timeout": 0},
+                timeout=10,
+            ).json().get("result", [])
+            if resp:
+                self.offset = resp[-1]["update_id"] + 1
+        except Exception:
+            pass
+
     def run(self) -> None:
+        self._flush_pending_updates()
         self._register_commands()
         self.send("🤖 <b>JobPilot online!</b> Digite /help para ver os comandos.")
         logger.info("Telegram bot polling started")
