@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from src.config.settings import logger
+from src.utils.telegram import send_telegram
 
 APPLIED_JOBS_FILE = Path("applied_jobs.json")
 REJECTED_JOBS_FILE = Path("rejected_jobs.json")
@@ -69,6 +70,13 @@ class AppliedJobsTracker:
         }
         self._save_applied()
         logger.info(f"Saved application: '{title}' (id={job_id})")
+
+        salary_line = f"\n💰 Pretensão: R$ {salary:,.0f}".replace(",", ".") if salary else ""
+        send_telegram(
+            f"✅ <b>Candidatura enviada!</b>\n"
+            f"📋 {title}{salary_line}\n"
+            f"🔗 <a href='{job_url}'>Ver vaga</a>"
+        )
 
     def mark_rejected(self, job_url: str, title: str, reason: str = ""):
         job_id = self._job_id(job_url)
