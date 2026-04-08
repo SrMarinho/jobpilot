@@ -97,6 +97,9 @@ class JobApplicationManager:
     def _process_jobs(self, job_cards):
         count = len(job_cards)
         for i in range(count):
+            if self.stop_event.is_set():
+                logger.info("Stop requested, halting job processing")
+                return
             try:
                 cards = self.page.get_job_cards()
                 if i >= len(cards):

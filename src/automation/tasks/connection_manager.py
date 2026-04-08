@@ -14,7 +14,7 @@ class ConnectionManager:
         self.start_page = start_page
         self.stop_event = stop_event or threading.Event()
         self.searched_page = PeopleSearchPage(self.driver, url=self.base_url)
-        self.connect_people = ConnectionHandler(self.searched_page)
+        self.connect_people = ConnectionHandler(self.searched_page, stop_event=self.stop_event)
 
     def run(self):
         for page in range(self.start_page, self.max_pages + 1):
