@@ -100,14 +100,16 @@ class TelegramBot:
     def _run_connect(self, url: str) -> None:
         from src.automation.tasks.connection_manager import ConnectionManager
         driver = self.driver_factory()
+        manager = None
         try:
             manager = ConnectionManager(driver, url=url, stop_event=self.stop_event)
             manager.run()
-            self.send(f"✅ Conexões concluídas! Total enviado: {manager.connect_people.invite_sended}")
         except Exception as e:
-            self.send(f"❌ Erro: {e}")
+            self.send("❌ Erro ao executar conexões.")
             logger.error(f"connect task error: {e}")
         finally:
+            sent = manager.connect_people.invite_sended if manager else 0
+            self.send(f"🔗 Conexões finalizadas! Total enviado: {sent}")
             try:
                 driver.quit()
             except Exception:
