@@ -47,6 +47,7 @@ def parse_args():
 
     connect_parser = subparsers.add_parser("connect", help="Send connection requests")
     connect_parser.add_argument("--url", type=str, required=True, help="LinkedIn people search URL")
+    connect_parser.add_argument("--start-page", type=int, default=1, help="Page to start from (default: 1)")
     connect_parser.add_argument("--max-pages", type=int, default=100, help="Max pages to process (default: 100)")
 
     apply_parser = subparsers.add_parser("apply", help="Apply to jobs via Easy Apply")
@@ -87,7 +88,7 @@ def main():
     driver = setup()
     try:
         if args.task == "connect":
-            ConnectionManager(driver, url=args.url, max_pages=args.max_pages).run()
+            ConnectionManager(driver, url=args.url, max_pages=args.max_pages, start_page=args.start_page).run()
         elif args.task == "apply":
             JobApplicationManager(driver, url=args.url, resume_path=args.resume, preferences=args.preferences, level=args.level, max_pages=args.max_pages).run()
         try:

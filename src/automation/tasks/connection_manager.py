@@ -1,21 +1,29 @@
+import time
+import random
 from selenium.webdriver.remote.webdriver import WebDriver
 from src.core.use_cases import ConnectionHandler
 from src.automation.pages import PeopleSearchPage
 from src.config.settings import logger
 
 class ConnectionManager:
-    def __init__(self, driver: WebDriver, url: str, max_pages: int = 100):
+    def __init__(self, driver: WebDriver, url: str, max_pages: int = 100, start_page: int = 1):
         self.driver = driver
         self.base_url = url
         self.max_pages = max_pages
+        self.start_page = start_page
         self.searched_page = PeopleSearchPage(self.driver, url=self.base_url)
         self.connect_people = ConnectionHandler(self.searched_page)
 
     def run(self):
-        for page in range(1, self.max_pages + 1):
+        for page in range(self.start_page, self.max_pages + 1):
             url = self.base_url if page == 1 else f"{self.base_url}&page={page}"
             logger.info(f"Navigating to page {page}")
             self.driver.get(url)
+
+            wait = random.uniform(3, 6)
+            logger.info(f"Waiting {wait:.1f}s before processing page {page}...")
+            time.sleep(wait)
+
             self.connect_people.run()
 
             if self.connect_people.limit_reached:

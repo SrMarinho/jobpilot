@@ -11,7 +11,9 @@ class ConnectionHandler:
         self.limit_reached = False
 
     def run(self):
-        while btn_connect := self.page.get_connect_btn():
+        skip_labels: set[str] = set()
+        while btn_connect := self.page.get_connect_btn(skip_labels=skip_labels):
+            label = btn_connect.get_attribute("aria-label") or btn_connect.text
             try:
                 btn_connect.click()
             except ElementClickInterceptedException:
@@ -28,6 +30,8 @@ class ConnectionHandler:
                     logger.warning("LinkedIn invite limit reached. Stopping.")
                     self.limit_reached = True
                     return
+                logger.info(f"Skipping person (disabled or requires message): '{label}'")
+                skip_labels.add(label)
                 self.page.close_modal()
                 continue
 

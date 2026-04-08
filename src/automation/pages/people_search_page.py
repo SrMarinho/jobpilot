@@ -80,8 +80,17 @@ class PeopleSearchPage:
             logger.error(f"Confirm button not found. {e}")
         return None
 
-    def get_connect_btn(self) -> WebElement | None:
+    def requires_message(self) -> bool:
+        """Returns True if the open modal requires a message to connect."""
+        try:
+            self.driver.find_element(By.CSS_SELECTOR, "[data-test-modal-container] textarea")
+            return True
+        except Exception:
+            return False
+
+    def get_connect_btn(self, skip_labels: set[str] | None = None) -> WebElement | None:
         time.sleep(0.2)
+        skip_labels = skip_labels or set()
         xpaths = [
             # PT-BR: "Convidar [Nome] para se conectar"
             "//button[contains(@aria-label,'Convidar') and contains(@aria-label,'conectar')]",
@@ -94,9 +103,14 @@ class PeopleSearchPage:
             try:
                 btns = self.driver.find_elements(By.XPATH, xpath)
                 for btn in btns:
-                    if btn.is_displayed() and btn.is_enabled():
-                        logger.info(f"Found connect button: '{btn.get_attribute('aria-label') or btn.text}'")
-                        return btn
+                    if not btn.is_displayed() or not btn.is_enabled():
+                        continue
+                    label = btn.get_attribute("aria-label") or btn.text
+                    if label in skip_labels:
+                        logger.info(f"Skipping already-tried button: '{label}'")
+                        continue
+                    logger.info(f"Found connect button: '{label}'")
+                    return btn
             except Exception:
                 pass
         logger.info("No connect buttons found on page")
