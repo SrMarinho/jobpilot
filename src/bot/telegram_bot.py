@@ -7,7 +7,8 @@ from src.config.settings import logger
 class TelegramBot:
     def __init__(self, driver_factory, resume_path: str = "resume.txt"):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+        self.chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))       # canal — notificações
+        self.admin_id = str(os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID")))  # usuário — comandos
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset = 0
         self.driver_factory = driver_factory
@@ -17,11 +18,12 @@ class TelegramBot:
 
     # ── Telegram API ─────────────────────────────────────────────────────────
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, to_admin: bool = True) -> None:
+        chat = self.admin_id if to_admin else self.chat_id
         try:
             requests.post(
                 f"{self.base_url}/sendMessage",
-                json={"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"},
+                json={"chat_id": chat, "text": text, "parse_mode": "HTML"},
                 timeout=10,
             )
         except Exception as e:
@@ -132,7 +134,24 @@ class TelegramBot:
 
     # ── Polling loop ──────────────────────────────────────────────────────────
 
+    def _register_commands(self) -> None:
+        try:
+            requests.post(
+                f"{self.base_url}/setMyCommands",
+                json={"commands": [
+                    {"command": "connect", "description": "Enviar conexões — /connect <url>"},
+                    {"command": "apply",   "description": "Aplicar vagas — /apply <url>"},
+                    {"command": "status",  "description": "Ver se tem tarefa rodando"},
+                    {"command": "stop",    "description": "Parar tarefa atual"},
+                    {"command": "help",    "description": "Ver todos os comandos"},
+                ]},
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to register commands: {e}")
+
     def run(self) -> None:
+        self._register_commands()
         self.send("🤖 <b>JobPilot online!</b> Digite /help para ver os comandos.")
         logger.info("Telegram bot polling started")
         while True:
@@ -142,7 +161,7 @@ class TelegramBot:
                 msg = update.get("message", {})
                 chat_id = str(msg.get("chat", {}).get("id", ""))
                 text = msg.get("text", "")
-                if chat_id != self.chat_id:
+                if chat_id != self.admin_id:
                     continue
                 if text.startswith("/"):
                     self._handle(text)
