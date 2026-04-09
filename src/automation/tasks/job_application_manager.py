@@ -112,6 +112,8 @@ class JobApplicationManager:
                 if self.site == "glassdoor" and hasattr(self.page, "get_card_job_id"):
                     job_id = self.page.get_card_job_id(card)
                     job_url = f"glassdoor://job/{job_id}" if job_id else None
+                elif self.site == "linkedin" and hasattr(self.page, "get_card_job_url"):
+                    job_url = self.page.get_card_job_url(card)
                 else:
                     job_url = None
 

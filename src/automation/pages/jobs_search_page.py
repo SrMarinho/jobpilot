@@ -21,6 +21,21 @@ class JobsSearchPage:
             logger.info("No job cards found on page")
             return []
 
+    def get_card_job_url(self, card: WebElement) -> str | None:
+        """Extract the job URL from the card element before clicking it."""
+        try:
+            # Try data-job-id attribute first (most reliable)
+            job_id = card.get_attribute("data-job-id")
+            if job_id:
+                return f"https://www.linkedin.com/jobs/view/{job_id}/"
+            # Fallback: href from first anchor inside the card
+            anchor = card.find_element(By.CSS_SELECTOR, "a[href*='/jobs/view/']")
+            href = anchor.get_attribute("href") or ""
+            # Strip query params to keep the URL stable
+            return href.split("?")[0] if href else None
+        except Exception:
+            return None
+
     def get_job_title(self) -> str:
         try:
             el = WebDriverWait(self.driver, 10).until(
