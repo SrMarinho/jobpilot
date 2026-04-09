@@ -1,3 +1,4 @@
+import json
 import asyncio
 import time
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -8,6 +9,9 @@ from selenium.webdriver.support.select import Select
 from selenium.common.exceptions import NoSuchElementException
 from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
 from src.config.settings import logger
+
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+SALARY_KEYWORDS = ["salário", "salario", "salary", "remuneração", "pretensão", "compensation"]
 
 # React-aware value setter — triggers React's synthetic onChange
 _REACT_SET_VALUE = """
@@ -63,9 +67,10 @@ class JobApplicationHandler:
     # ── field filling ────────────────────────────────────────────────────────
 
     def _fill_all_fields(self, salary: int | None) -> None:
-        """Fill all visible unfilled required fields on the current step."""
+        """Collect all unfilled required fields and answer them in a single Claude call."""
         try:
-            # Text / number inputs
+            fields = []  # list of {"el": element, "question": str, "type": "text"|"choice", "options": list}
+
             inputs = self.driver.find_elements(
                 By.XPATH,
                 "//input[@required and @type!='hidden' and (@type='text' or @type='number' or @type='tel')]"
@@ -74,42 +79,92 @@ class JobApplicationHandler:
                 if not inp.is_displayed() or inp.get_attribute("value"):
                     continue
                 question = self._get_field_label(inp)
-                answer = self._decide_answer(question, salary)
-                if answer:
-                    self._set_input_value(inp, str(answer))
-                    logger.info(f"Filled '{question}' → '{answer}'")
+                if not question or question == "(unknown)":
+                    continue
+                if salary and any(kw in question.lower() for kw in SALARY_KEYWORDS):
+                    self._set_input_value(inp, str(salary))
+                    logger.info(f"Filled '{question}' → '{salary}' (salary)")
+                    continue
+                fields.append({"el": inp, "question": question, "type": "text", "options": []})
 
-            # Select dropdowns
             selects = self.driver.find_elements(By.XPATH, "//select[@required]")
             for sel in selects:
                 if not sel.is_displayed() or sel.get_attribute("value"):
                     continue
                 question = self._get_field_label(sel)
+                if not question or question == "(unknown)":
+                    continue
                 options = [o.text.strip() for o in Select(sel).options if o.get_attribute("value")]
                 if not options:
                     continue
-                answer = self._ask_claude_choice(question, options)
-                if answer:
+                fields.append({"el": sel, "question": question, "type": "choice", "options": options})
+
+            if not fields:
+                return
+
+            answers = asyncio.run(self._batch_answer(fields))
+
+            for i, field in enumerate(fields):
+                answer = answers.get(str(i))
+                if not answer:
+                    continue
+                if field["type"] == "text":
+                    self._set_input_value(field["el"], str(answer))
+                    logger.info(f"Filled '{field['question']}' → '{answer}'")
+                else:
                     try:
-                        Select(sel).select_by_visible_text(answer)
-                        logger.info(f"Selected '{answer}' for '{question}'")
+                        Select(field["el"]).select_by_visible_text(answer)
+                        logger.info(f"Selected '{answer}' for '{field['question']}'")
                     except Exception:
-                        pass
+                        for opt in field["options"]:
+                            if answer.lower() in opt.lower() or opt.lower() in answer.lower():
+                                try:
+                                    Select(field["el"]).select_by_visible_text(opt)
+                                    logger.info(f"Selected '{opt}' (fuzzy) for '{field['question']}'")
+                                except Exception:
+                                    pass
+                                break
 
         except Exception as e:
             logger.debug(f"Error filling fields: {e}")
 
-    def _decide_answer(self, question: str, salary: int | None) -> str | None:
-        """Return salary for salary fields, or ask Claude for everything else."""
-        if not question or question == "(unknown)":
-            return None
-        salary_keywords = ["salário", "salario", "salary", "remuneração", "pretensão", "compensation"]
-        if salary and any(kw in question.lower() for kw in salary_keywords):
-            return str(salary)
-        return self._ask_claude(question)
+    async def _batch_answer(self, fields: list[dict]) -> dict:
+        """Send all form questions to Claude in one call. Returns {index: answer}."""
+        questions_str = ""
+        for i, f in enumerate(fields):
+            if f["type"] == "text":
+                questions_str += f"{i}. {f['question']} (text)\n"
+            else:
+                opts = ", ".join(f["options"])
+                questions_str += f"{i}. {f['question']} (choose from: {opts})\n"
+
+        prompt = f"""Based on this candidate's resume, answer ALL the following job application form questions.
+
+RESUME:
+{self.resume}
+
+QUESTIONS:
+{questions_str}
+Reply with ONLY a JSON object mapping each question number (as string) to its answer.
+For text fields: reply with a short value (number, word, or brief phrase).
+For choice fields: reply with the exact text of the chosen option.
+Example: {{"0": "3", "1": "Intermediário", "2": "Não"}}"""
+
+        result = ""
+        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1, model=HAIKU_MODEL)):
+            if isinstance(message, ResultMessage):
+                result = message.result.strip()
+
+        try:
+            import re
+            match = re.search(r"\{.*\}", result, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+        except Exception:
+            pass
+        return {}
 
     def _set_input_value(self, element, value: str) -> None:
-        """Set input value in a React-aware way."""
         try:
             self.driver.execute_script(_REACT_SET_VALUE, element, value)
             time.sleep(0.2)
@@ -119,72 +174,6 @@ class JobApplicationHandler:
                 element.send_keys(value)
             except Exception:
                 pass
-
-    # ── Claude helpers ───────────────────────────────────────────────────────
-
-    def _ask_claude(self, question: str) -> str | None:
-        try:
-            return asyncio.run(self._ask_claude_async(question))
-        except Exception:
-            return None
-
-    def _ask_claude_choice(self, question: str, options: list[str]) -> str | None:
-        try:
-            return asyncio.run(self._ask_claude_choice_async(question, options))
-        except Exception:
-            return None
-
-    async def _ask_claude_async(self, question: str) -> str | None:
-        prompt = f"""Based on this candidate's resume, answer the following job application form question.
-
-RESUME:
-{self.resume}
-
-QUESTION: {question}
-
-Reply with ONLY the answer value — a number, short word, or brief phrase suitable for a form field.
-Do not include explanations or punctuation. Examples:
-- "Há quantos anos com Python?" → 3
-- "Nível de inglês?" → Intermediário
-- "Você mora em São Paulo?" → Não
-- "Anos de experiência com backend?" → 3
-- "Telefone / celular?" → (leave blank, reply with empty string if you don't know)"""
-
-        result = ""
-        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1)):
-            if isinstance(message, ResultMessage):
-                result = message.result.strip()
-
-        return result if result else None
-
-    async def _ask_claude_choice_async(self, question: str, options: list[str]) -> str | None:
-        options_str = "\n".join(f"- {o}" for o in options)
-        prompt = f"""Based on this candidate's resume, choose the best option for this job application form field.
-
-RESUME:
-{self.resume}
-
-QUESTION: {question}
-
-OPTIONS:
-{options_str}
-
-Reply with ONLY the exact text of the chosen option, copied exactly as written above. No explanations."""
-
-        result = ""
-        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1)):
-            if isinstance(message, ResultMessage):
-                result = message.result.strip()
-
-        # Validate the answer is one of the options
-        for opt in options:
-            if opt.lower() == result.lower():
-                return opt
-        # Fuzzy fallback: first option that contains the answer
-        for opt in options:
-            if result.lower() in opt.lower() or opt.lower() in result.lower():
-                return opt
-        return None
 
     # ── form navigation ──────────────────────────────────────────────────────
 
