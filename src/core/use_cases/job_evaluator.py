@@ -64,11 +64,14 @@ Market reference (monthly gross, BRL):
 - Pleno Dev: CLT R$6.000–10.000 | PJ R$8.000–14.000
 - Sênior Dev: CLT R$10.000–18.000 | PJ R$14.000–25.000
 
-Answer format:
-- If match: YES|<salary_integer>|<one_line_reason>
-  Example: YES|5000|Candidate has Python/FastAPI experience and role is remote
-- If no match: NO|<one_line_reason>
-  Example: NO|Job description is in English"""
+IMPORTANT: Reply with ONLY one line in this exact format, no markdown, no extra text:
+YES|<salary_integer>|<reason>
+or
+NO|<reason>
+
+Examples:
+YES|5000|Candidate has Python/FastAPI experience and role is remote
+NO|Job description is in English"""
 
         result = ""
         async for message in query(
@@ -78,16 +81,24 @@ Answer format:
             if isinstance(message, ResultMessage):
                 result = message.result.strip()
 
-        parts = result.split("|")
-        is_match = parts[0].strip().upper() == "YES"
-
+        # Robust parsing: find the first line that starts with YES or NO
+        is_match = False
         salary = None
-        if is_match and len(parts) >= 2:
-            try:
-                salary = int(re.sub(r"\D", "", parts[1]))
-            except Exception:
-                salary = None
+        reason = result
 
-        reason = parts[-1].strip() if len(parts) >= 2 else result
-        logger.info(f"Evaluation: {parts[0].strip().upper()} | salary={salary} | {reason}")
+        for line in result.splitlines():
+            line = line.strip()
+            upper = line.upper()
+            if upper.startswith("YES") or upper.startswith("NO"):
+                parts = line.split("|")
+                is_match = parts[0].strip().upper() == "YES"
+                if is_match and len(parts) >= 2:
+                    try:
+                        salary = int(re.sub(r"\D", "", parts[1]))
+                    except Exception:
+                        salary = None
+                reason = parts[-1].strip() if len(parts) >= 2 else line
+                break
+
+        logger.info(f"Evaluation: {'YES' if is_match else 'NO'} | salary={salary} | {reason}")
         return is_match, salary

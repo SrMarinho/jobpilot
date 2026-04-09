@@ -22,9 +22,12 @@ def load_last_urls() -> dict:
     return {}
 
 
-def save_last_url(task: str, url: str, page: int = 1):
+def save_last_url(task: str, url: str, page: int = 1, extra: dict | None = None):
     urls = load_last_urls()
-    urls[task] = {"url": url, "page": page}
+    entry = {"url": url, "page": page}
+    if extra:
+        entry.update(extra)
+    urls[task] = entry
     with open(LAST_URLS_FILE, "w") as f:
         json.dump(urls, f, indent=2)
 
@@ -153,8 +156,16 @@ def main():
     start_page = args.start_page if hasattr(args, "start_page") and args.start_page is not None else 1
     resume = getattr(args, "resume", False)
 
+    # apply-specific persisted options
+    level = getattr(args, "level", []) or saved.get("level", [])
+    preferences = getattr(args, "preferences", "") or saved.get("preferences", "")
+    resume_path = getattr(args, "resume", "resume.txt") or saved.get("resume", "resume.txt")
+
     if url:
-        save_last_url(args.task, url, page=1)
+        extra = {}
+        if args.task == "apply":
+            extra = {"level": level, "preferences": preferences, "resume": resume_path}
+        save_last_url(args.task, url, page=1, extra=extra or None)
     else:
         url = saved.get("url")
         if not url:
@@ -165,6 +176,11 @@ def main():
             print(f"Resuming '{args.task}' from page {start_page}: {url}")
         else:
             print(f"Using last saved URL for '{args.task}': {url}")
+        if args.task == "apply":
+            if level:
+                print(f"Level filter: {level}")
+            if preferences:
+                print(f"Preferences: {preferences}")
 
     if args.task == "connect" and is_already_ran_today():
         logger.info("Already ran today. Skipping.")
@@ -189,7 +205,7 @@ def main():
                 save_weekly_limit_reached()
                 logger.info("Weekly limit reached — saved. Will skip until next week.")
         elif args.task == "apply":
-            JobApplicationManager(driver, url=url, resume_path=args.resume, preferences=args.preferences, level=args.level, max_pages=args.max_pages).run()
+            JobApplicationManager(driver, url=url, resume_path=resume_path, preferences=preferences, level=level, max_pages=args.max_pages).run()
         try:
             driver.save_screenshot(f"{setting.screenshots_path}.png")
         except Exception:
