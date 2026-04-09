@@ -87,14 +87,21 @@ class JobApplicationHandler:
                     continue
                 fields.append({"el": inp, "question": question, "type": "text", "options": []})
 
-            selects = self.driver.find_elements(By.XPATH, "//select[@required]")
+            # Find all visible selects — with or without @required
+            selects = self.driver.find_elements(By.XPATH, "//select")
             for sel in selects:
-                if not sel.is_displayed() or sel.get_attribute("value"):
+                if not sel.is_displayed():
+                    continue
+                current_val = sel.get_attribute("value") or ""
+                options_els = Select(sel).options
+                # Skip if already has a meaningful selection (not the placeholder/first empty option)
+                non_empty_vals = [o.get_attribute("value") for o in options_els if o.get_attribute("value")]
+                if current_val and current_val in non_empty_vals:
                     continue
                 question = self._get_field_label(sel)
                 if not question or question == "(unknown)":
                     continue
-                options = [o.text.strip() for o in Select(sel).options if o.get_attribute("value")]
+                options = [o.text.strip() for o in options_els if o.get_attribute("value")]
                 if not options:
                     continue
                 fields.append({"el": sel, "question": question, "type": "choice", "options": options})
@@ -112,18 +119,15 @@ class JobApplicationHandler:
                     self._set_input_value(field["el"], str(answer))
                     logger.info(f"Filled '{field['question']}' → '{answer}'")
                 else:
-                    try:
-                        Select(field["el"]).select_by_visible_text(answer)
-                        logger.info(f"Selected '{answer}' for '{field['question']}'")
-                    except Exception:
-                        for opt in field["options"]:
-                            if answer.lower() in opt.lower() or opt.lower() in answer.lower():
-                                try:
-                                    Select(field["el"]).select_by_visible_text(opt)
-                                    logger.info(f"Selected '{opt}' (fuzzy) for '{field['question']}'")
-                                except Exception:
-                                    pass
-                                break
+                    matched = self._match_option(answer, field["options"])
+                    if matched:
+                        try:
+                            Select(field["el"]).select_by_visible_text(matched)
+                            logger.info(f"Selected '{matched}' for '{field['question']}'")
+                        except Exception as e:
+                            logger.warning(f"Failed to select '{matched}' for '{field['question']}': {e}")
+                    else:
+                        logger.warning(f"No option matched '{answer}' for '{field['question']}' — options: {field['options']}")
 
         except Exception as e:
             logger.debug(f"Error filling fields: {e}")
@@ -163,6 +167,36 @@ Example: {{"0": "3", "1": "Intermediário", "2": "Não"}}"""
         except Exception:
             pass
         return {}
+
+    def _match_option(self, answer: str, options: list[str]) -> str | None:
+        """Find the best matching option for a given answer string."""
+        import unicodedata
+
+        def normalize(s: str) -> str:
+            s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+            return s.lower().strip()
+
+        answer_n = normalize(answer)
+
+        # 1. Exact match (normalized)
+        for opt in options:
+            if normalize(opt) == answer_n:
+                return opt
+
+        # 2. Answer contains option or option contains answer
+        for opt in options:
+            opt_n = normalize(opt)
+            if answer_n in opt_n or opt_n in answer_n:
+                return opt
+
+        # 3. Any word from answer matches any word in option
+        answer_words = set(answer_n.split())
+        for opt in options:
+            opt_words = set(normalize(opt).split())
+            if answer_words & opt_words:
+                return opt
+
+        return None
 
     def _set_input_value(self, element, value: str) -> None:
         try:
