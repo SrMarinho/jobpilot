@@ -7,7 +7,6 @@ from src.automation.pages.glassdoor_jobs_page import GlassdoorJobsPage
 from src.core.use_cases.job_evaluator import JobEvaluator
 from src.core.use_cases.job_application_handler import JobApplicationHandler
 from src.core.use_cases.indeed_application_handler import IndeedApplicationHandler
-from src.core.use_cases.salary_estimator import SalaryEstimator
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
 from src.config.settings import logger
 
@@ -55,7 +54,6 @@ class JobApplicationManager:
             self.page = JobsSearchPage(driver, url)
 
         self.evaluator = JobEvaluator(resume_path, preferences=preferences, level=level)
-        self.salary_estimator = SalaryEstimator(resume=self.evaluator.resume)
         self.tracker = AppliedJobsTracker()
         self.stop_event = stop_event or threading.Event()
         self.applied_count = 0
@@ -143,7 +141,8 @@ class JobApplicationManager:
                 logger.info(f"Job {i + 1}: Evaluating '{title}'")
                 self.evaluated_count += 1
 
-                if not self.evaluator.evaluate(title, description):
+                is_match, salary = self.evaluator.evaluate(title, description)
+                if not is_match:
                     logger.info(f"Job {i + 1}: Not a match, skipping")
                     self.tracker.mark_rejected(job_url, title, reason="AI evaluation: no match")
                     continue
@@ -153,7 +152,6 @@ class JobApplicationManager:
                     logger.info(f"Job {i + 1}: No apply button, skipping")
                     continue
 
-                salary = self.salary_estimator.estimate(title, description)
                 logger.info(f"Job {i + 1}: Match! Applying to '{title}'")
                 apply_btn.click()
                 time.sleep(1.5)
