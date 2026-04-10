@@ -50,6 +50,19 @@ class JobsSearchPage:
         except Exception:
             return ""
 
+    def get_company_name(self) -> str:
+        try:
+            el = self.driver.find_element(
+                By.CSS_SELECTOR,
+                ".job-details-jobs-unified-top-card__company-name a, "
+                ".jobs-unified-top-card__company-name a, "
+                ".jobs-unified-top-card__subtitle-primary-grouping a, "
+                ".job-details-jobs-unified-top-card__primary-description a",
+            )
+            return el.text.strip()
+        except Exception:
+            return ""
+
     def get_job_description(self) -> str:
         try:
             el = WebDriverWait(self.driver, 5).until(

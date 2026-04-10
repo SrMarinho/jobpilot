@@ -61,21 +61,23 @@ class AppliedJobsTracker:
     def already_rejected(self, job_url: str) -> bool:
         return self._job_id(job_url) in self._rejected
 
-    def mark_applied(self, job_url: str, title: str, salary: int | None = None):
+    def mark_applied(self, job_url: str, title: str, salary: int | None = None, company: str = ""):
         job_id = self._job_id(job_url)
         self._applied[job_id] = {
             "title": title,
+            "company": company,
             "url": job_url,
             "applied_at": datetime.now().isoformat(),
             "salary_offered": salary,
         }
         self._save_applied()
-        logger.info(f"Saved application: '{title}' (id={job_id})")
+        logger.info(f"Saved application: '{title}' at '{company}' (id={job_id})")
 
         salary_line = f"\n💰 Pretensão: R$ {salary:,.0f}".replace(",", ".") if salary else ""
+        company_line = f"\n🏢 {company}" if company else ""
         send_telegram(
             f"✅ <b>Candidatura enviada!</b>\n"
-            f"📋 {title}{salary_line}\n"
+            f"📋 {title}{company_line}{salary_line}\n"
             f"🔗 <a href='{job_url}'>Ver vaga</a>"
         )
 

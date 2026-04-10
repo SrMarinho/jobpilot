@@ -133,6 +133,7 @@ class JobApplicationManager:
                     job_url = self.driver.current_url
                 title = self.page.get_job_title()
                 description = self.page.get_job_description()
+                company = self.page.get_company_name() if hasattr(self.page, "get_company_name") else ""
 
                 if not title or not description:
                     logger.info(f"Job {i + 1}: Could not extract details, skipping")
@@ -187,7 +188,7 @@ class JobApplicationManager:
 
                 if success:
                     self.applied_count += 1
-                    self.tracker.mark_applied(job_url, title, salary)
+                    self.tracker.mark_applied(job_url, title, salary, company=company)
                     logger.info(f"Applied ({self.applied_count} total)")
 
                 time.sleep(1)
