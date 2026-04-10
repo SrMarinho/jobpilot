@@ -10,19 +10,24 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.select import Select
 from selenium.common.exceptions import NoSuchElementException
-from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+from src.core.ai.llm_provider import get_llm_provider
 from src.config.settings import logger
 
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
-SALARY_KEYWORDS = ["salário", "salario", "salary", "remuneração", "pretensão", "compensation"]
+SALARY_KEYWORDS = [
+    "salário", "salario", "salary", "remuneração", "remuneracao",
+    "pretensão", "pretensao", "compensation", "salarial", "expectativa",
+    "remuner", "wage", "pay ", "ctc",
+]
 
 _QA_FILE = Path(__file__).parent.parent.parent.parent / "files" / "qa.json"
 
 
+def _normalize(s: str) -> str:
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+
 def _normalize_question(q: str) -> str:
     """Normalize question string for use as a stable dict key."""
-    s = unicodedata.normalize("NFKD", q).encode("ascii", "ignore").decode()
-    return " ".join(s.lower().split())
+    return " ".join(_normalize(q).split())
 
 
 def _load_qa() -> dict:
@@ -64,8 +69,17 @@ class JobApplicationHandler:
     def __init__(self, driver: WebDriver, resume: str = ""):
         self.driver = driver
         self.resume = resume
+        self.job_title = ""
+        self.job_description = ""
 
-    def submit_easy_apply(self, salary_expectation: int | None = None) -> bool:
+    def submit_easy_apply(
+        self,
+        salary_expectation: int | None = None,
+        job_title: str = "",
+        job_description: str = "",
+    ) -> bool:
+        self.job_title = job_title
+        self.job_description = job_description[:1500]
         try:
             for step in range(self.MAX_STEPS):
                 time.sleep(1.5)
@@ -96,17 +110,41 @@ class JobApplicationHandler:
 
     # ── field filling ────────────────────────────────────────────────────────
 
-    def _fill_all_fields(self, salary: int | None) -> None:
-        """Collect all unfilled required fields and answer them in a single Claude call."""
-        try:
-            fields = []  # list of {"el": element, "question": str, "type": "text"|"choice", "options": list}
+    def _get_modal(self):
+        """Return the Easy Apply modal element, or None if not found."""
+        for selector in [
+            "//div[contains(@class,'jobs-easy-apply-modal')]",
+            "//div[contains(@class,'artdeco-modal') and .//*[contains(@class,'jobs-easy-apply')]]",
+            "//div[@role='dialog' and .//*[contains(@aria-label,'apply') or contains(@aria-label,'Apply') or contains(@aria-label,'candidatura')]]",
+            "//div[@role='dialog']",
+        ]:
+            try:
+                els = self.driver.find_elements(By.XPATH, selector)
+                if els:
+                    return els[0]
+            except Exception:
+                continue
+        return None
 
-            inputs = self.driver.find_elements(
+    def _fill_all_fields(self, salary: int | None) -> None:
+        """Collect all unfilled required fields and answer them in a single AI call."""
+        try:
+            fields = []  # list of {"el": element, "question": str, "type": "text"|"choice"|"radio"|"checkbox"|"textarea", "options": list}
+
+            modal = self._get_modal()
+            scope = modal or self.driver  # fall back to full page if modal not found
+            if modal:
+                logger.debug("Scoping field search to Easy Apply modal")
+            else:
+                logger.debug("Modal not found — searching full page")
+
+            # ── text / number / tel inputs (all visible, not just @required) ──
+            inputs = scope.find_elements(
                 By.XPATH,
-                "//input[@required and @type!='hidden' and (@type='text' or @type='number' or @type='tel')]"
+                ".//input[@type!='hidden' and (@type='text' or @type='number' or @type='tel')]"
             )
             for inp in inputs:
-                if not inp.is_displayed() or inp.get_attribute("value"):
+                if not inp.is_displayed() or (inp.get_attribute("value") or "").strip():
                     continue
                 question = self._get_field_label(inp)
                 if not question or question == "(unknown)":
@@ -117,28 +155,90 @@ class JobApplicationHandler:
                     continue
                 fields.append({"el": inp, "question": question, "type": "text", "options": []})
 
-            # Find all visible selects — with or without @required
-            selects = self.driver.find_elements(By.XPATH, "//select")
-            for sel in selects:
-                if not sel.is_displayed():
+            # ── textareas ─────────────────────────────────────────────────────
+            textareas = scope.find_elements(By.XPATH, ".//textarea")
+            for ta in textareas:
+                if not ta.is_displayed() or (ta.get_attribute("value") or "").strip():
                     continue
-                current_val = sel.get_attribute("value") or ""
-                options_els = Select(sel).options
-                # Skip if already has a meaningful selection (not the placeholder/first empty option)
-                non_empty_vals = [o.get_attribute("value") for o in options_els if o.get_attribute("value")]
-                if current_val and current_val in non_empty_vals:
-                    continue
-                question = self._get_field_label(sel)
+                question = self._get_field_label(ta)
                 if not question or question == "(unknown)":
                     continue
-                options = [o.text.strip() for o in options_els if o.get_attribute("value")]
+                fields.append({"el": ta, "question": question, "type": "textarea", "options": []})
+
+            # ── select dropdowns ──────────────────────────────────────────────
+            selects = scope.find_elements(By.XPATH, ".//select")
+            for sel in selects:
+                try:
+                    if not sel.is_displayed():
+                        continue
+                    sel_data = self.driver.execute_script(
+                        "var s=arguments[0]; return {val:s.value,"
+                        "opts:Array.from(s.options).map(o=>({v:o.value,t:o.text.trim()}))}",
+                        sel
+                    )
+                    current_val = sel_data["val"] or ""
+                    non_empty = [o for o in sel_data["opts"] if o["v"]]
+                    if current_val and any(o["v"] == current_val for o in non_empty):
+                        continue
+                    question = self._get_field_label(sel)
+                    if not question or question == "(unknown)":
+                        continue
+                    options = [o["t"] for o in non_empty]
+                    if not options:
+                        continue
+                    fields.append({"el": sel, "question": question, "type": "choice", "options": options})
+                except Exception:
+                    continue
+
+            # ── radio button groups ───────────────────────────────────────────
+            radio_script = """
+                var root = arguments[0] || document;
+                var inputs = root.querySelectorAll('input[type="radio"]');
+                var groups = {};
+                inputs.forEach(function(r) {
+                    if (!r.offsetParent) return;
+                    var name = r.name || r.id || '';
+                    if (!name) return;
+                    if (!groups[name]) groups[name] = [];
+                    var id = r.id || '';
+                    var lbl = '';
+                    if (id) { var l = document.querySelector('label[for="'+id+'"]'); if (l) lbl = l.innerText.trim(); }
+                    if (!lbl) lbl = r.value || '';
+                    groups[name].push({id: r.id, name: r.name, value: r.value, label: lbl, checked: r.checked});
+                });
+                return groups;
+            """
+            radio_groups = self.driver.execute_script(radio_script, modal)
+            for group_name, radios_data in (radio_groups or {}).items():
+                if any(r["checked"] for r in radios_data):
+                    continue
+                options = [r["label"] or r["value"] for r in radios_data if r["label"] or r["value"]]
                 if not options:
                     continue
-                fields.append({"el": sel, "question": question, "type": "choice", "options": options})
+                # Get the DOM elements fresh for clicking later
+                group_els = self.driver.find_elements(By.XPATH, f"//input[@type='radio' and @name='{group_name}']")
+                if not group_els:
+                    continue
+                question = self._get_radio_group_label(group_els) or self._get_field_label(group_els[0])
+                if not question or question == "(unknown)":
+                    continue
+                fields.append({"el": group_els, "question": question, "type": "radio", "options": options, "_radio_data": radios_data})
+
+            # ── checkboxes ────────────────────────────────────────────────────
+            checkboxes = scope.find_elements(By.XPATH, ".//input[@type='checkbox']")
+            for chk in checkboxes:
+                if not chk.is_displayed() or chk.is_selected():
+                    continue
+                question = self._get_field_label(chk)
+                if not question or question == "(unknown)":
+                    continue
+                fields.append({"el": chk, "question": question, "type": "checkbox", "options": ["Yes", "No"]})
 
             if not fields:
+                logger.debug("No unfilled fields found on this step")
                 return
 
+            logger.info(f"Fields found: {[f['question'] + ' (' + f['type'] + ')' for f in fields]}")
             qa = _load_qa()
 
             # Resolve fields from cache first; collect remaining for AI
@@ -162,78 +262,354 @@ class JobApplicationHandler:
                 # remap local indices back to original indices
                 for local_i, orig_i in enumerate(pending_indices):
                     val = raw.get(str(local_i))
-                    if val is not None:
+                    # null or empty = LLM doesn't know, skip (will be saved for manual input)
+                    if val is not None and str(val).strip() and str(val).strip().lower() != "null":
                         ai_answers[str(orig_i)] = str(val)
 
             answers = {**cached_answers, **ai_answers}
 
-            # Persist all answers (AI + pre-cached) back to qa.json
-            updated_qa = False
+            # Save unanswered questions to qa.json so user can fill them manually
             for i, field in enumerate(fields):
-                answer = answers.get(str(i))
-                if answer:
-                    key = _normalize_question(field["question"])
-                    if qa.get(key) != answer:
-                        qa[key] = answer
-                        updated_qa = True
-            if updated_qa:
-                _save_qa(qa)
+                if answers.get(str(i)):
+                    continue
+                key = _normalize_question(field["question"])
+                if key not in qa:
+                    qa[key] = ""
+                    _save_qa(qa)
+                    logger.warning(f"No answer for '{field['question']}' — saved to qa.json for manual input")
 
+            # Apply answers and validate; retry with AI on validation errors
             for i, field in enumerate(fields):
                 answer = answers.get(str(i))
                 if not answer:
                     continue
-                if field["type"] == "text":
+
+                key = _normalize_question(field["question"])
+
+                if field["type"] in ("text", "textarea"):
                     self._set_input_value(field["el"], str(answer))
-                    logger.info(f"Filled '{field['question']}' → '{answer}'")
-                else:
-                    matched = self._match_option(answer, field["options"])
-                    if matched:
-                        try:
-                            Select(field["el"]).select_by_visible_text(matched)
-                            logger.info(f"Selected '{matched}' for '{field['question']}'")
-                        except Exception as e:
-                            logger.warning(f"Failed to select '{matched}' for '{field['question']}': {e}")
+                    time.sleep(0.4)
+                    error = self._get_field_error(field["el"])
+                    if error:
+                        logger.warning(f"Validation error for '{field['question']}' (answer='{answer}'): {error}")
+                        corrected = asyncio.run(self._retry_answer(field["question"], answer, error))
+                        if corrected:
+                            self._set_input_value(field["el"], corrected)
+                            logger.info(f"Corrected '{field['question']}' → '{corrected}'")
+                            answer = corrected
+                        else:
+                            logger.warning(f"Could not correct '{field['question']}' — leaving as is")
                     else:
-                        logger.warning(f"No option matched '{answer}' for '{field['question']}' — options: {field['options']}")
+                        logger.info(f"Filled '{field['question']}' → '{answer}'")
+                elif field["type"] == "radio":
+                    self._apply_radio(field, answer)
+                elif field["type"] == "checkbox":
+                    self._apply_checkbox(field, answer)
+                else:
+                    self._apply_select(field, answer)
+
+                if qa.get(key) != answer:
+                    qa[key] = answer
+                    _save_qa(qa)
+
+            # ── post-fill validation pass ─────────────────────────────────────
+            # Collect all inputs still marked invalid after filling, fix in one AI call
+            time.sleep(0.5)
+            invalid_fields = []
+            for field in fields:
+                if field["type"] not in ("text", "textarea"):
+                    continue
+                el = field["el"]
+                try:
+                    error = self._get_field_error(el)
+                    if error:
+                        current_val = (el.get_attribute("value") or "").strip()
+                        invalid_fields.append({"field": field, "bad_answer": current_val, "error": error})
+                except Exception:
+                    continue
+
+            if invalid_fields:
+                logger.warning(f"Post-fill: {len(invalid_fields)} field(s) still invalid — asking AI to correct")
+                corrections = asyncio.run(self._batch_correct(invalid_fields))
+                for item in invalid_fields:
+                    q = item["field"]["question"]
+                    corrected = corrections.get(_normalize_question(q))
+                    if corrected:
+                        self._set_input_value(item["field"]["el"], corrected)
+                        logger.info(f"Post-fill corrected '{q}' → '{corrected}'")
+                        key = _normalize_question(q)
+                        qa[key] = corrected
+                        _save_qa(qa)
 
         except Exception as e:
-            logger.debug(f"Error filling fields: {e}")
+            import traceback
+            logger.warning(f"Error filling fields: {e}\n{traceback.format_exc()}")
 
-    async def _batch_answer(self, fields: list[dict]) -> dict:
-        """Send all form questions to Claude in one call. Returns {index: answer}."""
-        questions_str = ""
-        for i, f in enumerate(fields):
-            if f["type"] == "text":
-                questions_str += f"{i}. {f['question']} (text)\n"
-            else:
-                opts = ", ".join(f["options"])
-                questions_str += f"{i}. {f['question']} (choose from: {opts})\n"
+    def _get_field_error(self, element) -> str | None:
+        """Returns the validation error message for a field, or None if valid."""
+        try:
+            if element.get_attribute("aria-invalid") != "true":
+                return None
+            described_by = element.get_attribute("aria-describedby") or ""
+            for eid in described_by.split():
+                try:
+                    err_el = self.driver.find_element(By.ID, eid)
+                    text = err_el.text.strip()
+                    if text:
+                        return text
+                except Exception:
+                    pass
+            # Fallback: look for nearby error element
+            try:
+                parent = self.driver.execute_script("return arguments[0].parentElement;", element)
+                if parent:
+                    err = parent.find_element(By.XPATH, ".//*[contains(@class,'error') or contains(@class,'feedback')]")
+                    text = err.text.strip()
+                    if text:
+                        return text
+            except Exception:
+                pass
+            return "Invalid value"
+        except Exception:
+            return None
 
-        prompt = f"""Based on this candidate's resume, answer ALL the following job application form questions.
+    async def _batch_correct(self, invalid_fields: list[dict]) -> dict:
+        """Ask AI to correct multiple invalid fields in one call. Returns {normalized_question: corrected_value}."""
+        items_str = ""
+        for i, item in enumerate(invalid_fields):
+            items_str += (
+                f"{i}. PERGUNTA: {item['field']['question']}\n"
+                f"   RESPOSTA ERRADA: {item['bad_answer']}\n"
+                f"   ERRO: {item['error']}\n\n"
+            )
 
-RESUME:
+        job_context = ""
+        if self.job_title:
+            job_context = f"\nVAGA: {self.job_title}\n"
+        if self.job_description:
+            job_context += f"DESCRIÇÃO DA VAGA:\n{self.job_description}\n"
+
+        prompt = f"""Você preencheu campos de um formulário de candidatura mas alguns falharam na validação.
+
+CURRÍCULO DO CANDIDATO:
 {self.resume}
+{job_context}
+CAMPOS COM ERRO:
+{items_str}
+Para cada campo, forneça uma resposta corrigida que satisfaça a validação.
+Responda APENAS com um objeto JSON mapeando o número do campo (como string) para a resposta corrigida.
+Dicas: se o erro indica "número", responda só com dígitos. Se indica "obrigatório", responda algo curto e relevante usando o contexto da vaga.
+Exemplo: {{"0": "6000", "1": "3"}}"""
 
-QUESTIONS:
-{questions_str}
-Reply with ONLY a JSON object mapping each question number (as string) to its answer.
-For text fields: reply with a short value (number, word, or brief phrase).
-For choice fields: reply with the exact text of the chosen option.
-Example: {{"0": "3", "1": "Intermediário", "2": "Não"}}"""
-
-        result = ""
-        async for message in query(prompt=prompt, options=ClaudeAgentOptions(max_turns=1, model=HAIKU_MODEL)):
-            if isinstance(message, ResultMessage):
-                result = message.result.strip()
+        result = await get_llm_provider().complete(prompt)
+        logger.info(f"Batch correct raw: {result!r}")
 
         try:
             import re
             match = re.search(r"\{.*\}", result, re.DOTALL)
             if match:
-                return json.loads(match.group())
+                parsed = json.loads(match.group())
+                # Remap from index to normalized question key
+                return {
+                    _normalize_question(invalid_fields[int(k)]["field"]["question"]): v
+                    for k, v in parsed.items()
+                    if k.isdigit() and int(k) < len(invalid_fields)
+                }
+        except Exception as e:
+            logger.warning(f"Failed to parse batch correct response: {e}")
+        return {}
+
+    async def _retry_answer(self, question: str, bad_answer: str, error: str) -> str | None:
+        """Ask LLM to correct an answer that failed field validation."""
+        job_context = ""
+        if self.job_title:
+            job_context = f"\nVAGA: {self.job_title}\n"
+        if self.job_description:
+            job_context += f"DESCRIÇÃO DA VAGA:\n{self.job_description}\n"
+
+        prompt = f"""Você preencheu um campo de formulário de candidatura mas recebeu um erro de validação.
+
+CURRÍCULO DO CANDIDATO:
+{self.resume}
+{job_context}
+PERGUNTA: {question}
+SUA RESPOSTA ANTERIOR: {bad_answer}
+ERRO DE VALIDAÇÃO: {error}
+
+Forneça uma resposta corrigida que satisfaça o requisito de validação.
+Responda APENAS com o valor corrigido — um número, palavra curta ou frase breve em português. Sem explicações."""
+        try:
+            result = await get_llm_provider().complete(prompt)
+            return result.strip() if result else None
         except Exception:
-            pass
+            return None
+
+    def _get_radio_group_label(self, group: list) -> str | None:
+        """Try to find the fieldset legend or nearest group label for a radio group."""
+        try:
+            el = group[0]
+            # Walk up looking for fieldset > legend
+            script = """
+                var el = arguments[0];
+                for (var i = 0; i < 5; i++) {
+                    el = el.parentElement;
+                    if (!el) break;
+                    if (el.tagName === 'FIELDSET') {
+                        var leg = el.querySelector('legend');
+                        return leg ? leg.innerText.trim() : null;
+                    }
+                }
+                return null;
+            """
+            result = self.driver.execute_script(script, el)
+            return result or None
+        except Exception:
+            return None
+
+    def _apply_radio(self, field: dict, answer: str) -> None:
+        """Click the radio button whose label best matches the answer."""
+        question = field["question"]
+        options = field["options"]
+        radio_data = field.get("_radio_data", [])
+        matched = self._match_option(answer, options)
+
+        def _click_by_id(rid: str) -> bool:
+            """Click label[for=id] first (LinkedIn hides input), fallback to input JS click."""
+            try:
+                lbl = self.driver.find_element(By.XPATH, f"//label[@for='{rid}']")
+                self.driver.execute_script("arguments[0].click();", lbl)
+                return True
+            except Exception:
+                pass
+            try:
+                el = self.driver.find_element(By.ID, rid)
+                self.driver.execute_script("arguments[0].click();", el)
+                return True
+            except Exception:
+                return False
+
+        try:
+            # Try to match using JS-collected data (has IDs for precise clicking)
+            for r in radio_data:
+                label = r.get("label") or r.get("value") or ""
+                if matched and _normalize(label) == _normalize(matched):
+                    if r.get("id") and _click_by_id(r["id"]):
+                        logger.info(f"Selected radio '{label}' for '{question}'")
+                        return
+            # Fallback: click first option
+            if radio_data and radio_data[0].get("id"):
+                first = radio_data[0]
+                if _click_by_id(first["id"]):
+                    logger.warning(f"No radio match for '{answer}' in '{question}' — clicked first: '{first.get('label') or first.get('value')}'")
+                    return
+            # Last resort: click first element in group
+            group = field["el"]
+            if group:
+                self.driver.execute_script("arguments[0].click();", group[0])
+                logger.warning(f"Clicked first radio element for '{question}' as last resort")
+        except Exception as e:
+            logger.warning(f"Failed to select radio for '{question}': {e}")
+
+    def _apply_checkbox(self, field: dict, answer: str) -> None:
+        """Check the checkbox if the answer indicates yes/true."""
+        question = field["question"]
+        el = field["el"]
+        should_check = answer.strip().lower() in ("yes", "sim", "true", "1", "concordo", "aceito")
+        try:
+            if should_check and not el.is_selected():
+                self.driver.execute_script("arguments[0].click();", el)
+                logger.info(f"Checked checkbox '{question}'")
+            elif not should_check:
+                logger.info(f"Left unchecked '{question}' (answer='{answer}')")
+        except Exception as e:
+            logger.warning(f"Failed to handle checkbox '{question}': {e}")
+
+    def _apply_select(self, field: dict, answer: str) -> None:
+        """Apply an answer to a select field, re-finding the element to avoid stale references."""
+        question = field["question"]
+        options = field["options"]
+
+        matched = self._match_option(answer, options)
+
+        # Re-find the select element by label to avoid stale element reference
+        try:
+            selects = self.driver.find_elements(By.XPATH, "//select")
+            fresh_el = None
+            for sel in selects:
+                if not sel.is_displayed():
+                    continue
+                if self._get_field_label(sel) == question:
+                    fresh_el = sel
+                    break
+            el = fresh_el or field["el"]
+        except Exception:
+            el = field["el"]
+
+        try:
+            sel_obj = Select(el)
+            if matched:
+                sel_obj.select_by_visible_text(matched)
+                logger.info(f"Selected '{matched}' for '{question}'")
+            else:
+                # Fallback: select first non-placeholder option
+                for opt_el in sel_obj.options:
+                    if opt_el.get_attribute("value"):
+                        sel_obj.select_by_value(opt_el.get_attribute("value"))
+                        logger.warning(f"No match for '{answer}' in '{question}' — selected first option: '{opt_el.text.strip()}'")
+                        break
+                else:
+                    logger.warning(f"No option matched '{answer}' for '{question}' — options: {options}")
+        except Exception as e:
+            logger.warning(f"Failed to select for '{question}': {e}")
+
+    async def _batch_answer(self, fields: list[dict]) -> dict:
+        """Send all form questions to AI in one call. Returns {index: answer}."""
+        questions_str = ""
+        for i, f in enumerate(fields):
+            if f["type"] in ("text", "textarea"):
+                questions_str += f"{i}. {f['question']} ({'long answer' if f['type'] == 'textarea' else 'text'})\n"
+            elif f["type"] == "checkbox":
+                questions_str += f"{i}. {f['question']} (checkbox — answer Yes or No)\n"
+            else:
+                opts = ", ".join(f["options"])
+                questions_str += f"{i}. {f['question']} (choose from: {opts})\n"
+
+        job_context = ""
+        if self.job_title:
+            job_context = f"\nVAGA: {self.job_title}\n"
+        if self.job_description:
+            job_context += f"DESCRIÇÃO DA VAGA:\n{self.job_description}\n"
+
+        prompt = f"""Com base no currículo do candidato e na vaga, responda as perguntas do formulário de candidatura abaixo.
+
+CURRÍCULO:
+{self.resume}
+{job_context}
+PERGUNTAS:
+{questions_str}
+Regras obrigatórias:
+- Responda APENAS com um objeto JSON, sem texto antes ou depois
+- Para campos numéricos (anos de experiência, salário, etc.): responda SOMENTE com dígitos, sem R$, pontos ou vírgulas. Ex: 6000
+- Para campos de texto: responda com valor curto em português
+- Para campos de escolha: responda com o texto exato da opção
+- Para checkbox: responda "Sim" ou "Não"
+- Use o contexto da vaga para responder perguntas como "por que se candidatou" ou "experiência com X"
+- IMPORTANTE: se mesmo com o contexto da vaga não souber a resposta, coloque null. NÃO invente.
+
+Exemplo: {{"0": "6000", "1": "Intermediário", "2": null, "3": "3"}}"""
+
+        result = await get_llm_provider().complete(prompt)
+        logger.info(f"AI raw response: {result!r}")
+
+        try:
+            import re
+            match = re.search(r"\{.*\}", result, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group())
+                logger.info(f"AI parsed answers: {parsed}")
+                return parsed
+        except Exception as e:
+            logger.warning(f"Failed to parse AI response as JSON: {e} | raw: {result!r}")
         return {}
 
     def _match_option(self, answer: str, options: list[str]) -> str | None:

@@ -150,13 +150,21 @@ class JobApplicationManager:
                     self.tracker.mark_rejected(job_url, title, reason="Quick reject: title seniority mismatch")
                     continue
 
+                if self.evaluator.language_reject(description):
+                    self.tracker.mark_rejected(job_url, title, reason="Quick reject: not in Portuguese")
+                    continue
+
+                if self.evaluator.tech_reject(title, description):
+                    self.tracker.mark_rejected(job_url, title, reason="Quick reject: tech stack mismatch")
+                    continue
+
                 logger.info(f"Job {i + 1}: Evaluating '{title}'")
                 self.evaluated_count += 1
 
-                is_match, salary = self.evaluator.evaluate(title, description)
+                is_match, salary, reason = self.evaluator.evaluate(title, description)
+                logger.info(f"  ↳ {'✔' if is_match else '✘'} {reason}")
                 if not is_match:
-                    logger.info(f"Job {i + 1}: Not a match, skipping")
-                    self.tracker.mark_rejected(job_url, title, reason="AI evaluation: no match")
+                    self.tracker.mark_rejected(job_url, title, reason=reason)
                     continue
 
                 apply_btn = self.page.get_apply_btn() if self.site in ("indeed", "glassdoor") else self.page.get_easy_apply_btn()
@@ -171,7 +179,11 @@ class JobApplicationManager:
                 if self.site == "indeed":
                     success = self.handler.submit(salary_expectation=salary)
                 else:
-                    success = self.handler.submit_easy_apply(salary_expectation=salary)
+                    success = self.handler.submit_easy_apply(
+                        salary_expectation=salary,
+                        job_title=title,
+                        job_description=description,
+                    )
 
                 if success:
                     self.applied_count += 1
