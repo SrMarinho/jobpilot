@@ -76,6 +76,8 @@ def setup(force_headless: bool = False) -> uc.Chrome:
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
     driver = uc.Chrome(options=options, headless=config["headless"], version_main=146)
+    if not config["headless"]:
+        driver.maximize_window()
     return driver
 
 
@@ -112,6 +114,10 @@ def parse_args():
     apply_parser.add_argument("--max-pages", type=int, default=100, help="Max pages to process (default: 100)")
     apply_parser.add_argument("--continue", dest="resume_from", action="store_true", help="Resume from the last page where it stopped")
 
+    test_parser = subparsers.add_parser("test-apply", help="Test Easy Apply on a specific job URL (skips evaluation)")
+    test_parser.add_argument("job_url", type=str, help="LinkedIn job URL (e.g. https://www.linkedin.com/jobs/view/1234567890)")
+    test_parser.add_argument("--resume", type=str, default=None, help="Path to resume file (default: resume.txt)")
+
     bot_parser = subparsers.add_parser("bot", help="Start Telegram bot to control JobPilot remotely")
     bot_parser.add_argument("--resume", type=str, default="resume.txt", help="Path to resume file (default: resume.txt)")
 
@@ -143,10 +149,50 @@ def main():
         run_login(args.site)
         return
 
+    if args.task == "test-apply":
+        from src.core.use_cases.job_application_handler import JobApplicationHandler
+        resume_path = args.resume or "resume.txt"
+        resume_text = open(resume_path, "r", encoding="utf-8").read()
+        driver = setup(force_headless=False)
+        try:
+            driver.get(args.job_url)
+            time.sleep(3)
+            from src.automation.pages.jobs_search_page import JobsSearchPage
+            page = JobsSearchPage(driver, args.job_url)
+            btn = page.get_easy_apply_btn()
+            if not btn:
+                print("No Easy Apply button found on this job page.")
+                return
+            title = page.get_job_title() or "Test Job"
+            description = page.get_job_description() or ""
+            print(f"Applying to: {title}")
+            btn.click()
+            time.sleep(1.5)
+            handler = JobApplicationHandler(driver, resume=resume_text)
+            success = handler.submit_easy_apply(job_title=title, job_description=description)
+            print(f"Result: {'SUCCESS' if success else 'FAILED'}")
+        finally:
+            input("Press Enter to close browser...")
+            driver.quit()
+        return
+
     if args.task == "bot":
         from src.bot.telegram_bot import TelegramBot
         TelegramBot(driver_factory=setup, resume_path=args.resume).run()
         return
+
+    if args.task == "apply":
+        import asyncio
+        from src.core.ai.llm_provider import get_llm_provider, get_eval_provider
+        logger.info("Warming up LLM models...")
+        async def _warmup():
+            import asyncio
+            await asyncio.gather(
+                get_llm_provider().complete("hi"),
+                get_eval_provider().complete("hi"),
+            )
+        asyncio.run(_warmup())
+        logger.info("LLM models ready.")
 
     last_urls = load_last_urls()
     saved = last_urls.get(args.task, {})
