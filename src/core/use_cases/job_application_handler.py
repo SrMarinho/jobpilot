@@ -144,7 +144,12 @@ class JobApplicationHandler:
                 ".//input[@type!='hidden' and (@type='text' or @type='number' or @type='tel')]"
             )
             for inp in inputs:
-                if not inp.is_displayed() or (inp.get_attribute("value") or "").strip():
+                if not inp.is_displayed():
+                    continue
+                current_val = (inp.get_attribute("value") or "").strip()
+                error = self._get_field_error(inp)
+                # Skip if already filled and no validation error
+                if current_val and not error:
                     continue
                 question = self._get_field_label(inp)
                 if not question or question == "(unknown)":
@@ -153,17 +158,35 @@ class JobApplicationHandler:
                     self._set_input_value(inp, str(salary))
                     logger.info(f"Filled '{question}' → '{salary}' (salary)")
                     continue
-                fields.append({"el": inp, "question": question, "type": "text", "options": []})
+                fields.append({
+                    "el": inp,
+                    "question": question,
+                    "type": "text",
+                    "options": [],
+                    "current_value": current_val,
+                    "error": error,
+                })
 
             # ── textareas ─────────────────────────────────────────────────────
             textareas = scope.find_elements(By.XPATH, ".//textarea")
             for ta in textareas:
-                if not ta.is_displayed() or (ta.get_attribute("value") or "").strip():
+                if not ta.is_displayed():
+                    continue
+                current_val = (ta.get_attribute("value") or "").strip()
+                error = self._get_field_error(ta)
+                if current_val and not error:
                     continue
                 question = self._get_field_label(ta)
                 if not question or question == "(unknown)":
                     continue
-                fields.append({"el": ta, "question": question, "type": "textarea", "options": []})
+                fields.append({
+                    "el": ta,
+                    "question": question,
+                    "type": "textarea",
+                    "options": [],
+                    "current_value": current_val,
+                    "error": error,
+                })
 
             # ── select dropdowns ──────────────────────────────────────────────
             selects = scope.find_elements(By.XPATH, ".//select")
@@ -186,7 +209,7 @@ class JobApplicationHandler:
                     options = [o["t"] for o in non_empty]
                     if not options:
                         continue
-                    fields.append({"el": sel, "question": question, "type": "choice", "options": options})
+                    fields.append({"el": sel, "question": question, "type": "choice", "options": options, "error": None, "current_value": ""})
                 except Exception:
                     continue
 
@@ -222,7 +245,7 @@ class JobApplicationHandler:
                 question = self._get_radio_group_label(group_els) or self._get_field_label(group_els[0])
                 if not question or question == "(unknown)":
                     continue
-                fields.append({"el": group_els, "question": question, "type": "radio", "options": options, "_radio_data": radios_data})
+                fields.append({"el": group_els, "question": question, "type": "radio", "options": options, "_radio_data": radios_data, "error": None, "current_value": ""})
 
             # ── checkboxes ────────────────────────────────────────────────────
             checkboxes = scope.find_elements(By.XPATH, ".//input[@type='checkbox']")
@@ -232,7 +255,7 @@ class JobApplicationHandler:
                 question = self._get_field_label(chk)
                 if not question or question == "(unknown)":
                     continue
-                fields.append({"el": chk, "question": question, "type": "checkbox", "options": ["Yes", "No"]})
+                fields.append({"el": chk, "question": question, "type": "checkbox", "options": ["Yes", "No"], "error": None, "current_value": ""})
 
             if not fields:
                 logger.debug("No unfilled fields found on this step")
@@ -566,13 +589,18 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
         """Send all form questions to AI in one call. Returns {index: answer}."""
         questions_str = ""
         for i, f in enumerate(fields):
+            error_hint = f"   ERRO DE VALIDAÇÃO: {f['error']}\n" if f.get("error") else ""
+            bad_val_hint = f"   VALOR INVÁLIDO ANTERIOR: {f['current_value']}\n" if f.get("current_value") and f.get("error") else ""
             if f["type"] in ("text", "textarea"):
-                questions_str += f"{i}. {f['question']} ({'long answer' if f['type'] == 'textarea' else 'text'})\n"
+                questions_str += (
+                    f"{i}. {f['question']} ({'resposta longa' if f['type'] == 'textarea' else 'texto'})\n"
+                    f"{error_hint}{bad_val_hint}"
+                )
             elif f["type"] == "checkbox":
-                questions_str += f"{i}. {f['question']} (checkbox — answer Yes or No)\n"
+                questions_str += f"{i}. {f['question']} (checkbox — Sim ou Não)\n{error_hint}"
             else:
                 opts = ", ".join(f["options"])
-                questions_str += f"{i}. {f['question']} (choose from: {opts})\n"
+                questions_str += f"{i}. {f['question']} (escolha: {opts})\n{error_hint}"
 
         job_context = ""
         if self.job_title:
