@@ -551,38 +551,62 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
     def _apply_select(self, field: dict, answer: str) -> None:
         """Apply an answer to a select field, re-finding the element to avoid stale references."""
         question = field["question"]
-        options = field["options"]
-
-        matched = self._match_option(answer, options)
 
         # Re-find the select element by label to avoid stale element reference
+        el = None
         try:
-            selects = self.driver.find_elements(By.XPATH, "//select")
-            fresh_el = None
-            for sel in selects:
-                if not sel.is_displayed():
-                    continue
-                if self._get_field_label(sel) == question:
-                    fresh_el = sel
+            for sel in self.driver.find_elements(By.XPATH, "//select"):
+                if sel.is_displayed() and self._get_field_label(sel) == question:
+                    el = sel
                     break
-            el = fresh_el or field["el"]
         except Exception:
-            el = field["el"]
+            pass
+        el = el or field["el"]
 
         try:
             sel_obj = Select(el)
-            if matched:
-                sel_obj.select_by_visible_text(matched)
-                logger.info(f"Selected '{matched}' for '{question}'")
-            else:
-                # Fallback: select first non-placeholder option
-                for opt_el in sel_obj.options:
-                    if opt_el.get_attribute("value"):
-                        sel_obj.select_by_value(opt_el.get_attribute("value"))
-                        logger.warning(f"No match for '{answer}' in '{question}' — selected first option: '{opt_el.text.strip()}'")
-                        break
-                else:
-                    logger.warning(f"No option matched '{answer}' for '{question}' — options: {options}")
+            # Iterate option elements directly — avoids encoding/whitespace mismatch from JS text
+            opt_elements = sel_obj.options
+            answer_n = _normalize(answer)
+
+            # 1. Exact normalized match
+            for opt_el in opt_elements:
+                if not opt_el.get_attribute("value"):
+                    continue
+                if _normalize(opt_el.text) == answer_n:
+                    sel_obj.select_by_value(opt_el.get_attribute("value"))
+                    logger.info(f"Selected '{opt_el.text.strip()}' for '{question}'")
+                    return
+
+            # 2. Substring normalized match
+            for opt_el in opt_elements:
+                if not opt_el.get_attribute("value"):
+                    continue
+                opt_n = _normalize(opt_el.text)
+                if answer_n in opt_n or opt_n in answer_n:
+                    sel_obj.select_by_value(opt_el.get_attribute("value"))
+                    logger.info(f"Selected '{opt_el.text.strip()}' (substring) for '{question}'")
+                    return
+
+            # 3. Word-overlap match
+            answer_words = set(answer_n.split())
+            for opt_el in opt_elements:
+                if not opt_el.get_attribute("value"):
+                    continue
+                opt_words = set(_normalize(opt_el.text).split())
+                if answer_words & opt_words:
+                    sel_obj.select_by_value(opt_el.get_attribute("value"))
+                    logger.info(f"Selected '{opt_el.text.strip()}' (word-match) for '{question}'")
+                    return
+
+            # 4. Fallback: first non-placeholder option
+            for opt_el in opt_elements:
+                if opt_el.get_attribute("value"):
+                    sel_obj.select_by_value(opt_el.get_attribute("value"))
+                    logger.warning(f"No match for '{answer}' in '{question}' — selected first: '{opt_el.text.strip()}'")
+                    return
+
+            logger.warning(f"No options available for '{question}'")
         except Exception as e:
             logger.warning(f"Failed to select for '{question}': {e}")
 
