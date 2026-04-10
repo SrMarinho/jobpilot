@@ -283,7 +283,7 @@ class JobApplicationHandler:
             if pending_fields:
                 raw = asyncio.run(self._batch_answer(pending_fields))
                 # remap local indices back to original indices
-                _NULL_WORDS = {"null", "nulo", "nenhum", "none", "n/a", "não sei", "nao sei", "desconhecido"}
+                _NULL_WORDS = {"null", "nulo", "nenhum", "nenhuma", "none", "n/a", "não sei", "nao sei", "desconhecido", "sem experiencia", "sem experiência"}
                 for local_i, orig_i in enumerate(pending_indices):
                     val = raw.get(str(local_i))
                     # null or empty = LLM doesn't know, skip (will be saved for manual input)
