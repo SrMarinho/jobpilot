@@ -283,10 +283,11 @@ class JobApplicationHandler:
             if pending_fields:
                 raw = asyncio.run(self._batch_answer(pending_fields))
                 # remap local indices back to original indices
+                _NULL_WORDS = {"null", "nulo", "nenhum", "none", "n/a", "não sei", "nao sei", "desconhecido"}
                 for local_i, orig_i in enumerate(pending_indices):
                     val = raw.get(str(local_i))
                     # null or empty = LLM doesn't know, skip (will be saved for manual input)
-                    if val is not None and str(val).strip() and str(val).strip().lower() != "null":
+                    if val is not None and str(val).strip() and str(val).strip().lower() not in _NULL_WORDS:
                         ai_answers[str(orig_i)] = str(val)
 
             answers = {**cached_answers, **ai_answers}
@@ -589,18 +590,22 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
         """Send all form questions to AI in one call. Returns {index: answer}."""
         questions_str = ""
         for i, f in enumerate(fields):
-            error_hint = f"   ERRO DE VALIDAÇÃO: {f['error']}\n" if f.get("error") else ""
-            bad_val_hint = f"   VALOR INVÁLIDO ANTERIOR: {f['current_value']}\n" if f.get("current_value") and f.get("error") else ""
-            if f["type"] in ("text", "textarea"):
-                questions_str += (
-                    f"{i}. {f['question']} ({'resposta longa' if f['type'] == 'textarea' else 'texto'})\n"
-                    f"{error_hint}{bad_val_hint}"
-                )
+            error_hint = f"   ⚠ ERRO DE VALIDAÇÃO: {f['error']}\n" if f.get("error") else ""
+            bad_val_hint = f"   ⚠ VALOR INVÁLIDO ANTERIOR: {f['current_value']}\n" if f.get("current_value") and f.get("error") else ""
+            if f["type"] == "textarea":
+                questions_str += f"{i}. [TIPO: TEXTO_LONGO] {f['question']}\n{error_hint}{bad_val_hint}"
+            elif f["type"] == "text":
+                questions_str += f"{i}. [TIPO: TEXTO] {f['question']}\n{error_hint}{bad_val_hint}"
             elif f["type"] == "checkbox":
-                questions_str += f"{i}. {f['question']} (checkbox — Sim ou Não)\n{error_hint}"
+                questions_str += f"{i}. [TIPO: CHECKBOX] {f['question']}\n   Responda exatamente: Sim ou Não\n{error_hint}"
             else:
-                opts = ", ".join(f["options"])
-                questions_str += f"{i}. {f['question']} (escolha: {opts})\n{error_hint}"
+                opts_str = "\n   ".join(f["options"])
+                questions_str += (
+                    f"{i}. [TIPO: SELEÇÃO_ÚNICA] {f['question']}\n"
+                    f"   Opções disponíveis (responda com o texto EXATO de uma delas):\n"
+                    f"   {opts_str}\n"
+                    f"{error_hint}"
+                )
 
         job_context = ""
         if self.job_title:
@@ -615,16 +620,15 @@ CURRÍCULO:
 {job_context}
 PERGUNTAS:
 {questions_str}
-Regras obrigatórias:
-- Responda APENAS com um objeto JSON, sem texto antes ou depois
-- Para campos numéricos (anos de experiência, salário, etc.): responda SOMENTE com dígitos, sem R$, pontos ou vírgulas. Ex: 6000
-- Para campos de texto: responda com valor curto em português
-- Para campos de escolha: responda com o texto exato da opção
-- Para checkbox: responda "Sim" ou "Não"
-- Use o contexto da vaga para responder perguntas como "por que se candidatou" ou "experiência com X"
-- IMPORTANTE: se mesmo com o contexto da vaga não souber a resposta, coloque null. NÃO invente.
-
-Exemplo: {{"0": "6000", "1": "Intermediário", "2": null, "3": "3"}}"""
+REGRAS OBRIGATÓRIAS:
+- Responda APENAS com um objeto JSON, sem texto antes ou depois. Exemplo: {{"0": "3", "1": "Sim", "2": null}}
+- [TIPO: TEXTO] campo de texto livre: responda com valor curto em português
+- [TIPO: TEXTO_LONGO] campo de texto longo: responda com frase ou parágrafo em português
+- [TIPO: TEXTO] campo numérico (anos, salário, etc.): responda SOMENTE com dígitos. Ex: 3 ou 6000
+- [TIPO: SELEÇÃO_ÚNICA] OBRIGATÓRIO: responda com o texto EXATO de uma das opções listadas. Não invente opções.
+- [TIPO: CHECKBOX] responda exatamente: Sim ou Não
+- Use o contexto da vaga para perguntas como "por que se candidatou" ou "experiência com X"
+- Se não souber a resposta mesmo com o contexto, coloque null (não coloque "Nulo", "nenhum" ou texto — use null)"""
 
         result = await get_llm_provider().complete(prompt)
         logger.info(f"AI raw response: {result!r}")
