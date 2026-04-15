@@ -83,9 +83,17 @@ A browser window will open. Log in normally, then close it. The session is persi
 # First run — URL required
 uv run main.py apply --url "JOB_SEARCH_URL" --resume "path/to/resume.pdf"
 
-# Subsequent runs — reuses last saved URL
+# Subsequent runs — reuses last saved URL and parameters
 uv run main.py apply
+
+# Resume from the last page where it stopped
+uv run main.py apply --continue
+
+# Resume a specific site's saved config
+uv run main.py apply --continue --site glassdoor
 ```
+
+All parameters are saved per site (`apply_linkedin`, `apply_glassdoor`, `apply_indeed`) and restored automatically on the next run.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
@@ -94,6 +102,11 @@ uv run main.py apply
 | `--preferences` | No | Preferences to guide evaluation (e.g. `'prefer backend, Python, remote'`) |
 | `--level` | No | Seniority level filter: `junior`, `pleno`, `senior` |
 | `--max-pages` | No | Max pages to process (default: 100) |
+| `--site` | No | Resume saved config for a specific site: `linkedin`, `glassdoor`, `indeed` |
+| `--eval-provider` | No | Override eval AI for this run only: `claude` or `langchain` |
+| `--eval-model` | No | Override eval model for this run only |
+| `--llm-provider` | No | Override form Q&A AI for this run only: `claude` or `langchain` |
+| `--llm-model` | No | Override form Q&A model for this run only |
 
 **Example (LinkedIn):**
 ```bash
@@ -101,7 +114,8 @@ uv run main.py apply \
   --url "https://www.linkedin.com/jobs/search/?keywords=python+developer&f_AL=true" \
   --resume "resume.pdf" \
   --preferences "prefer backend, Python, remote" \
-  --level junior
+  --level pleno \
+  --eval-provider claude
 ```
 
 ---
@@ -157,6 +171,31 @@ uv run main.py provider set eval claude --model claude-opus-4-6
 | `llm` | AI used to answer unknown form questions |
 
 > Changes are written directly to `.env` and take effect on the next run.
+
+---
+
+### Manage form answers
+
+JobPilot caches answers to form questions in `files/qa.json` so it doesn't need to call the AI repeatedly. Use the `answers` command to inspect and edit this cache:
+
+```bash
+# Show questions with missing answers (numbered)
+uv run main.py answers list
+
+# Show all cached answers
+uv run main.py answers show
+
+# Set an answer by number (from list or show)
+uv run main.py answers set 15 "25"
+
+# Answer all missing questions interactively
+uv run main.py answers fill
+
+# Clear all cached answers
+uv run main.py answers clear
+```
+
+> If a required field has no answer (cache miss and AI doesn't know), the application is automatically aborted for that job.
 
 ---
 
