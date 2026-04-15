@@ -87,6 +87,12 @@ LOGIN_URLS = {
     "indeed": "https://secure.indeed.com/auth",
 }
 
+SITE_DOMAINS = {
+    "linkedin":  [".linkedin.com"],
+    "glassdoor": [".glassdoor.com"],
+    "indeed":    [".indeed.com", ".secure.indeed.com"],
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="JobPilot")
@@ -98,6 +104,13 @@ def parse_args():
         "site",
         choices=list(LOGIN_URLS.keys()),
         help="Site to log in to: linkedin, glassdoor, indeed",
+    )
+
+    logout_parser = subparsers.add_parser("logout", help="Clear saved session for a site")
+    logout_parser.add_argument(
+        "site",
+        choices=list(LOGIN_URLS.keys()),
+        help="Site to log out from: linkedin, glassdoor, indeed",
     )
 
     connect_parser = subparsers.add_parser("connect", help="Send connection requests")
@@ -334,6 +347,33 @@ def run_provider_set(target: str, backend: str, model: str | None):
         print(f"[provider] {target} -> claude     model={m}")
 
 
+def run_logout(site: str):
+    domains = SITE_DOMAINS[site]
+    login_url = LOGIN_URLS[site]
+    options = uc.ChromeOptions()
+    options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
+    options.add_argument("--start-maximized")
+    driver = uc.Chrome(options=options, headless=False, version_main=146)
+    try:
+        # Navigate to the site so cookies are accessible
+        driver.get(login_url)
+        time.sleep(2)
+        removed = 0
+        all_cookies = driver.get_cookies()
+        for cookie in all_cookies:
+            domain = cookie.get("domain", "")
+            if any(domain.endswith(d.lstrip(".")) or domain == d for d in domains):
+                try:
+                    driver.delete_cookie(cookie["name"])
+                    removed += 1
+                except Exception:
+                    pass
+        print(f"Cleared {removed} cookie(s) for {site}.")
+        print(f"Session removed. Run 'login {site}' to log in again.")
+    finally:
+        driver.quit()
+
+
 def run_login(site: str):
     url = LOGIN_URLS[site]
     options = uc.ChromeOptions()
@@ -377,6 +417,10 @@ def main():
 
     if args.task == "login":
         run_login(args.site)
+        return
+
+    if args.task == "logout":
+        run_logout(args.site)
         return
 
     if args.task == "test-apply":
