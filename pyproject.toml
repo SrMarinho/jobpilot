@@ -13,4 +13,5 @@ dependencies = [
     "undetected-chromedriver>=3.5.5",
     "setuptools>=82.0.1",
     "requests>=2.33.1",
+    "langchain-ollama>=0.2.0",
 ]
