@@ -157,8 +157,6 @@ class JobApplicationManager:
                     self.driver.execute_script("arguments[0].click();", card)
                 time.sleep(1.5)
 
-                if not job_url:
-                    job_url = self.driver.current_url
                 title = self.page.get_job_title()
                 description = self.page.get_job_description()
                 company = self.page.get_company_name() if hasattr(self.page, "get_company_name") else ""
@@ -166,6 +164,16 @@ class JobApplicationManager:
                 if not title or not description:
                     logger.info(f"Job {i + 1}: Could not extract details, skipping")
                     continue
+
+                # Build a stable job_url fallback using title+company so each job gets a unique key
+                if not job_url:
+                    if title:
+                        import unicodedata, re as _re
+                        slug = unicodedata.normalize("NFKD", f"{title} {company}").encode("ascii", "ignore").decode().lower()
+                        slug = _re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+                        job_url = f"{self.site}://job/{slug}"
+                    else:
+                        job_url = self.driver.current_url
 
                 if self.tracker.already_applied(job_url):
                     logger.info(f"Job {i + 1}: Already applied to '{title}', skipping")
