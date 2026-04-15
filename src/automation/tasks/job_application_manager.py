@@ -71,6 +71,8 @@ class JobApplicationManager:
 
     def run(self):
         logger.info(f"Site detected: {self.site}")
+        seen_page_ids: list[frozenset] = []  # IDs of last 2 pages for loop detection
+
         for page_num in range(self.start_page, self.start_page + self.max_pages):
             if self.stop_event.is_set():
                 logger.info("Stop requested, halting job application manager")
@@ -92,12 +94,37 @@ class JobApplicationManager:
                 logger.info("No more jobs found, stopping")
                 break
 
+            # Loop detection: collect IDs/URLs for this page and compare with previous
+            current_ids = frozenset(self._card_id(c) for c in job_cards)
+            if seen_page_ids and current_ids and current_ids == seen_page_ids[-1]:
+                logger.info("Page identical to previous — no more unique jobs, stopping")
+                break
+            seen_page_ids = seen_page_ids[-1:] + [current_ids]  # keep last 2
+
             logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
             self._process_jobs(job_cards)
 
         logger.info(
             f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}"
         )
+
+    def _card_id(self, card) -> str:
+        """Extract a stable identifier from a job card for loop detection."""
+        try:
+            if self.site == "glassdoor" and hasattr(self.page, "get_card_job_id"):
+                jid = self.page.get_card_job_id(card)
+                if jid:
+                    return jid
+            if self.site == "linkedin" and hasattr(self.page, "get_card_job_url"):
+                url = self.page.get_card_job_url(card)
+                if url:
+                    return url
+        except Exception:
+            pass
+        try:
+            return card.get_attribute("data-job-id") or card.get_attribute("data-id") or card.text[:80]
+        except Exception:
+            return ""
 
     def _process_jobs(self, job_cards):
         count = len(job_cards)
