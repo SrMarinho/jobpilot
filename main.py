@@ -487,10 +487,13 @@ def main():
     start_page = args.start_page if hasattr(args, "start_page") and args.start_page is not None else 1
     resume_from = getattr(args, "resume_from", False) or getattr(args, "resume", False)
 
-    # apply-specific persisted options — CLI args take priority, then saved, then defaults
+    # apply-specific persisted options — CLI args take priority, then saved, then global default
     level       = getattr(args, "level", [])       or saved.get("level", [])
     preferences = getattr(args, "preferences", "") or saved.get("preferences", "")
-    resume_path = getattr(args, "resume", None)    or saved.get("resume", "resume.txt")
+    resume_path = (getattr(args, "resume", None)
+                   or saved.get("resume")
+                   or last_urls.get("default_resume")
+                   or "resume.txt")
     llm_prov    = getattr(args, "llm_provider", None)  or saved.get("llm_provider")
     llm_mod     = getattr(args, "llm_model", None)     or saved.get("llm_model")
     eval_prov   = getattr(args, "eval_provider", None) or saved.get("eval_provider")
@@ -542,6 +545,8 @@ def main():
         if args.task == "apply":
             data = load_last_urls()
             data["apply_last_site"] = _detect_site(url)
+            if getattr(args, "resume", None):
+                data["default_resume"] = args.resume
             with open(LAST_URLS_FILE, "w") as f:
                 json.dump(data, f, indent=2)
     else:
