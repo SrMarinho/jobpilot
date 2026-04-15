@@ -98,6 +98,20 @@ class GlassdoorJobsPage:
         except Exception:
             return None
 
+    def get_card_title(self, card: WebElement) -> str:
+        try:
+            el = card.find_element(By.CSS_SELECTOR, '[class*=JobCard_jobTitle], a[data-test="job-title"], [class*=jobTitle]')
+            return el.text.strip()
+        except Exception:
+            return ""
+
+    def get_card_company(self, card: WebElement) -> str:
+        try:
+            el = card.find_element(By.CSS_SELECTOR, '[class*=EmployerProfile_employerName], [data-test="employer-name"], [class*=employerName]')
+            return el.text.strip()
+        except Exception:
+            return ""
+
     def next_page_url(self, base_url: str, page_num: int) -> str:
         if page_num == 1:
             return base_url

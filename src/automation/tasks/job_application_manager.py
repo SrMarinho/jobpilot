@@ -142,14 +142,29 @@ class JobApplicationManager:
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", card)
                 time.sleep(0.3)
 
-                # Read job_url BEFORE clicking (card element may go stale after click)
+                # Read job_url and card-level data BEFORE clicking (elements may go stale)
                 if self.site == "glassdoor" and hasattr(self.page, "get_card_job_id"):
                     job_id = self.page.get_card_job_id(card)
-                    job_url = f"glassdoor://job/{job_id}" if job_id else None
+                    # Read title/company from card directly — avoids detail-pane timing issues
+                    card_title   = self.page.get_card_title(card)   if hasattr(self.page, "get_card_title")   else ""
+                    card_company = self.page.get_card_company(card) if hasattr(self.page, "get_card_company") else ""
+                    if job_id:
+                        job_url = f"glassdoor://job/{job_id}"
+                    elif card_title:
+                        import unicodedata as _ud, re as _re
+                        slug = _ud.normalize("NFKD", f"{card_title} {card_company}").encode("ascii", "ignore").decode().lower()
+                        slug = _re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+                        job_url = f"glassdoor://job/{slug}"
+                    else:
+                        job_url = None
                 elif self.site == "linkedin" and hasattr(self.page, "get_card_job_url"):
                     job_url = self.page.get_card_job_url(card)
+                    card_title = ""
+                    card_company = ""
                 else:
                     job_url = None
+                    card_title = ""
+                    card_company = ""
 
                 try:
                     card.click()
@@ -157,23 +172,16 @@ class JobApplicationManager:
                     self.driver.execute_script("arguments[0].click();", card)
                 time.sleep(1.5)
 
-                title = self.page.get_job_title()
+                title = self.page.get_job_title() or card_title
                 description = self.page.get_job_description()
-                company = self.page.get_company_name() if hasattr(self.page, "get_company_name") else ""
+                company = (self.page.get_company_name() if hasattr(self.page, "get_company_name") else "") or card_company
 
                 if not title or not description:
                     logger.info(f"Job {i + 1}: Could not extract details, skipping")
                     continue
 
-                # Build a stable job_url fallback using title+company so each job gets a unique key
                 if not job_url:
-                    if title:
-                        import unicodedata, re as _re
-                        slug = unicodedata.normalize("NFKD", f"{title} {company}").encode("ascii", "ignore").decode().lower()
-                        slug = _re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
-                        job_url = f"{self.site}://job/{slug}"
-                    else:
-                        job_url = self.driver.current_url
+                    job_url = self.driver.current_url
 
                 if self.tracker.already_applied(job_url):
                     logger.info(f"Job {i + 1}: Already applied to '{title}', skipping")
