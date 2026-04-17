@@ -1,5 +1,32 @@
 import os
+import time
+import subprocess
+import urllib.request
 from abc import ABC, abstractmethod
+
+
+def _ensure_ollama_running(base_url: str, timeout: int = 15):
+    health = f"{base_url.rstrip('/')}/api/tags"
+    try:
+        urllib.request.urlopen(health, timeout=3)
+        return
+    except Exception:
+        pass
+
+    from src.config.settings import logger
+    logger.info("Ollama not running — starting it...")
+    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(health, timeout=2)
+            logger.info("Ollama started.")
+            return
+        except Exception:
+            time.sleep(1)
+
+    raise RuntimeError(f"Ollama did not start within {timeout}s at {base_url}")
 
 
 class LLMProvider(ABC):
@@ -28,6 +55,7 @@ class LangChainProvider(LLMProvider):
     def __init__(self, model: str, base_url: str):
         from langchain_ollama import OllamaLLM
 
+        _ensure_ollama_running(base_url)
         self._llm = OllamaLLM(model=model, base_url=base_url)
 
     async def complete(self, prompt: str) -> str:

@@ -27,6 +27,14 @@ def save_last_url(task: str, url: str, page: int = 1, extra: dict | None = None)
     entry = {"url": url, "page": page}
     if extra:
         entry.update(extra)
+
+    history_key = f"{task}_history"
+    old = urls.get(task)
+    if old and isinstance(old, dict) and old.get("url") != url:
+        history = urls.get(history_key, [])
+        history = [old] + [h for h in history if h.get("url") != old.get("url")]
+        urls[history_key] = history[:3]
+
     urls[task] = entry
     with open(LAST_URLS_FILE, "w") as f:
         json.dump(urls, f, indent=2)
@@ -133,6 +141,7 @@ def parse_args():
     apply_parser.add_argument("--llm-model", type=str, default=None, metavar="MODEL", help="Override LLM model for this run only")
     apply_parser.add_argument("--eval-provider", choices=["claude", "langchain"], default=None, metavar="BACKEND", help="Override eval provider for this run only (claude or langchain)")
     apply_parser.add_argument("--eval-model", type=str, default=None, metavar="MODEL", help="Override eval model for this run only")
+    apply_parser.add_argument("--no-save", dest="no_save", action="store_true", help="Run without saving/overwriting the last URL")
 
     test_parser = subparsers.add_parser("test-apply", help="Test Easy Apply on a specific job URL (skips evaluation)")
     test_parser.add_argument("job_url", type=str, help="LinkedIn job URL (e.g. https://www.linkedin.com/jobs/view/1234567890)")
@@ -623,6 +632,8 @@ def main():
         asyncio.run(_warmup())
         logger.info("LLM models ready.")
 
+    no_save = getattr(args, "no_save", False)
+
     if url:
         extra = {}
         if args.task == "apply":
@@ -631,14 +642,15 @@ def main():
                 "llm_provider": llm_prov, "llm_model": llm_mod,
                 "eval_provider": eval_prov, "eval_model": eval_mod,
             }
-        save_last_url(site_key, url, page=1, extra=extra or None)
-        if args.task == "apply":
-            data = load_last_urls()
-            data["apply_last_site"] = _detect_site(url)
-            if getattr(args, "resume", None):
-                data["default_resume"] = args.resume
-            with open(LAST_URLS_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+        if not no_save:
+            save_last_url(site_key, url, page=1, extra=extra or None)
+            if args.task == "apply":
+                data = load_last_urls()
+                data["apply_last_site"] = _detect_site(url)
+                if getattr(args, "resume", None):
+                    data["default_resume"] = args.resume
+                with open(LAST_URLS_FILE, "w") as f:
+                    json.dump(data, f, indent=2)
     else:
         url = saved.get("url")
         if not url:
@@ -670,6 +682,8 @@ def main():
         save_ran_today()
 
     def on_page_change(page: int):
+        if no_save:
+            return
         extra = None
         if args.task == "apply":
             extra = {

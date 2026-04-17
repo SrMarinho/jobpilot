@@ -96,6 +96,11 @@ class JobApplicationHandler:
             for step in range(self.MAX_STEPS):
                 time.sleep(1.5)
 
+                if step == 0 and self._form_is_spanish():
+                    logger.warning("Form is in Spanish — skipping application")
+                    self._close_modal()
+                    return False
+
                 self._fill_all_fields(salary_expectation)
 
                 if self._has_unanswered_required_fields():
@@ -121,6 +126,18 @@ class JobApplicationHandler:
             return False
 
     # ── field filling ────────────────────────────────────────────────────────
+
+    _ES_FORM_MARKERS = {"¿", "ñ", "años", "experiencia", "cuántos", "cuantos",
+                        "seleccionado", "comenzar", "trabajar", "empresa"}
+
+    def _form_is_spanish(self) -> bool:
+        try:
+            modal = self._get_modal()
+            text = (modal or self.driver).text.lower()
+            hits = sum(1 for m in self._ES_FORM_MARKERS if m in text)
+            return hits >= 2
+        except Exception:
+            return False
 
     def _get_modal(self):
         """Return the Easy Apply modal element, or None if not found."""
@@ -218,10 +235,10 @@ class JobApplicationHandler:
                     question = self._get_field_label(sel)
                     if not question or question == "(unknown)":
                         continue
-                    options = [o["v"] for o in non_empty]
-                    if not options:
+                    option_labels = [o["t"] for o in non_empty]
+                    if not option_labels:
                         continue
-                    fields.append({"el": sel, "question": question, "type": "choice", "options": options, "error": None, "current_value": ""})
+                    fields.append({"el": sel, "question": question, "type": "choice", "options": option_labels, "_option_map": {o["t"]: o["v"] for o in non_empty}, "error": None, "current_value": ""})
                 except Exception:
                     continue
 
@@ -561,10 +578,9 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
             logger.warning(f"Failed to handle checkbox '{question}': {e}")
 
     def _apply_select(self, field: dict, answer: str) -> None:
-        """Apply an answer to a select field, re-finding the element to avoid stale references."""
+        """Apply an answer to a select field using React-aware value setter."""
         question = field["question"]
 
-        # Re-find the select element by label to avoid stale element reference
         el = None
         try:
             for sel in self.driver.find_elements(By.XPATH, "//select"):
@@ -576,57 +592,58 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
         el = el or field["el"]
 
         try:
-            sel_obj = Select(el)
-            # Iterate option elements directly — avoids encoding/whitespace mismatch from JS text
-            opt_elements = sel_obj.options
+            opt_elements = Select(el).options
             answer_n = _normalize(answer)
+            option_map: dict = field.get("_option_map", {})
 
-            # 0. Direct value match — AI was given values, so try exact hit first
-            for opt_el in opt_elements:
-                val = opt_el.get_attribute("value")
-                if val and _normalize(val) == answer_n:
-                    sel_obj.select_by_value(val)
-                    logger.info(f"Selected by value '{val}' for '{question}'")
-                    return
+            matched_val = None
+            matched_label = None
 
-            # 1. Exact normalized match on text
-            for opt_el in opt_elements:
-                if not opt_el.get_attribute("value"):
-                    continue
-                if _normalize(opt_el.text) == answer_n:
-                    sel_obj.select_by_value(opt_el.get_attribute("value"))
-                    logger.info(f"Selected '{opt_el.text.strip()}' for '{question}'")
-                    return
+            # 0. Label→value map (AI was given labels, try direct lookup first)
+            for label, val in option_map.items():
+                if _normalize(label) == answer_n:
+                    matched_val, matched_label = val, label
+                    break
 
-            # 2. Substring normalized match
-            for opt_el in opt_elements:
-                if not opt_el.get_attribute("value"):
-                    continue
-                opt_n = _normalize(opt_el.text)
-                if answer_n in opt_n or opt_n in answer_n:
-                    sel_obj.select_by_value(opt_el.get_attribute("value"))
-                    logger.info(f"Selected '{opt_el.text.strip()}' (substring) for '{question}'")
-                    return
+            # 1. Substring on label map
+            if not matched_val:
+                for label, val in option_map.items():
+                    lbl_n = _normalize(label)
+                    if answer_n in lbl_n or lbl_n in answer_n:
+                        matched_val, matched_label = val, label
+                        break
 
-            # 3. Word-overlap match
-            answer_words = set(answer_n.split())
-            for opt_el in opt_elements:
-                if not opt_el.get_attribute("value"):
-                    continue
-                opt_words = set(_normalize(opt_el.text).split())
-                if answer_words & opt_words:
-                    sel_obj.select_by_value(opt_el.get_attribute("value"))
-                    logger.info(f"Selected '{opt_el.text.strip()}' (word-match) for '{question}'")
-                    return
+            # 2. Word-overlap on label map
+            if not matched_val:
+                answer_words = set(answer_n.split())
+                for label, val in option_map.items():
+                    if answer_words & set(_normalize(label).split()):
+                        matched_val, matched_label = val, label
+                        break
 
-            # 4. Fallback: first non-placeholder option
-            for opt_el in opt_elements:
-                if opt_el.get_attribute("value"):
-                    sel_obj.select_by_value(opt_el.get_attribute("value"))
-                    logger.warning(f"No match for '{answer}' in '{question}' — selected first: '{opt_el.text.strip()}'")
-                    return
+            # 3. Direct value match from DOM (fallback when no label map)
+            if not matched_val:
+                for opt_el in opt_elements:
+                    val = opt_el.get_attribute("value")
+                    if val and _normalize(val) == answer_n:
+                        matched_val, matched_label = val, opt_el.text.strip()
+                        break
 
-            logger.warning(f"No options available for '{question}'")
+            # 4. First non-placeholder option
+            if not matched_val:
+                for opt_el in opt_elements:
+                    val = opt_el.get_attribute("value")
+                    if val:
+                        matched_val, matched_label = val, opt_el.text.strip()
+                        logger.warning(f"No match for '{answer}' in '{question}' — falling back to first: '{matched_label}'")
+                        break
+
+            if matched_val:
+                self.driver.execute_script(_REACT_SET_VALUE, el, matched_val)
+                time.sleep(0.3)
+                logger.info(f"Selected '{matched_label}' for '{question}'")
+            else:
+                logger.warning(f"No options available for '{question}'")
         except Exception as e:
             logger.warning(f"Failed to select for '{question}': {e}")
 

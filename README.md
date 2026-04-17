@@ -45,12 +45,12 @@ TELEGRAM_ADMIN_ID=your_personal_id # your personal chat ID for commands
 # LLM provider: "claude" or "langchain" (Ollama)
 LLM_PROVIDER=langchain
 CLAUDE_MODEL=claude-haiku-4-5-20251001
-LANGCHAIN_MODEL=llama3.1:8b
+LANGCHAIN_MODEL=deepseek-r1:14b        # recommended local model
 LANGCHAIN_BASE_URL=http://localhost:11434
 
 # Separate provider for job evaluation (optional, falls back to LLM_PROVIDER)
-LLM_PROVIDER_EVAL=claude
-LANGCHAIN_MODEL_EVAL=llama3.1:8b
+LLM_PROVIDER_EVAL=langchain
+LANGCHAIN_MODEL_EVAL=deepseek-r1:14b   # recommended local model
 ```
 
 > Set `HEADLESS=TRUE` to run Chrome in the background (no visible window).

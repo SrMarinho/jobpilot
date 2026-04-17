@@ -9,6 +9,9 @@ MAX_DESCRIPTION_CHARS = 3000
 
 _EN_WORDS = {"the ", " and ", " for ", " with ", " are ", " our ", " you ",
              " will ", " this ", " that ", " have ", " from ", " your ", " we "}
+_ES_WORDS = {"buscamos", "requisitos", "experiencia", "conocimientos", "nuestro",
+             "nuestra", " equipo", "también", " muy ", " pero ", "trabajar",
+             "empresa", " años", "hablar", " español", "buscar"}
 _PT_WORDS = {" de ", " para ", " com ", " em ", " que ", " não ", " uma ",
              " sua ", " seu ", " por ", " das ", " dos ", " uma ", " isso "}
 
@@ -98,9 +101,13 @@ class JobEvaluator:
         """Returns True if the description is clearly not in Portuguese."""
         text = description[:2000].lower()
         en = sum(1 for w in _EN_WORDS if w in text)
+        es = sum(1 for w in _ES_WORDS if w in text)
         pt = sum(1 for w in _PT_WORDS if w in text)
-        if en >= 4 and pt == 0:
+        if en >= 3 and pt <= 1:
             logger.info(f"Quick reject (language: likely English — en={en}, pt={pt})")
+            return True
+        if es >= 3 and pt <= 1:
+            logger.info(f"Quick reject (language: likely Spanish — es={es}, pt={pt})")
             return True
         return False
 
