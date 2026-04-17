@@ -77,14 +77,50 @@ devops|4|3-6 meses"""
     return {"category": "general", "level": 3, "estimate": "desconhecido"}
 
 
+_NULL_SKILLS = {"none", "null", "nenhum", "nenhuma", "n/a", "não sei", "nao sei"}
+
+_SKILL_SUFFIXES = [" knowledge", " experience", " cloud", " fluente", " fluent"]
+_SKILL_CANONICAL: dict[str, str] = {
+    "springboot": "spring boot",
+    "machine-learning": "machine learning",
+    "data-science": "data science",
+    "cloud-architecture": "cloud architecture",
+    "small-language-models": "small language models",
+    "kafka/sqs/sns": "kafka",
+}
+
+
+def _canonical_skill(skill: str) -> str:
+    s = skill.lower().strip()
+    s = re.sub(r"\s*\(.*?\)", "", s)     # remove parentheses: "aws (s3/...)" → "aws"
+    s = re.sub(r"[-_/]", " ", s)         # hyphens/slashes to spaces
+    s = re.sub(r"\s+", " ", s).strip()
+    for suffix in _SKILL_SUFFIXES:
+        if s.endswith(suffix):
+            s = s[: -len(suffix)].strip()
+    return _SKILL_CANONICAL.get(s, s)
+
+
 async def track_missing_skills_async(missing: list[str]) -> None:
     if not missing:
+        return
+
+    # Filter null values and normalize to canonical names
+    cleaned = []
+    for s in missing:
+        if s.lower().strip() in _NULL_SKILLS:
+            continue
+        canonical = _canonical_skill(s)
+        if canonical and canonical not in _NULL_SKILLS:
+            cleaned.append(canonical)
+
+    if not cleaned:
         return
 
     skills = load_skills()
     today = date.today().isoformat()
 
-    new_skills = [s for s in missing if s not in skills]
+    new_skills = [s for s in cleaned if s not in skills]
 
     if new_skills:
         assessments = await asyncio.gather(*[_assess_skill_async(s) for s in new_skills])
@@ -92,7 +128,7 @@ async def track_missing_skills_async(missing: list[str]) -> None:
             skills[skill] = {**assessment, "count": 1, "last_seen": today}
             logger.info(f"New skill tracked: '{skill}' — {assessment['category']} level={assessment['level']} ({assessment['estimate']})")
 
-    for skill in missing:
+    for skill in cleaned:
         if skill in skills and skill not in new_skills:
             skills[skill]["count"] = skills[skill].get("count", 0) + 1
             skills[skill]["last_seen"] = today
