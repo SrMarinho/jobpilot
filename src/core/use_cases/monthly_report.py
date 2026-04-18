@@ -165,6 +165,92 @@ def generate_report(year: int, month: int) -> dict:
     }
 
 
+def generate_year_report(year: int) -> dict:
+    applied = _load_json(_APPLIED_FILE)
+    rejected = _load_json(_REJECTED_FILE)
+    prefix = str(year)
+
+    applications = sum(_count_entries_in_month(applied, "applied_at", year, m) for m in range(1, 13))
+    connections = _count_connections_in_month(year, 0)  # handled below
+    rejections = sum(_count_entries_in_month(rejected, "rejected_at", year, m) for m in range(1, 13))
+
+    # Connections: sum all months of the year
+    conn_log = _load_json(_CONNECTIONS_FILE)
+    connections = sum(v for k, v in conn_log.items() if k.startswith(prefix))
+
+    # Merge breakdowns across all months
+    breakdown: dict[str, int] = {}
+    level_breakdown: dict[str, int] = {}
+    for m in range(1, 13):
+        for k, v in _rejection_breakdown(rejected, year, m).items():
+            breakdown[k] = breakdown.get(k, 0) + v
+        for k, v in _level_breakdown(applied, year, m).items():
+            level_breakdown[k] = level_breakdown.get(k, 0) + v
+
+    # Avg salary across year
+    mk_prefix = str(year)
+    salaries = [
+        v["salary_offered"] for v in applied.values()
+        if isinstance(v, dict)
+        and (v.get("applied_at") or "").startswith(mk_prefix)
+        and v.get("salary_offered")
+    ]
+    avg_salary = int(sum(salaries) / len(salaries)) if salaries else None
+
+    total_seen = applications + rejections
+    match_rate = round(applications / total_seen * 100) if total_seen else 0
+
+    return {
+        "year": year,
+        "month": f"{year}-annual",
+        "applications": applications,
+        "connections": connections,
+        "rejections": rejections,
+        "rejection_breakdown": breakdown,
+        "level_breakdown": level_breakdown,
+        "match_rate_pct": match_rate,
+        "avg_salary_offered": avg_salary,
+        "top_skills": [{"skill": s, "count": c} for s, c in _top_skills_global(3)],
+        "top_skills_month": [],
+        "prev_applications": None,
+        "prev_connections": None,
+    }
+
+
+def _format_year_report(report: dict) -> str:
+    year = report.get("year", "")
+    breakdown = report.get("rejection_breakdown", {})
+    breakdown_lines = "".join(
+        f"\n    • {k}: {v}x" for k, v in sorted(breakdown.items(), key=lambda x: -x[1])
+    )
+    level_breakdown = report.get("level_breakdown", {})
+    _level_order = ["junior", "pleno", "senior", "unknown"]
+    level_lines = "".join(
+        f"\n    • {k}: {v}x"
+        for k in _level_order
+        if (v := level_breakdown.get(k, 0)) > 0
+    )
+    skills_lines = "".join(
+        f"\n    {i+1}. {s['skill']} ({s['count']}x)"
+        for i, s in enumerate(report.get("top_skills", []))
+    )
+    salary_line = (
+        f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(",", ".")
+        if report.get("avg_salary_offered") else ""
+    )
+    return (
+        f"📊 <b>Relatório Anual — {year}</b>\n\n"
+        f"✅ Candidaturas enviadas: <b>{report['applications']}</b>\n"
+        f"🤝 Conexões feitas: <b>{report['connections']}</b>\n"
+        f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
+        f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
+        f"{salary_line}\n\n"
+        f"🎓 <b>Candidaturas por nível:</b>{level_lines or ' —'}\n\n"
+        f"📋 <b>Motivos de rejeição:</b>{breakdown_lines or ' —'}\n\n"
+        f"🔥 <b>Top 3 skills mais exigidas:</b>{skills_lines or ' —'}"
+    )
+
+
 def _save_report(report: dict) -> None:
     _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     path = _REPORTS_DIR / f"{report['month']}.json"
