@@ -122,16 +122,21 @@ async def track_missing_skills_async(missing: list[str]) -> None:
 
     new_skills = [s for s in cleaned if s not in skills]
 
+    month = today[:7]  # YYYY-MM
+
     if new_skills:
         assessments = await asyncio.gather(*[_assess_skill_async(s) for s in new_skills])
         for skill, assessment in zip(new_skills, assessments):
-            skills[skill] = {**assessment, "count": 1, "last_seen": today}
+            skills[skill] = {**assessment, "count": 1, "last_seen": today, "month_counts": {month: 1}}
             logger.info(f"New skill tracked: '{skill}' — {assessment['category']} level={assessment['level']} ({assessment['estimate']})")
 
     for skill in cleaned:
         if skill in skills and skill not in new_skills:
-            skills[skill]["count"] = skills[skill].get("count", 0) + 1
-            skills[skill]["last_seen"] = today
+            entry = skills[skill]
+            entry["count"] = entry.get("count", 0) + 1
+            entry["last_seen"] = today
+            mc = entry.setdefault("month_counts", {})
+            mc[month] = mc.get(month, 0) + 1
 
     save_skills(skills)
 

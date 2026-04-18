@@ -80,22 +80,60 @@ def _avg_salary(applied: dict, year: int, month: int) -> int | None:
     return int(sum(salaries) / len(salaries)) if salaries else None
 
 
-def _top_skills(n: int = 3) -> list[tuple[str, int]]:
+def _top_skills_global(n: int = 3) -> list[tuple[str, int]]:
     skills = _load_json(_SKILLS_FILE)
     sorted_skills = sorted(skills.items(), key=lambda x: x[1].get("count", 0), reverse=True)
     return [(name, data.get("count", 0)) for name, data in sorted_skills[:n]]
 
 
+def _top_skills_month(year: int, month: int, n: int = 3) -> list[tuple[str, int]]:
+    skills = _load_json(_SKILLS_FILE)
+    mk = _month_key(year, month)
+    month_skills = [
+        (name, data.get("month_counts", {}).get(mk, 0))
+        for name, data in skills.items()
+        if data.get("month_counts", {}).get(mk, 0) > 0
+    ]
+    return sorted(month_skills, key=lambda x: -x[1])[:n]
+
+
+def _load_prev_report(year: int, month: int) -> dict | None:
+    if month == 1:
+        prev_year, prev_month = year - 1, 12
+    else:
+        prev_year, prev_month = year, month - 1
+    path = _REPORTS_DIR / f"{_month_key(prev_year, prev_month)}.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+
+def _delta(current: int, previous: int | None) -> str:
+    if previous is None:
+        return ""
+    diff = current - previous
+    if diff > 0:
+        return f" (↑{diff})"
+    if diff < 0:
+        return f" (↓{abs(diff)})"
+    return " (=)"
+
+
 def generate_report(year: int, month: int) -> dict:
     applied = _load_json(_APPLIED_FILE)
     rejected = _load_json(_REJECTED_FILE)
+    prev = _load_prev_report(year, month)
 
     applications = _count_entries_in_month(applied, "applied_at", year, month)
     connections = _count_connections_in_month(year, month)
     rejections = _count_entries_in_month(rejected, "rejected_at", year, month)
     breakdown = _rejection_breakdown(rejected, year, month)
     avg_salary = _avg_salary(applied, year, month)
-    top_skills = _top_skills(3)
+    top_skills = _top_skills_global(3)
+    top_skills_month = _top_skills_month(year, month, 3)
     total_seen = applications + rejections
     match_rate = round(applications / total_seen * 100) if total_seen else 0
 
@@ -108,6 +146,9 @@ def generate_report(year: int, month: int) -> dict:
         "match_rate_pct": match_rate,
         "avg_salary_offered": avg_salary,
         "top_skills": [{"skill": s, "count": c} for s, c in top_skills],
+        "top_skills_month": [{"skill": s, "count": c} for s, c in top_skills_month],
+        "prev_applications": prev.get("applications") if prev else None,
+        "prev_connections": prev.get("connections") if prev else None,
     }
 
 
@@ -121,12 +162,24 @@ def _save_report(report: dict) -> None:
 def _format_report(report: dict) -> str:
     month_label = datetime.strptime(report["month"], "%Y-%m").strftime("%B %Y").capitalize()
     breakdown = report.get("rejection_breakdown", {})
+
+    apps = report["applications"]
+    conns = report["connections"]
+    apps_delta = _delta(apps, report.get("prev_applications"))
+    conns_delta = _delta(conns, report.get("prev_connections"))
+
     breakdown_lines = "".join(
         f"\n    • {k}: {v}x" for k, v in sorted(breakdown.items(), key=lambda x: -x[1])
     )
-    skills_lines = "".join(
+    skills_month = report.get("top_skills_month", [])
+    skills_month_lines = "".join(
         f"\n    {i+1}. {s['skill']} ({s['count']}x)"
-        for i, s in enumerate(report.get("top_skills", []))
+        for i, s in enumerate(skills_month)
+    )
+    skills_global = report.get("top_skills", [])
+    skills_global_lines = "".join(
+        f"\n    {i+1}. {s['skill']} ({s['count']}x)"
+        for i, s in enumerate(skills_global)
     )
     salary_line = (
         f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(",", ".")
@@ -135,13 +188,14 @@ def _format_report(report: dict) -> str:
 
     return (
         f"📊 <b>Relatório Mensal — {month_label}</b>\n\n"
-        f"✅ Candidaturas enviadas: <b>{report['applications']}</b>\n"
-        f"🤝 Conexões feitas: <b>{report['connections']}</b>\n"
+        f"✅ Candidaturas enviadas: <b>{apps}</b>{apps_delta}\n"
+        f"🤝 Conexões feitas: <b>{conns}</b>{conns_delta}\n"
         f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
         f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
         f"{salary_line}\n\n"
         f"📋 <b>Motivos de rejeição:</b>{breakdown_lines or ' —'}\n\n"
-        f"🔥 <b>Top 3 skills mais exigidas:</b>{skills_lines or ' —'}"
+        f"🚫 <b>Skills que mais bloquearam este mês:</b>{skills_month_lines or ' —'}\n\n"
+        f"🔥 <b>Top 3 skills mais exigidas (histórico):</b>{skills_global_lines or ' —'}"
     )
 
 
