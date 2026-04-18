@@ -61,6 +61,15 @@ class AppliedJobsTracker:
     def already_rejected(self, job_url: str) -> bool:
         return self._job_id(job_url) in self._rejected
 
+    @staticmethod
+    def _detect_level(title: str) -> str:
+        from src.core.use_cases.job_evaluator import _LEVEL_KEYWORDS, _normalize
+        title_n = _normalize(title)
+        for level, keywords in _LEVEL_KEYWORDS.items():
+            if any(kw in title_n for kw in keywords):
+                return level
+        return "unknown"
+
     def mark_applied(self, job_url: str, title: str, salary: int | None = None, company: str = ""):
         job_id = self._job_id(job_url)
         self._applied[job_id] = {
@@ -69,6 +78,7 @@ class AppliedJobsTracker:
             "url": job_url,
             "applied_at": datetime.now().isoformat(),
             "salary_offered": salary,
+            "level": self._detect_level(title),
         }
         self._save_applied()
         logger.info(f"Saved application: '{title}' at '{company}' (id={job_id})")

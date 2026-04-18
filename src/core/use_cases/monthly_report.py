@@ -80,6 +80,17 @@ def _avg_salary(applied: dict, year: int, month: int) -> int | None:
     return int(sum(salaries) / len(salaries)) if salaries else None
 
 
+def _level_breakdown(applied: dict, year: int, month: int) -> dict:
+    prefix = _month_key(year, month)
+    breakdown: dict[str, int] = {}
+    for v in applied.values():
+        if not isinstance(v, dict) or not (v.get("applied_at") or "").startswith(prefix):
+            continue
+        level = v.get("level", "unknown")
+        breakdown[level] = breakdown.get(level, 0) + 1
+    return breakdown
+
+
 def _top_skills_global(n: int = 3) -> list[tuple[str, int]]:
     skills = _load_json(_SKILLS_FILE)
     sorted_skills = sorted(skills.items(), key=lambda x: x[1].get("count", 0), reverse=True)
@@ -131,6 +142,7 @@ def generate_report(year: int, month: int) -> dict:
     connections = _count_connections_in_month(year, month)
     rejections = _count_entries_in_month(rejected, "rejected_at", year, month)
     breakdown = _rejection_breakdown(rejected, year, month)
+    level_breakdown = _level_breakdown(applied, year, month)
     avg_salary = _avg_salary(applied, year, month)
     top_skills = _top_skills_global(3)
     top_skills_month = _top_skills_month(year, month, 3)
@@ -143,6 +155,7 @@ def generate_report(year: int, month: int) -> dict:
         "connections": connections,
         "rejections": rejections,
         "rejection_breakdown": breakdown,
+        "level_breakdown": level_breakdown,
         "match_rate_pct": match_rate,
         "avg_salary_offered": avg_salary,
         "top_skills": [{"skill": s, "count": c} for s, c in top_skills],
@@ -186,6 +199,14 @@ def _format_report(report: dict) -> str:
         if report.get("avg_salary_offered") else ""
     )
 
+    level_breakdown = report.get("level_breakdown", {})
+    _level_order = ["junior", "pleno", "senior", "unknown"]
+    level_lines = "".join(
+        f"\n    • {k}: {v}x"
+        for k in _level_order
+        if (v := level_breakdown.get(k, 0)) > 0
+    )
+
     return (
         f"📊 <b>Relatório Mensal — {month_label}</b>\n\n"
         f"✅ Candidaturas enviadas: <b>{apps}</b>{apps_delta}\n"
@@ -193,6 +214,7 @@ def _format_report(report: dict) -> str:
         f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
         f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
         f"{salary_line}\n\n"
+        f"🎓 <b>Candidaturas por nível:</b>{level_lines or ' —'}\n\n"
         f"📋 <b>Motivos de rejeição:</b>{breakdown_lines or ' —'}\n\n"
         f"🚫 <b>Skills que mais bloquearam este mês:</b>{skills_month_lines or ' —'}\n\n"
         f"🔥 <b>Top 3 skills mais exigidas (histórico):</b>{skills_global_lines or ' —'}"
