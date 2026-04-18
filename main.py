@@ -126,6 +126,7 @@ def parse_args():
     connect_parser.add_argument("--start-page", type=int, default=None, help="Page to start from (default: 1)")
     connect_parser.add_argument("--max-pages", type=int, default=100, help="Max pages to process (default: 100)")
     connect_parser.add_argument("--continue", dest="resume", action="store_true", help="Resume from the last page where it stopped")
+    connect_parser.add_argument("--scheduled", action="store_true", help="Scheduled mode: skip if already ran today or weekly limit reached")
 
     apply_parser = subparsers.add_parser("apply", help="Apply to jobs via Easy Apply")
     apply_parser.add_argument("--url", type=str, default=None, help="Job search URL (uses last saved URL if omitted)")
@@ -718,15 +719,13 @@ def main():
             if eval_prov:
                 print(f"Eval provider: {eval_prov}" + (f" model={eval_mod}" if eval_mod else ""))
 
-    if args.task == "connect" and is_already_ran_today():
-        logger.info("Already ran today. Skipping.")
-        return
-
-    if args.task == "connect" and is_weekly_limit_reached():
-        logger.info("Weekly connection limit already reached this week. Skipping.")
-        return
-
-    if args.task == "connect":
+    if args.task == "connect" and getattr(args, "scheduled", False):
+        if is_already_ran_today():
+            logger.info("Already ran today. Skipping.")
+            return
+        if is_weekly_limit_reached():
+            logger.info("Weekly connection limit already reached this week. Skipping.")
+            return
         save_ran_today()
 
     def on_page_change(page: int):
