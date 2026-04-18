@@ -226,20 +226,30 @@ The bot sends a Telegram notification to your channel every time an application 
 
 ### Monthly report
 
-Generates and sends a summary of the previous month via Telegram:
+Prints a summary to the terminal. Use `--telegram` to also send via Telegram.
 
 ```bash
-# Send report now (always sends — manual use)
+# Current month (default)
 uv run main.py report
 
-# Send report for a specific month
-uv run main.py report --month 2025-03
+# Previous month
+uv run main.py report --prev
 
-# Scheduled mode: sends only once per month, skips if already sent
+# Specific month
+uv run main.py report --month 2026-03
+
+# Annual summary
+uv run main.py report --year 2026
+
+# Any of the above + send via Telegram
+uv run main.py report --telegram
+uv run main.py report --prev --telegram
+
+# Scheduled mode: sends via Telegram only once per month, skips if already sent
 uv run main.py report --scheduled
 ```
 
-The report includes: applications sent, connections made, rejection breakdown by reason, match rate, average estimated salary, top skills that blocked jobs this month, and evolution vs the previous month (↑/↓).
+The report includes: applications sent, connections made, rejection breakdown by reason, seniority level breakdown, match rate, average estimated salary, top skills that blocked jobs this month, and evolution vs the previous month (↑/↓).
 
 Reports are saved to `files/monthly_reports/YYYY-MM.json` for historical reference.
 
