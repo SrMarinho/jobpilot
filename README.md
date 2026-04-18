@@ -100,8 +100,10 @@ All parameters are saved per site (`apply_linkedin`, `apply_glassdoor`, `apply_i
 | `--url` | First run only | Job search URL (LinkedIn: enable Easy Apply filter with `f_AL=true`) |
 | `--resume` | No | Path to resume PDF or TXT (default: `resume.txt`) |
 | `--preferences` | No | Preferences to guide evaluation (e.g. `'prefer backend, Python, remote'`) |
-| `--level` | No | Seniority level filter: `junior`, `pleno`, `senior` |
+| `--level` | No | Seniority level filter (multiple allowed): `junior`, `pleno`, `senior` |
 | `--max-pages` | No | Max pages to process (default: 100) |
+| `--max-applications` | No | Stop after N applications (default: unlimited) |
+| `--no-save` | No | Run without overwriting the saved URL/config for this site |
 | `--site` | No | Resume saved config for a specific site: `linkedin`, `glassdoor`, `indeed` |
 | `--eval-provider` | No | Override eval AI for this run only: `claude` or `langchain` |
 | `--eval-model` | No | Override eval model for this run only |
@@ -113,9 +115,9 @@ All parameters are saved per site (`apply_linkedin`, `apply_glassdoor`, `apply_i
 uv run main.py apply \
   --url "https://www.linkedin.com/jobs/search/?keywords=python+developer&f_AL=true" \
   --resume "resume.pdf" \
-  --preferences "prefer backend, Python, remote" \
-  --level pleno \
-  --eval-provider claude
+  --preferences "Python ou Node.js backend, remoto, apenas vagas em português" \
+  --level junior pleno \
+  --eval-provider langchain
 ```
 
 ---
@@ -219,6 +221,29 @@ uv run main.py bot
 | `/help` | List all commands |
 
 The bot sends a Telegram notification to your channel every time an application is submitted.
+
+---
+
+### Monthly report
+
+Generates and sends a summary of the previous month via Telegram:
+
+```bash
+# Send report now (always sends — manual use)
+uv run main.py report
+
+# Send report for a specific month
+uv run main.py report --month 2025-03
+
+# Scheduled mode: sends only once per month, skips if already sent
+uv run main.py report --scheduled
+```
+
+The report includes: applications sent, connections made, rejection breakdown by reason, match rate, average estimated salary, top skills that blocked jobs this month, and evolution vs the previous month (↑/↓).
+
+Reports are saved to `files/monthly_reports/YYYY-MM.json` for historical reference.
+
+> To automate: create a Windows Task Scheduler task pointing to `local/startup_report.bat` with an **At startup** trigger. The `--scheduled` flag ensures it only sends once per month regardless of how many times the PC boots.
 
 ---
 
