@@ -250,7 +250,15 @@ class JobApplicationHandler:
                         sel
                     )
                     current_val = sel_data["val"] or ""
-                    non_empty = [o for o in sel_data["opts"] if o["v"]]
+                    # Exclude placeholder options: empty value OR text that looks like a placeholder
+                    _placeholder_texts = {
+                        "select an option", "selecione uma opção", "selecione uma opcao",
+                        "choose an option", "please select", "select", "choose", "pick one",
+                    }
+                    non_empty = [
+                        o for o in sel_data["opts"]
+                        if o["v"] and _normalize(o["t"]) not in _placeholder_texts
+                    ]
                     if current_val and any(o["v"] == current_val for o in non_empty):
                         logger.info(f"Select already filled (val={current_val!r}), skipping")
                         continue
