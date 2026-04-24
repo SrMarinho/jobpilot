@@ -143,10 +143,12 @@ def parse_args():
     apply_parser.add_argument("--eval-provider", choices=["claude", "langchain"], default=None, metavar="BACKEND", help="Override eval provider for this run only (claude or langchain)")
     apply_parser.add_argument("--eval-model", type=str, default=None, metavar="MODEL", help="Override eval model for this run only")
     apply_parser.add_argument("--no-save", dest="no_save", action="store_true", help="Run without saving/overwriting the last URL")
+    apply_parser.add_argument("--no-submit", dest="no_submit", action="store_true", help="Fill forms but do not submit (for testing)")
 
     test_parser = subparsers.add_parser("test-apply", help="Test Easy Apply on a specific job URL (skips evaluation)")
     test_parser.add_argument("job_url", type=str, help="LinkedIn job URL (e.g. https://www.linkedin.com/jobs/view/1234567890)")
     test_parser.add_argument("--resume", type=str, default=None, help="Path to resume file (default: resume.txt)")
+    test_parser.add_argument("--no-submit", dest="no_submit", action="store_true", help="Fill forms but do not submit the application")
 
     bot_parser = subparsers.add_parser("bot", help="Start Telegram bot to control JobPilot remotely")
     bot_parser.add_argument("--resume", type=str, default="resume.txt", help="Path to resume file (default: resume.txt)")
@@ -555,9 +557,13 @@ def main():
             print(f"Applying to: {title}")
             btn.click()
             time.sleep(1.5)
+            no_submit = getattr(args, "no_submit", False)
             handler = JobApplicationHandler(driver, resume=resume_text)
-            success = handler.submit_easy_apply(job_title=title, job_description=description)
-            print(f"Result: {'SUCCESS' if success else 'FAILED'}")
+            success = handler.submit_easy_apply(job_title=title, job_description=description, no_submit=no_submit)
+            if no_submit:
+                print("Dry run complete — form was filled but not submitted.")
+            else:
+                print(f"Result: {'SUCCESS' if success else 'FAILED'}")
         finally:
             try:
                 input("Press Enter to close browser...")
@@ -753,7 +759,7 @@ def main():
                 save_weekly_limit_reached()
                 logger.info("Weekly limit reached — saved. Will skip until next week.")
         elif args.task == "apply":
-            JobApplicationManager(driver, url=url, resume_path=resume_path, preferences=preferences, level=level, max_pages=args.max_pages, max_applications=getattr(args, "max_applications", 0), start_page=start_page, on_page_change=on_page_change).run()
+            JobApplicationManager(driver, url=url, resume_path=resume_path, preferences=preferences, level=level, max_pages=args.max_pages, max_applications=getattr(args, "max_applications", 0), start_page=start_page, on_page_change=on_page_change, no_submit=getattr(args, "no_submit", False)).run()
         try:
             driver.save_screenshot(f"{setting.screenshots_path}.png")
         except Exception:

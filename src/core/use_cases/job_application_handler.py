@@ -74,6 +74,20 @@ _REACT_SET_VALUE = """
 })(arguments[0], arguments[1]);
 """
 
+# React-aware select setter — uses HTMLSelectElement.prototype.value setter
+_REACT_SET_SELECT = """
+(function(el, val) {
+    var setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value');
+    if (setter && setter.set) {
+        setter.set.call(el, val);
+    } else {
+        el.value = val;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+})(arguments[0], arguments[1]);
+"""
+
 
 class JobApplicationHandler:
     MAX_STEPS = 10
@@ -89,6 +103,7 @@ class JobApplicationHandler:
         salary_expectation: int | None = None,
         job_title: str = "",
         job_description: str = "",
+        no_submit: bool = False,
     ) -> bool:
         self.job_title = job_title
         self.job_description = job_description[:1500]
@@ -108,8 +123,12 @@ class JobApplicationHandler:
                     self._close_modal()
                     return False
 
-                if self._try_submit():
+                if not no_submit and self._try_submit():
                     return True
+
+                if no_submit and self._is_submit_step():
+                    logger.info("no_submit=True — stopping before final submit")
+                    return False
 
                 if not self._click_next():
                     logger.warning(f"No actionable button on step {step + 1} — skipping")
@@ -167,10 +186,10 @@ class JobApplicationHandler:
             else:
                 logger.debug("Modal not found — searching full page")
 
-            # ── text / number / tel inputs (all visible, not just @required) ──
+            # ── text / number / tel / email / search inputs (all visible) ──
             inputs = scope.find_elements(
                 By.XPATH,
-                ".//input[@type!='hidden' and (@type='text' or @type='number' or @type='tel')]"
+                ".//input[@type!='hidden' and (@type='text' or @type='number' or @type='tel' or @type='email' or @type='search')]"
             )
             for inp in inputs:
                 if not inp.is_displayed():
@@ -219,9 +238,11 @@ class JobApplicationHandler:
 
             # ── select dropdowns ──────────────────────────────────────────────
             selects = scope.find_elements(By.XPATH, ".//select")
+            logger.info(f"Select elements found in scope: {len(selects)}")
             for sel in selects:
                 try:
                     if not sel.is_displayed():
+                        logger.warning(f"Select not displayed (hidden?): id={sel.get_attribute('id')!r}")
                         continue
                     sel_data = self.driver.execute_script(
                         "var s=arguments[0]; return {val:s.value,"
@@ -231,15 +252,19 @@ class JobApplicationHandler:
                     current_val = sel_data["val"] or ""
                     non_empty = [o for o in sel_data["opts"] if o["v"]]
                     if current_val and any(o["v"] == current_val for o in non_empty):
+                        logger.info(f"Select already filled (val={current_val!r}), skipping")
                         continue
                     question = self._get_field_label(sel)
                     if not question or question == "(unknown)":
+                        logger.warning(f"Select label unknown, skipping: id={sel.get_attribute('id')!r}")
                         continue
                     option_labels = [o["t"] for o in non_empty]
                     if not option_labels:
+                        logger.warning(f"Select has no options, skipping: id={sel.get_attribute('id')!r}")
                         continue
                     fields.append({"el": sel, "question": question, "type": "choice", "options": option_labels, "_option_map": {o["t"]: o["v"] for o in non_empty}, "error": None, "current_value": ""})
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Error processing select: {e}")
                     continue
 
             # ── radio button groups ───────────────────────────────────────────
@@ -578,9 +603,12 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
             logger.warning(f"Failed to handle checkbox '{question}': {e}")
 
     def _apply_select(self, field: dict, answer: str) -> None:
-        """Apply an answer to a select field with smart retry on validation error."""
+        """Apply an answer to a select field."""
         question = field["question"]
+        option_map: dict = field.get("_option_map", {})
+        options = field.get("options", [])
 
+        # Re-find element fresh to avoid stale reference
         el = None
         try:
             for sel in self.driver.find_elements(By.XPATH, "//select"):
@@ -592,80 +620,103 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
         el = el or field["el"]
 
         try:
-            opt_elements = Select(el).options
             answer_n = _normalize(answer)
-            option_map: dict = field.get("_option_map", {})
 
-            # Build ordered candidate list: best match first, rest appended
-            seen_vals: set = set()
-            candidates: list[tuple[str, str]] = []  # (value, label)
-
-            def _add(val: str, label: str):
-                if val and val not in seen_vals:
-                    seen_vals.add(val)
-                    candidates.append((val, label))
+            # Build target value: best match first
+            target_val: str | None = None
+            target_label: str | None = None
 
             # 0. Exact label match
             for label, val in option_map.items():
-                if _normalize(label) == answer_n:
-                    _add(val, label)
+                if _normalize(label) == answer_n and val:
+                    target_val, target_label = val, label
+                    break
 
-            # 1. Substring on label
-            for label, val in option_map.items():
-                lbl_n = _normalize(label)
-                if answer_n in lbl_n or lbl_n in answer_n:
-                    _add(val, label)
+            # 1. Substring match
+            if not target_val:
+                for label, val in option_map.items():
+                    lbl_n = _normalize(label)
+                    if val and (answer_n in lbl_n or lbl_n in answer_n):
+                        target_val, target_label = val, label
+                        break
 
-            # 2. Word-overlap on label
-            answer_words = set(answer_n.split())
-            for label, val in option_map.items():
-                if answer_words & set(_normalize(label).split()):
-                    _add(val, label)
+            # 2. Word overlap
+            if not target_val:
+                answer_words = set(answer_n.split())
+                for label, val in option_map.items():
+                    if val and answer_words & set(_normalize(label).split()):
+                        target_val, target_label = val, label
+                        break
 
-            # 3. Direct value match from DOM
-            for opt_el in opt_elements:
-                val = opt_el.get_attribute("value")
-                if val and _normalize(val) == answer_n:
-                    _add(val, opt_el.text.strip())
+            # 3. First non-placeholder option as last resort
+            if not target_val:
+                for label, val in option_map.items():
+                    if val:
+                        target_val, target_label = val, label
+                        break
 
-            # 4. All remaining non-placeholder options as fallback pool
-            for opt_el in opt_elements:
-                val = opt_el.get_attribute("value")
-                if val:
-                    _add(val, opt_el.text.strip())
-
-            if not candidates:
-                logger.warning(f"No options available for '{question}'")
+            if not target_val:
+                logger.warning(f"No valid option found for '{question}'")
                 return
 
-            # Try candidates in order, stop at first with no validation error
-            for val, label in candidates:
+            logger.debug(f"Targeting option '{target_label}' (val={target_val!r}) for '{question}'")
+
+            # Scroll into view
+            try:
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                time.sleep(0.1)
+            except Exception:
+                pass
+
+            # Approach 1: Selenium Select (WebDriver-level click → triggers native browser events)
+            selected = False
+            try:
+                Select(el).select_by_value(target_val)
+                self.driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el
+                )
+                time.sleep(0.3)
+                current = self.driver.execute_script("return arguments[0].value;", el)
+                if current == target_val:
+                    logger.info(f"Selected '{target_label}' for '{question}'")
+                    selected = True
+            except Exception as e:
+                logger.debug(f"select_by_value failed for '{question}': {e}")
+
+            # Approach 2: React-aware prototype setter
+            if not selected:
+                try:
+                    self.driver.execute_script(_REACT_SET_SELECT, el, target_val)
+                    time.sleep(0.3)
+                    current = self.driver.execute_script("return arguments[0].value;", el)
+                    if current == target_val:
+                        logger.info(f"Selected '{target_label}' for '{question}' (react setter)")
+                        selected = True
+                except Exception as e:
+                    logger.debug(f"React setter failed for '{question}': {e}")
+
+            # Approach 3: JS click on select + option element
+            if not selected:
                 try:
                     opt_el = next(
-                        (o for o in Select(el).options if o.get_attribute("value") == val),
+                        (o for o in Select(el).options if o.get_attribute("value") == target_val),
                         None,
                     )
                     if opt_el:
-                        # Click the select to open it, then click the option via JS
                         self.driver.execute_script("arguments[0].click();", el)
                         time.sleep(0.2)
                         self.driver.execute_script("arguments[0].click();", opt_el)
-                    else:
-                        Select(el).select_by_value(val)
-                    # Dispatch React change event after selection
-                    self.driver.execute_script(
-                        "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el
-                    )
-                except Exception:
-                    self.driver.execute_script(_REACT_SET_VALUE, el, val)
-                time.sleep(0.3)
-                error = self._get_field_error(el)
-                if not error:
-                    logger.info(f"Selected '{label}' for '{question}'")
-                    return
-                logger.debug(f"Option '{label}' rejected by validation: {error} — trying next")
+                        time.sleep(0.3)
+                        current = self.driver.execute_script("return arguments[0].value;", el)
+                        if current == target_val:
+                            logger.info(f"Selected '{target_label}' for '{question}' (js click)")
+                            selected = True
+                except Exception as e:
+                    logger.debug(f"JS click failed for '{question}': {e}")
 
-            logger.warning(f"All options failed validation for '{question}' — leaving last selected")
+            if not selected:
+                logger.warning(f"Could not set select '{question}' to '{target_label}' — all approaches failed")
+
         except Exception as e:
             logger.warning(f"Failed to select for '{question}': {e}")
 
@@ -779,6 +830,22 @@ REGRAS OBRIGATÓRIAS:
             except Exception:
                 return False
 
+    def _is_submit_step(self) -> bool:
+        """Return True if the submit button is currently visible (last step of the form)."""
+        try:
+            self.driver.find_element(
+                By.XPATH,
+                "//button["
+                "contains(@aria-label,'Submit application') or "
+                "contains(@aria-label,'Enviar candidatura') or "
+                ".//span[normalize-space()='Submit application'] or "
+                ".//span[normalize-space()='Enviar candidatura']"
+                "]",
+            )
+            return True
+        except NoSuchElementException:
+            return False
+
     def _try_submit(self) -> bool:
         try:
             btn = self.driver.find_element(
@@ -850,10 +917,51 @@ REGRAS OBRIGATÓRIAS:
             if field_id:
                 labels = self.driver.find_elements(By.XPATH, f"//label[@for='{field_id}']")
                 if labels:
-                    return labels[0].text.strip()
-            placeholder = element.get_attribute("placeholder") or ""
+                    text = labels[0].text.strip()
+                    if text:
+                        return text
+
+            # aria-labelledby (used by LinkedIn artdeco components)
+            aria_labelledby = element.get_attribute("aria-labelledby") or ""
+            if aria_labelledby:
+                for lbl_id in aria_labelledby.split():
+                    try:
+                        lbl_el = self.driver.find_element(By.ID, lbl_id)
+                        text = lbl_el.text.strip()
+                        if text:
+                            return text
+                    except Exception:
+                        pass
+
             aria_label = element.get_attribute("aria-label") or ""
-            return placeholder or aria_label or "(unknown)"
+            if aria_label.strip():
+                return aria_label.strip()
+
+            placeholder = element.get_attribute("placeholder") or ""
+            if placeholder.strip():
+                return placeholder.strip()
+
+            # Walk up DOM: fieldset > legend, or wrapping label
+            result = self.driver.execute_script("""
+                var el = arguments[0];
+                for (var i = 0; i < 6; i++) {
+                    el = el.parentElement;
+                    if (!el) break;
+                    if (el.tagName === 'FIELDSET') {
+                        var leg = el.querySelector('legend');
+                        if (leg && leg.innerText.trim()) return leg.innerText.trim();
+                    }
+                    if (el.tagName === 'LABEL') {
+                        var t = el.innerText.trim();
+                        if (t) return t;
+                    }
+                }
+                return null;
+            """, element)
+            if result and result.strip():
+                return result.strip()
+
+            return "(unknown)"
         except Exception:
             return "(unknown)"
 

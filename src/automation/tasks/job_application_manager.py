@@ -49,6 +49,7 @@ class JobApplicationManager:
         start_page: int = 1,
         stop_event: threading.Event | None = None,
         on_page_change=None,
+        no_submit: bool = False,
     ):
         self.driver = driver
         self.base_url = url
@@ -73,6 +74,7 @@ class JobApplicationManager:
         self.max_applications = max_applications
         self.applied_count = 0
         self.evaluated_count = 0
+        self.no_submit = no_submit
 
         if self.site == "indeed":
             self.handler = IndeedApplicationHandler(driver, resume=self.evaluator.resume)
@@ -228,6 +230,7 @@ class JobApplicationManager:
                         salary_expectation=salary,
                         job_title=title,
                         job_description=description,
+                        no_submit=self.no_submit,
                     )
 
                 if success:
