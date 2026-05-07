@@ -70,3 +70,4 @@ bot_profile/
 resume.txt
 *.pdf
 CLAUDE.md
+.claude/
