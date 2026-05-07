@@ -131,6 +131,10 @@ class JobApplicationManager:
                 url = self.page.get_card_job_url(card)
                 if url:
                     return url
+            if self.site == "indeed" and hasattr(self.page, "get_card_job_id"):
+                jk = self.page.get_card_job_id(card)
+                if jk:
+                    return jk
         except Exception:
             pass
         try:
@@ -161,6 +165,8 @@ class JobApplicationManager:
                     job_url = f"glassdoor://job/{job_id}" if job_id else f"glassdoor://p{page_num}-c{i}"
                 elif self.site == "linkedin" and hasattr(self.page, "get_card_job_url"):
                     job_url = self.page.get_card_job_url(card)
+                elif self.site == "indeed" and hasattr(self.page, "get_card_job_url"):
+                    job_url = self.page.get_card_job_url(card) or None
                 else:
                     job_url = None
                 card_title = ""
