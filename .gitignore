@@ -67,6 +67,11 @@ local/
 !local/jobpilot_connect_task.xml
 !local/jobpilot_report_task.xml
 
+# Dados e caches locais (runtime, nao versionar)
+.local/
+.playwright-mcp/
+.temp/
+
 # Arquivos do projeto
 drivers/**/*
 !drivers/

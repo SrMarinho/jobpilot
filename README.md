@@ -4,15 +4,25 @@ Automated job application bot with AI-powered evaluation. Currently supports Lin
 
 ## Features
 
-- **Apply**: Evaluates jobs against your resume and applies automatically
-  - Filters by language (pt-BR only by default)
-  - Filters by seniority level
-  - Estimates salary expectation based on job and market data
-  - Answers custom form questions using AI
-  - Tracks applied jobs to avoid duplicates
-- **Connect**: Sends connection requests automatically (LinkedIn)
-- **Bot**: Control JobPilot remotely via Telegram — start/stop tasks, check status, and receive notifications for every application sent
-- **Provider**: Switch AI backends at runtime without editing `.env` manually
+- **Apply** — Evaluates jobs against your resume and applies automatically
+  - Built-in URL builder: `--keywords "python" --date-posted 24h` instead of pasting search URLs
+  - Multi-site: LinkedIn, Glassdoor, Indeed
+  - Filters by language (pt-BR by default) and seniority level
+  - AI estimates salary expectation based on job description and market data
+  - Answers custom form questions using LLM (cached in `files/qa.json`)
+  - Tracks applied and rejected jobs to avoid duplicates across runs
+  - Resume from interruption: `--continue` picks up at the last page
+- **Connect** — Sends LinkedIn connection requests automatically
+  - Built-in search: `--keywords "tech recruiter" --network S`
+  - Scheduled mode: runs once per day, respects weekly invite limits
+- **Search Builder** — Build LinkedIn/Indeed search URLs from CLI flags instead of pasting URLs
+- **Skills Tracker** — Identifies missing skills rejected by AI evaluations (`skills list` / `skills top`)
+- **Provider** — Switch AI backends at runtime (`provider set eval claude`)
+- **Answers** — Pre-fill form answers manually to skip redundant LLM calls (`answers fill`)
+- **Bot** — Control JobPilot remotely via Telegram bot
+- **Report** — Monthly statistics: applications, rejections, skills gap, salary averages
+- **Scheduled Tasks** — Windows Task Scheduler integration for fully automated daily runs
+- **test-apply** — Dry-run Easy Apply on a single job URL without evaluation
 
 ## Requirements
 
@@ -66,10 +76,33 @@ Your `chat.id` will appear in the response.
 Before running any task, log in to LinkedIn (or other supported sites) once so the session is saved to the browser profile:
 
 ```bash
+# Log in (browser opens — log in manually, then close)
 uv run main.py login linkedin
+uv run main.py login glassdoor
+uv run main.py login indeed
+
+# Log out (clears cookies for that site)
+uv run main.py logout linkedin
 ```
 
 A browser window will open. Log in normally, then close it. The session is persisted in `bot_profile/` and reused on every subsequent run.
+
+To switch accounts or clear a session, use `logout <site>`.
+
+## Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `login <site>` | Open browser to log in to linkedin/glassdoor/indeed |
+| `logout <site>` | Clear saved session for a site |
+| `apply` | Apply to jobs (search by keywords or URL) |
+| `connect` | Send LinkedIn connection requests |
+| `test-apply <url>` | Dry-run Easy Apply on a single job (no AI evaluation) |
+| `bot` | Start Telegram bot for remote control |
+| `provider show/set` | View or change LLM backends |
+| `answers list/show/set/fill/clear` | Manage cached form answers |
+| `skills list/top/clear` | View missing skills detected by AI |
+| `report` | Monthly statistics and reports |
 
 ## Usage
 
@@ -274,6 +307,70 @@ uv run main.py report --scheduled
 The report includes: applications sent, connections made, rejection breakdown by reason, seniority level breakdown, match rate, average estimated salary, top skills that blocked jobs this month, and evolution vs the previous month (↑/↓).
 
 Reports are saved to `files/monthly_reports/YYYY-MM.json` for historical reference.
+
+---
+
+### Skills tracking
+
+JobPilot tracks skills that are flagged as missing during AI job evaluation. This helps you identify what to learn next based on real market demands.
+
+```bash
+# List all missing skills sorted by demand frequency
+uv run main.py skills list
+
+# Filter by category
+uv run main.py skills list --category python
+
+# Filter by learning difficulty (1=days, 5=1+ year)
+uv run main.py skills list --level 3
+
+# Show top N most demanded skills
+uv run main.py skills top --n 15
+
+# Clear all tracked skills
+uv run main.py skills clear
+```
+
+Each skill entry includes:
+- **Category**: python, node, frontend, devops, data, general
+- **Level**: estimated learning time (1=dias, 2=semanas, 3=1-3 meses, 4=3-12 meses, 5=1+ ano)
+- **Count**: how many job rejections were due to this skill
+- **Estimate**: AI-estimated time to learn
+
+---
+
+### Test Easy Apply
+
+Test the form-filling pipeline on a single job without going through the evaluation flow. Useful for debugging form fields and validating that Q&A works correctly.
+
+```bash
+# Test apply — fills everything but does NOT submit
+uv run main.py test-apply "https://www.linkedin.com/jobs/view/1234567890" --no-submit
+
+# Test with custom resume
+uv run main.py test-apply "https://www.linkedin.com/jobs/view/1234567890" --resume "resume.pdf"
+```
+
+The browser stays open for inspection. Press Enter to close it. No evaluation is performed — the form is always filled regardless of fit.
+
+---
+
+### Search URL builder internals
+
+When you pass `--keywords` instead of `--url`, JobPilot builds the appropriate search URL internally:
+
+| CLI flag | LinkedIn param | Indeed param |
+|----------|---------------|-------------|
+| `--keywords "python"` | `keywords=python` | `q=python` |
+| `--date-posted 24h` | `f_TPR=r86400` | `fromage=1` |
+| `--date-posted week` | `f_TPR=r604800` | `fromage=7` |
+| `--date-posted month` | `f_TPR=r2592000` | — |
+| `--workplace remote` | `f_WT=2` | — |
+| `--location Brasil` | `location=Brasil` | `l=Brasil` |
+| `--site linkedin` | `linkedin.com/jobs/search/` | `br.indeed.com/jobs` |
+| *(always)* | `f_AL=true` (Easy Apply) | `sc=0kf:attr(DSK7o)jt(fc)` |
+
+For Glassdoor, use `--url` directly (URL structure is complex and not yet supported by the builder). For Indeed, only `--keywords`, `--date-posted`, and `--location` are supported.
 
 ---
 
