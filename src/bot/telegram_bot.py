@@ -11,7 +11,7 @@ def _find_resume(hint: str = "resume.txt") -> str:
     """Return hint if it exists, otherwise find first .pdf or .txt in files/ or cwd."""
     if Path(hint).exists():
         return hint
-    for directory in (Path("files"), Path(".")):
+    for directory in (Path(".local") / "files", Path(".")):
         for ext in ("*.pdf", "*.txt"):
             found = list(directory.glob(ext))
             if found:
@@ -110,7 +110,7 @@ class TelegramBot:
                 f"https://api.telegram.org/file/bot{self.token}/{file_path}",
                 timeout=30,
             ).content
-            dest = Path("files") / name
+            dest = Path(".local") / "files" / name
             dest.write_bytes(content)
             self.resume_path = str(dest)
             self._step = ""

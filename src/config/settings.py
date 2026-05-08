@@ -7,7 +7,7 @@ logger = CustomLogger(logging.settings).get_logger()
 base_dir = Path("").resolve().resolve()
 logger.info(base_dir)
 
-files_dir = base_dir / "files"
+files_dir = base_dir / ".local" / "files"
 files_dir.mkdir(exist_ok=True)
 
 screenshots_path = files_dir / "screenshots"

@@ -18,8 +18,9 @@ from src.automation import url_builder as _url_builder
 from src.config.settings import logger
 from dotenv import load_dotenv
 
-BOT_PROFILE_DIR = os.path.join(os.path.dirname(__file__), "bot_profile")
-LAST_URLS_FILE = os.path.join(os.path.dirname(__file__), "files", "last_urls.json")
+LOCAL_DIR = os.path.join(os.path.dirname(__file__), ".local")
+BOT_PROFILE_DIR = os.path.join(LOCAL_DIR, "bot_profile")
+LAST_URLS_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "last_urls.json")
 
 
 def load_last_urls() -> dict:
@@ -90,7 +91,7 @@ def setup(force_headless: bool = False) -> uc.Chrome:
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=config["headless"], version_main=146)
+    driver = uc.Chrome(options=options, headless=config["headless"])
     if not config["headless"]:
         driver.maximize_window()
     return driver
@@ -109,8 +110,8 @@ SITE_DOMAINS = {
 }
 
 
-SKILLS_FILE = os.path.join(os.path.dirname(__file__), "files", "skills_gap.json")
-QA_FILE = os.path.join(os.path.dirname(__file__), "files", "qa.json")
+SKILLS_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "skills_gap.json")
+QA_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "qa.json")
 
 _LEVEL_LABELS = {1: "dias", 2: "semanas", 3: "1-3 meses", 4: "3-12 meses", 5: "1+ ano"}
 _CATEGORY_COLORS = {"python": "Python", "node": "Node", "frontend": "Frontend",
@@ -361,7 +362,7 @@ def run_logout(site: str):
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=False, version_main=146)
+    driver = uc.Chrome(options=options, headless=False)
     try:
         driver.get(login_url)
         time.sleep(2)
@@ -386,7 +387,7 @@ def run_login(site: str):
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=False, version_main=146)
+    driver = uc.Chrome(options=options, headless=False)
     driver.get(url)
     print(f"Browser opened at {url}")
     print("Log in and close the browser window when done.")

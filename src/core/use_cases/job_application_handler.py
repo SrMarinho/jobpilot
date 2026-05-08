@@ -19,7 +19,7 @@ SALARY_KEYWORDS = [
     "remuner", "wage", "pay ", "ctc",
 ]
 
-_QA_FILE = Path(__file__).parent.parent.parent.parent / "files" / "qa.json"
+_QA_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "qa.json"
 
 
 def _normalize(s: str) -> str:

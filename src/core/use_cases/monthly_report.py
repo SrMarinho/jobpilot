@@ -4,7 +4,7 @@ from pathlib import Path
 from src.utils.telegram import send_telegram
 from src.config.settings import logger
 
-_FILES_DIR = Path("files")
+_FILES_DIR = Path(".local") / "files"
 _REPORTS_DIR = _FILES_DIR / "monthly_reports"
 _APPLIED_FILE = _FILES_DIR / "applied_jobs.json"
 _REJECTED_FILE = _FILES_DIR / "rejected_jobs.json"

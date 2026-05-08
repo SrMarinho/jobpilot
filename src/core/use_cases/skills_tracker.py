@@ -6,7 +6,7 @@ from pathlib import Path
 from src.core.ai.llm_provider import get_eval_provider
 from src.config.settings import logger
 
-_SKILLS_FILE = Path(__file__).parent.parent.parent.parent / "files" / "skills_gap.json"
+_SKILLS_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "skills_gap.json"
 
 CATEGORIES = ["python", "node", "frontend", "devops", "data", "general"]
 
