@@ -56,8 +56,16 @@ Thumbs.db.env
 temp/
 .env
 
-# Scripts pessoais locais
+# Infraestrutura de scripts locais (versionados como templates)
 local/
+!local/startup_apply.bat
+!local/startup_connect.bat
+!local/startup_report.bat
+!local/run_hidden.vbs
+!local/run_hidden.ps1
+!local/jobpilot_task.xml
+!local/jobpilot_connect_task.xml
+!local/jobpilot_report_task.xml
 
 # Arquivos do projeto
 drivers/**/*

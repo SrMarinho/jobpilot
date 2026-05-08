@@ -275,7 +275,36 @@ The report includes: applications sent, connections made, rejection breakdown by
 
 Reports are saved to `files/monthly_reports/YYYY-MM.json` for historical reference.
 
-> To automate: create a Windows Task Scheduler task pointing to `local/startup_report.bat` with an **At startup** trigger. The `--scheduled` flag ensures it only sends once per month regardless of how many times the PC boots.
+---
+
+## Windows Scheduled Tasks
+
+Automate apply, connect, and report to run on every login — no terminal window visible.
+
+### Setup
+
+1. Edit the `.bat` files in `local/` with your search parameters and resume path.
+2. Import each XML task into Windows Task Scheduler:
+
+```powershell
+# Run once as admin per task
+schtasks /create /xml "local\jobpilot_task.xml" /tn "JobPilot\Apply"
+schtasks /create /xml "local\jobpilot_connect_task.xml" /tn "JobPilot\Connect"
+schtasks /create /xml "local\jobpilot_report_task.xml" /tn "JobPilot\Report"
+```
+
+### How it works
+
+| File | Purpose | Trigger |
+|------|---------|---------|
+| `local/startup_apply.bat` | Searches and applies to jobs every login | Logon |
+| `local/startup_connect.bat` | Sends connection requests (scheduled mode) | Logon |
+| `local/startup_report.bat` | Sends monthly Telegram report | Logon |
+| `local/run_hidden.ps1` | PowerShell wrapper that hides the terminal | Called by XML tasks |
+| `local/*.xml` | Task Scheduler definitions — import once | — |
+
+The `--scheduled` flag on connect/report ensures they only run once per day/month.
+The `--headless` flag keeps Chrome invisible. `run_hidden.ps1` hides the terminal via `Start-Process -WindowStyle Hidden`.
 
 ---
 
@@ -308,9 +337,13 @@ For each job found:
 |------|-------------|
 | `applied_jobs.json` | Record of all submitted applications |
 | `rejected_jobs.json` | Record of all rejected jobs (skipped by AI or quick reject) |
-| `files/last_urls.json` | Last URL and page saved per task (`connect`, `apply`) |
+| `files/last_urls.json` | Saved search params, URL, and page per task (`connect`, `apply_linkedin`, `apply_indeed`, `apply_glassdoor`) |
 | `files/qa.json` | Cached form Q&A — edit manually to correct or pre-fill answers |
+| `files/skills_gap.json` | Missing skills tracked across job evaluations (view with `skills list`) |
+| `files/monthly_reports/` | Monthly report JSONs (`YYYY-MM.json`) |
 | `screenshots.png` | Screenshot taken at the end of execution |
+| `bot_profile/` | Chrome user data directory (persisted login session) |
+| `logs/` | Application logs |
 
 > These files are in `.gitignore` and are not committed to the repository.
 
@@ -318,31 +351,41 @@ For each job found:
 
 ```
 jobpilot/
-├── main.py                                   # Entry point and CLI
+├── main.py                                   # Entry point and Typer CLI
+├── local/                                    # Windows scheduled tasks
+│   ├── startup_apply.bat                     # Daily apply on login
+│   ├── startup_connect.bat                   # Daily connect on login
+│   ├── startup_report.bat                    # Monthly report on login
+│   ├── run_hidden.ps1                        # PowerShell wrapper (hidden terminal)
+│   ├── run_hidden.vbs                        # Legacy VBS wrapper (still works)
+│   └── *.xml                                 # Task Scheduler import files
+├── scripts/
+│   └── generate_resume.py                    # Generate PDF resume
 └── src/
     ├── automation/
+    │   ├── url_builder.py                    # URL builder from CLI flags
     │   ├── pages/                            # Site-specific page objects
+    │   │   ├── jobs_search_page.py           # LinkedIn jobs search
     │   │   ├── people_search_page.py         # LinkedIn people search
-    │   │   └── jobs_search_page.py           # LinkedIn jobs search
+    │   │   ├── glassdoor_jobs_page.py        # Glassdoor jobs search
+    │   │   └── indeed_jobs_page.py           # Indeed jobs search
     │   └── tasks/                            # Orchestration layer
-    │       ├── connection_manager.py
-    │       └── job_application_manager.py
+    │       ├── job_application_manager.py
+    │       └── connection_manager.py
     ├── bot/
     │   └── telegram_bot.py                   # Telegram bot (polling + command handling)
     ├── core/
-    │   └── use_cases/                        # Site-agnostic business logic
-    │       ├── job_evaluator.py              # AI job evaluation
-    │       ├── salary_estimator.py           # AI salary estimation
-    │       ├── job_application_handler.py    # Form filling and submission
-    │       └── applied_jobs_tracker.py       # Persistence layer
-    ├── core/
     │   ├── ai/
-    │   │   └── llm_provider.py               # LLM provider abstraction (Claude / Ollama)
+    │   │   └── llm_provider.py               # LLM abstraction (Claude / Ollama)
     │   └── use_cases/                        # Site-agnostic business logic
     │       ├── job_evaluator.py              # AI job evaluation
+    │       ├── job_application_handler.py    # LinkedIn/Glassdoor Easy Apply forms
+    │       ├── indeed_application_handler.py # Indeed apply forms
+    │       ├── applied_jobs_tracker.py       # Deduplication persistence
     │       ├── salary_estimator.py           # AI salary estimation
-    │       ├── job_application_handler.py    # Form filling and submission
-    │       └── applied_jobs_tracker.py       # Persistence layer
+    │       ├── skills_tracker.py             # Missing skills tracking
+    │       ├── invitation_handler.py         # LinkedIn connection invites
+    │       └── monthly_report.py             # Monthly statistics and reports
     └── utils/
         └── telegram.py                       # Telegram notification helper
 ```
