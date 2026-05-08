@@ -144,6 +144,63 @@ class JobApplicationHandler:
             self._close_modal()
             return False
 
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _click_select_option(self, select_el, option_value: str) -> bool:
+        """Click the select to open its dropdown, then click the matching option."""
+        try:
+            label = self._get_field_label(select_el)
+            if not label:
+                label = "?"
+            # click the select element to trigger React dropdown render
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", select_el)
+            time.sleep(0.2)
+            self.driver.execute_script("arguments[0].click();", select_el)
+            time.sleep(0.5)
+
+            # wait up to 2s for option element to appear in DOM
+            import datetime
+            deadline = datetime.datetime.now() + datetime.timedelta(seconds=2)
+            option = None
+            while datetime.datetime.now() < deadline:
+                try:
+                    possible = self.driver.find_elements(By.XPATH, f"//option[@value='{option_value}']")
+                    for p in possible:
+                        if p.is_displayed():
+                            option = p
+                            break
+                    if option:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.2)
+
+            if not option:
+                logger.warning(f"Select option '{option_value}' not visible for '{label}'")
+                return False
+
+            self.driver.execute_script("arguments[0].click();", option)
+            time.sleep(0.3)
+
+            # dispatch change event so React picks it up
+            self.driver.execute_script("""
+                var el = arguments[0];
+                ['input','change'].forEach(function(ev){
+                    el.dispatchEvent(new Event(ev,{bubbles:true}));
+                });
+            """, select_el)
+            time.sleep(0.2)
+
+            current = self.driver.execute_script("return arguments[0].value;", select_el)
+            if current == option_value:
+                logger.info(f"Selected option '{option_value}' via click-dropdown for '{label}'")
+                return True
+            logger.warning(f"Click-dropdown approach: value mismatch (expected {option_value!r}, got {current!r})")
+            return False
+        except Exception as e:
+            logger.debug(f"click-select-option failed: {e}")
+            return False
+
     # ── field filling ────────────────────────────────────────────────────────
 
     _ES_FORM_MARKERS = {"¿", "ñ", "años", "experiencia", "cuántos", "cuantos",
@@ -254,11 +311,16 @@ class JobApplicationHandler:
                     _placeholder_texts = {
                         "select an option", "selecione uma opção", "selecione uma opcao",
                         "choose an option", "please select", "select", "choose", "pick one",
+                        "selecionar opção", "selecionar opcao",
                     }
                     non_empty = [
                         o for o in sel_data["opts"]
                         if o["v"] and _normalize(o["t"]) not in _placeholder_texts
                     ]
+                    # check if current value is itself a placeholder (LinkedIn sometimes uses the label as value)
+                    if current_val and _normalize(current_val) in _placeholder_texts:
+                        logger.debug(f"Select shows placeholder value '{current_val}' — treating as unfilled")
+                        current_val = ""
                     if current_val and any(o["v"] == current_val for o in non_empty):
                         logger.info(f"Select already filled (val={current_val!r}), skipping")
                         continue
@@ -721,6 +783,10 @@ Responda APENAS com o valor corrigido — um número, palavra curta ou frase bre
                             selected = True
                 except Exception as e:
                     logger.debug(f"JS click failed for '{question}': {e}")
+
+            # Approach 4: open dropdown and click the option element (best for React/JS-heavy forms)
+            if not selected:
+                selected = self._click_select_option(el, target_val)
 
             if not selected:
                 logger.warning(f"Could not set select '{question}' to '{target_label}' — all approaches failed")
