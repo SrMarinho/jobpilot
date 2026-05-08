@@ -232,13 +232,15 @@ class JobApplicationManager:
                     logger.info(f"Job {i + 1}: Already rejected '{title}', skipping")
                     continue
 
-                if self.evaluator.quick_reject(title):
-                    self.tracker.mark_rejected(job_url, title, reason="Quick reject: title seniority mismatch")
-                    continue
+                # Title seniority quick reject disabled — send all to LLM evaluation
+                # if self.evaluator.quick_reject(title):
+                #     self.tracker.mark_rejected(job_url, title, reason="Quick reject: title seniority mismatch")
+                #     continue
 
-                if self.evaluator.language_reject(description):
-                    self.tracker.mark_rejected(job_url, title, reason="Quick reject: not in Portuguese")
-                    continue
+                # Language quick reject disabled — let LLM decide fit
+                # if self.evaluator.language_reject(description):
+                #     self.tracker.mark_rejected(job_url, title, reason="Quick reject: not in Portuguese")
+                #     continue
 
                 if self.evaluator.tech_reject(title, description):
                     self.tracker.mark_rejected(job_url, title, reason="Quick reject: tech stack mismatch")
