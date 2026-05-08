@@ -56,16 +56,7 @@ Thumbs.db.env
 temp/
 .env
 
-# Infraestrutura de scripts locais (versionados como templates)
 local/
-!local/startup_apply.bat
-!local/startup_connect.bat
-!local/startup_report.bat
-!local/run_hidden.vbs
-!local/run_hidden.ps1
-!local/jobpilot_task.xml
-!local/jobpilot_connect_task.xml
-!local/jobpilot_report_task.xml
 
 # Dados e caches locais (runtime, nao versionar)
 .local/
