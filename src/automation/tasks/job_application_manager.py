@@ -99,19 +99,17 @@ class JobApplicationManager:
                 self.on_page_change(page_num)
             logger.info(f"Navigating to page {page_num}")
             self.driver.get(url)
-            time.sleep(2)
 
-            job_cards = self.page.get_job_cards()
+            job_cards = self._wait_for_job_cards(page_num)
             if not job_cards:
                 logger.info("No more jobs found, stopping")
                 break
 
-            # Loop detection: collect IDs/URLs for this page and compare with previous
             current_ids = frozenset(self._card_id(c) for c in job_cards)
             if seen_page_ids and current_ids and current_ids == seen_page_ids[-1]:
-                logger.info("Page identical to previous — no more unique jobs, stopping")
+                logger.info("Page identical to previous \u2014 no more unique jobs, stopping")
                 break
-            seen_page_ids = seen_page_ids[-1:] + [current_ids]  # keep last 2
+            seen_page_ids = seen_page_ids[-1:] + [current_ids]
 
             logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
             self._process_jobs(job_cards, page_num)
@@ -120,6 +118,43 @@ class JobApplicationManager:
             f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}"
         )
 
+    def _wait_for_job_cards(self, page_num: int) -> list:
+        from selenium.webdriver.support.wait import WebDriverWait
+        from selenium.webdriver.common.by import By
+
+        time.sleep(1.5)
+        try:
+            WebDriverWait(self.driver, 5).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+        except Exception:
+            pass
+
+        loading_selectors = [
+            "div.loader", "div.artdeco-loader", "[class*=loader]",
+            "[class*=spinner]", "[class*=skeleton]", "[class*=ghost]",
+        ]
+        try:
+            WebDriverWait(self.driver, 8).until_not(
+                lambda d: any(
+                    e.is_displayed()
+                    for sel in loading_selectors
+                    for e in d.find_elements(By.CSS_SELECTOR, sel)
+                )
+            )
+        except Exception:
+            pass
+
+        max_attempts = 5 if page_num > 1 else 3
+        for attempt in range(max_attempts):
+            cards = self.page.get_job_cards()
+            if cards:
+                return cards
+            if attempt < max_attempts - 1:
+                logger.debug(f"No job cards yet on page {page_num}, retrying ({attempt + 1}/{max_attempts})...")
+                time.sleep(2)
+        return []
+    
     def _card_id(self, card) -> str:
         """Extract a stable identifier from a job card for loop detection."""
         try:

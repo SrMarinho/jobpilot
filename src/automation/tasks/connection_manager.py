@@ -2,6 +2,8 @@ import time
 import random
 import threading
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.common.by import By
 from src.core.use_cases import ConnectionHandler
 from src.automation.pages import PeopleSearchPage
 from src.config.settings import logger
@@ -30,9 +32,7 @@ class ConnectionManager:
             logger.info(f"Navigating to page {page}")
             self.driver.get(url)
 
-            wait = random.uniform(3, 6)
-            logger.info(f"Waiting {wait:.1f}s before processing page {page}...")
-            time.sleep(wait)
+            self._wait_for_page_load(page)
 
             self.connect_people.run()
 
@@ -40,3 +40,34 @@ class ConnectionManager:
                 break
 
         logger.info(f"Total connections sent: {self.connect_people.invite_sended}")
+
+    def _wait_for_page_load(self, page_num: int):
+        time.sleep(1.5)
+        try:
+            WebDriverWait(self.driver, 5).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+        except Exception:
+            pass
+
+        loading_selectors = [
+            "div.loader", "div.artdeco-loader", "[class*=loader]",
+            "[class*=spinner]", "[class*=skeleton]", "[class*=ghost]",
+        ]
+        try:
+            WebDriverWait(self.driver, 8).until_not(
+                lambda d: any(
+                    e.is_displayed()
+                    for sel in loading_selectors
+                    for e in d.find_elements(By.CSS_SELECTOR, sel)
+                )
+            )
+        except Exception:
+            pass
+
+        if page_num > 1:
+            time.sleep(2)
+        else:
+            wait = random.uniform(3, 6)
+            logger.info(f"Waiting {wait:.1f}s before processing page {page_num}...")
+            time.sleep(wait)
