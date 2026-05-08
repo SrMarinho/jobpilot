@@ -14,6 +14,7 @@ import src.config.settings as setting
 import undetected_chromedriver as uc
 from src.automation.tasks.connection_manager import ConnectionManager
 from src.automation.tasks.job_application_manager import JobApplicationManager, _detect_site
+from src.automation import url_builder as _url_builder
 from src.config.settings import logger
 from dotenv import load_dotenv
 
@@ -425,6 +426,34 @@ class SkillCategory(str, Enum):
     general = "general"
 
 
+class DatePosted(str, Enum):
+    h24 = "24h"
+    week = "week"
+    month = "month"
+    any_ = "any"
+
+
+class WorkplaceType(str, Enum):
+    on_site = "on-site"
+    remote = "remote"
+    hybrid = "hybrid"
+
+
+class ExperienceLevel(str, Enum):
+    internship = "internship"
+    entry = "entry"
+    associate = "associate"
+    mid_senior = "mid-senior"
+    director = "director"
+    executive = "executive"
+
+
+class NetworkDegree(str, Enum):
+    first = "F"
+    second = "S"
+    third = "O"
+
+
 app = typer.Typer(help="JobPilot \u2014 Automated job application bot")
 skills_app = typer.Typer(help="View missing skills detected during job evaluation")
 answers_app = typer.Typer(help="Manage cached form answers (files/qa.json)")
@@ -460,39 +489,88 @@ def logout(site: SiteName):
 
 # ── apply ──────────────────────────────────────────────────────────────────────
 
+def _determine_site_key(
+    url: str | None,
+    keywords: str | None,
+    site_name: str | None,
+) -> str:
+    last_urls = load_last_urls()
+    if url:
+        return f"apply_{_detect_site(url)}"
+    if site_name:
+        return f"apply_{site_name}"
+    return f"apply_{last_urls.get('apply_last_site', 'linkedin')}"
+
+
 def _resolve_apply_url_task(
     url: str | None,
+    keywords: str | None,
+    date_posted: str | None,
+    workplace: str | None,
+    location: str | None,
+    experience: str | None,
     resume_from: bool,
     site_name: str | None,
     resume_path_arg: str | None,
-) -> tuple[str, int, str, str]:
+) -> tuple[str, int, str, str, dict]:
     last_urls = load_last_urls()
-
-    if url:
-        site_key = f"apply_{_detect_site(url)}"
-    else:
-        explicit_site = site_name
-        if explicit_site:
-            site_key = f"apply_{explicit_site}"
-        else:
-            site_key = f"apply_{last_urls.get('apply_last_site', 'linkedin')}"
+    site_key = _determine_site_key(url, keywords, site_name)
+    target_site = site_key.replace("apply_", "")
 
     saved: dict = last_urls.get(site_key, {})
     if isinstance(saved, str):
         saved = {"url": saved, "page": 1}
 
-    start_page = 1
-    if not url:
-        url = saved.get("url") if isinstance(saved, dict) else None
-        if not url:
-            print(f"Error: --url is required for the first 'apply' run (no saved URL found for {site_key}).")
-            raise typer.Exit()
+    search_params: dict = {}
+
+    if url:
+        # Raw URL mode: use the provided URL
+        resolved_url = url
+        start_page = 1
+        search_params = {}  # no search params in raw URL mode
+    elif keywords:
+        # Search builder mode with newly provided keywords
+        resolved_url = _build_search_url(target_site, keywords, date_posted, workplace, location, experience)
+        start_page = 1
+        search_params = {
+            "keywords": keywords, "date_posted": date_posted,
+            "workplace": workplace, "location": location, "experience": experience,
+        }
+        print(f"Using search: keywords='{keywords}'" + (f", date_posted={date_posted}" if date_posted else "") + (f", workplace={workplace}" if workplace else ""))
+    else:
+        # Load from saved config
+        saved_keywords = saved.get("keywords")
+        if saved_keywords:
+            # Rebuild URL from saved search params
+            resolved_url = _build_search_url(
+                target_site,
+                saved_keywords,
+                saved.get("date_posted"),
+                saved.get("workplace"),
+                saved.get("location"),
+                saved.get("experience"),
+            )
+            search_params = {
+                "keywords": saved_keywords,
+                "date_posted": saved.get("date_posted"),
+                "workplace": saved.get("workplace"),
+                "location": saved.get("location"),
+                "experience": saved.get("experience"),
+            }
+        else:
+            # Legacy: raw URL saved
+            resolved_url = saved.get("url") if isinstance(saved, dict) else None
+            if not resolved_url:
+                print(f"Error: --url or --keywords is required for the first 'apply' run on {site_key}.")
+                raise typer.Exit()
+            search_params = {}
 
         if resume_from:
             start_page = saved.get("page", 1)
-            print(f"Resuming '{site_key}' from page {start_page}: {url}")
+            print(f"Resuming '{site_key}' from page {start_page}: {resolved_url}")
         else:
-            print(f"Using last saved URL for '{site_key}': {url}")
+            start_page = 1
+            print(f"Using last saved search for '{site_key}': {resolved_url}")
 
     resolved_resume: str = (
         resume_path_arg
@@ -501,7 +579,23 @@ def _resolve_apply_url_task(
         or "resume.txt"
     )
 
-    return url, start_page, site_key, resolved_resume
+    return resolved_url, start_page, site_key, resolved_resume, search_params
+
+
+def _build_search_url(
+    site: str,
+    keywords: str,
+    date_posted: str | None,
+    workplace: str | None,
+    location: str | None,
+    experience: str | None,
+) -> str:
+    if site == "indeed":
+        return _url_builder.build_indeed_url(keywords, date_posted=date_posted, location=location)
+    return _url_builder.build_linkedin_jobs_url(
+        keywords, date_posted=date_posted, workplace=workplace,
+        location=location, experience=experience,
+    )
 
 
 def _resolve_saved_options(saved: dict) -> tuple[list[str], str, str | None, str | None, str | None, str | None]:
@@ -514,10 +608,25 @@ def _resolve_saved_options(saved: dict) -> tuple[list[str], str, str | None, str
     return level, preferences, llm_prov, llm_mod, eval_prov, eval_mod
 
 
+def _search_params_dict(
+    keywords: str | None, date_posted: str | None,
+    workplace: str | None, location: str | None, experience: str | None,
+) -> dict:
+    return {
+        "keywords": keywords, "date_posted": date_posted,
+        "workplace": workplace, "location": location, "experience": experience,
+    }
+
+
 @app.command(epilog="Parameters are saved per site and restored automatically on next run.")
 def apply(
     ctx: typer.Context,
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="Job search URL (first run only, saved for later)"),
+    url: Optional[str] = typer.Option(None, "--url", "-u", help="Full search URL (overrides --keywords, saved for later)"),
+    keywords: Optional[str] = typer.Option(None, "--keywords", "-k", help="Search keywords (e.g. 'python backend')"),
+    date_posted: Optional[DatePosted] = typer.Option(None, "--date-posted", help="Filter by posting date"),
+    workplace: Optional[WorkplaceType] = typer.Option(None, "--workplace", help="Workplace type filter"),
+    location: Optional[str] = typer.Option(None, "--location", help="Location filter (e.g. 'Brasil', 'Sao Paulo')"),
+    experience: Optional[ExperienceLevel] = typer.Option(None, "--experience", help="Experience level filter"),
     resume: Optional[str] = typer.Option(None, "--resume", "-r", help="Path to resume PDF or TXT (default: resume.txt)"),
     preferences: str = typer.Option("", "--preferences", "-p", help="Preferences to guide evaluation"),
     level: List[str] = typer.Option([], "--level", "-l", help="Accepted seniority levels (repeat: --level junior --level pleno)"),
@@ -535,8 +644,20 @@ def apply(
 ):
     """Apply to jobs via Easy Apply (LinkedIn, Glassdoor, Indeed)."""
     headless = ctx.obj.get("headless", False)
-    resolved_url, resolved_start_page, site_key, resolved_resume = _resolve_apply_url_task(
-        url, resume_from, site_name, resume,
+    k_date_posted = date_posted.value if date_posted and date_posted != DatePosted.any_ else None
+    k_workplace = workplace.value if workplace else None
+    k_experience = experience.value if experience else None
+
+    if not url and not keywords:
+        site_key_check = _determine_site_key(None, None, site_name)
+        saved_check = load_last_urls().get(site_key_check, {})
+        if not saved_check.get("url") and not saved_check.get("keywords"):
+            print("Error: pass --url or --keywords for the first run.")
+            raise typer.Exit()
+
+    resolved_url, resolved_start_page, site_key, resolved_resume, resolved_search = _resolve_apply_url_task(
+        url, keywords, k_date_posted, k_workplace, location, k_experience,
+        resume_from, site_name, resume,
     )
 
     last_urls = load_last_urls()
@@ -549,6 +670,18 @@ def apply(
     final_llm_mod = llm_model or _resolve_saved_options(saved)[3]
     final_eval_prov = eval_provider or _resolve_saved_options(saved)[4]
     final_eval_mod = eval_model or _resolve_saved_options(saved)[5]
+
+    final_search = resolved_search.copy()
+    if keywords:
+        final_search["keywords"] = keywords
+    if k_date_posted:
+        final_search["date_posted"] = k_date_posted
+    if k_workplace:
+        final_search["workplace"] = k_workplace
+    if location:
+        final_search["location"] = location
+    if k_experience:
+        final_search["experience"] = k_experience
 
     if final_level:
         print(f"Level filter: {final_level}")
@@ -590,20 +723,25 @@ def apply(
     asyncio.run(_warmup())
     logger.info("LLM models ready.")
 
-    # Save URL if new
-    if url and not no_save:
+    # Save config
+    if not no_save:
         extra = {
             "level": final_level, "preferences": final_preferences, "resume": resolved_resume,
             "llm_provider": final_llm_prov, "llm_model": final_llm_mod,
             "eval_provider": final_eval_prov, "eval_model": final_eval_mod,
         }
-        save_last_url(site_key, resolved_url, page=1, extra=extra)
-        data = load_last_urls()
-        data["apply_last_site"] = _detect_site(resolved_url)
-        if resume:
-            data["default_resume"] = resume
-        with open(LAST_URLS_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        extra.update(final_search)
+        if keywords or url:
+            save_last_url(site_key, resolved_url, page=1, extra=extra)
+            data = load_last_urls()
+            if url:
+                data["apply_last_site"] = _detect_site(url)
+            else:
+                data["apply_last_site"] = site_key.replace("apply_", "")
+            if resume:
+                data["default_resume"] = resume
+            with open(LAST_URLS_FILE, "w") as f:
+                json.dump(data, f, indent=2)
 
     def on_page_change(page: int):
         if no_save:
@@ -613,6 +751,7 @@ def apply(
             "llm_provider": final_llm_prov, "llm_model": final_llm_mod,
             "eval_provider": final_eval_prov, "eval_model": final_eval_mod,
         }
+        extra.update(final_search)
         save_last_url(site_key, resolved_url, page=page, extra=extra)
 
     driver = setup(force_headless=headless)
@@ -652,7 +791,9 @@ def apply(
 @app.command()
 def connect(
     ctx: typer.Context,
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="LinkedIn people search URL (uses last saved if omitted)"),
+    url: Optional[str] = typer.Option(None, "--url", "-u", help="Full LinkedIn people search URL (overrides --keywords)"),
+    keywords: Optional[str] = typer.Option(None, "--keywords", "-k", help="Search keywords (e.g. 'tech recruiter')"),
+    network: Optional[NetworkDegree] = typer.Option(None, "--network", help="Connection degree filter (F=1st, S=2nd, O=3rd+)"),
     start_page: Optional[int] = typer.Option(None, "--start-page", help="Page to start from (default: 1)"),
     max_pages: int = typer.Option(100, "--max-pages", help="Max pages to process (default: 100)"),
     resume: bool = typer.Option(False, "--continue", help="Resume from the last page where it stopped"),
@@ -673,24 +814,52 @@ def connect(
             return
         save_ran_today()
 
-    resolved_url = url
-    resolved_start_page = start_page or 1
-    if not resolved_url:
-        resolved_url = saved.get("url") if isinstance(saved, dict) else None
+    k_network = network.value if network else None
+
+    if url:
+        resolved_url = url
+        resolved_start_page = start_page or 1
+    elif keywords:
+        resolved_url = _url_builder.build_linkedin_people_url(keywords, network=k_network)
+        resolved_start_page = start_page or 1
+        print(f"Using search: keywords='{keywords}'" + (f", network={k_network}" if k_network else ""))
+    else:
+        saved_keywords = saved.get("keywords") if isinstance(saved, dict) else None
+        if saved_keywords:
+            resolved_url = _url_builder.build_linkedin_people_url(
+                saved_keywords, network=saved.get("network"),
+            )
+        else:
+            resolved_url = saved.get("url") if isinstance(saved, dict) else None
         if not resolved_url:
-            print("Error: --url is required for the first 'connect' run (no saved URL found).")
+            print("Error: pass --url or --keywords for the first 'connect' run.")
             raise typer.Exit()
+
         if resume:
             resolved_start_page = saved.get("page", 1) if isinstance(saved, dict) else 1
             print(f"Resuming 'connect' from page {resolved_start_page}: {resolved_url}")
         else:
-            print(f"Using last saved URL for 'connect': {resolved_url}")
+            resolved_start_page = start_page or 1
+            print(f"Using last saved search for 'connect': {resolved_url}")
 
-    if resolved_url:
-        save_last_url(site_key, resolved_url, page=1)
+    if resolved_url and (url or keywords or not saved.get("url")):
+        extra = {}
+        if keywords:
+            extra["keywords"] = keywords
+        if k_network:
+            extra["network"] = k_network
+        save_last_url(site_key, resolved_url, page=1, extra=extra if extra else None)
+
+    final_network = k_network or (saved.get("network") if isinstance(saved, dict) else None)
+    final_keywords = keywords or (saved.get("keywords") if isinstance(saved, dict) else None)
 
     def on_page_change(page: int):
-        save_last_url(site_key, resolved_url, page=page)
+        extra = {}
+        if final_keywords:
+            extra["keywords"] = final_keywords
+        if final_network:
+            extra["network"] = final_network
+        save_last_url(site_key, resolved_url, page=page, extra=extra if extra else None)
 
     driver = setup(force_headless=headless)
     try:

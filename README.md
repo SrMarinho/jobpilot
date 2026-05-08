@@ -73,50 +73,65 @@ A browser window will open. Log in normally, then close it. The session is persi
 
 ## Usage
 
-> **Tip:** The first time you run `connect` or `apply`, you must pass `--url`. After that, the URL is saved locally in `files/last_urls.json` and you can omit it in future runs.
+> **Tip:** Use `--keywords` and filters to search without building URLs manually. Search params are saved per site in `files/last_urls.json` and restored on future runs. The old `--url` mode still works for raw URLs or Glassdoor.
 
 ---
 
 ### Apply to jobs
 
 ```bash
-# First run — URL required
-uv run main.py apply --url "JOB_SEARCH_URL" --resume "path/to/resume.pdf"
+# First run — keywords required
+uv run main.py apply --keywords "python developer" --site linkedin --resume "resume.pdf" --workplace remote --date-posted 24h
 
-# Subsequent runs — reuses last saved URL and parameters
+# Subsequent runs — reuses last saved search params
 uv run main.py apply
 
 # Resume from the last page where it stopped
 uv run main.py apply --continue
 
 # Resume a specific site's saved config
-uv run main.py apply --continue --site glassdoor
+uv run main.py apply --continue --site indeed
+
+# Raw URL fallback (still supported)
+uv run main.py apply --url "JOB_SEARCH_URL" --resume "path/to/resume.pdf"
 ```
 
-All parameters are saved per site (`apply_linkedin`, `apply_glassdoor`, `apply_indeed`) and restored automatically on the next run.
+All parameters are saved per site (`apply_linkedin`, `apply_indeed`, `apply_glassdoor`) and restored automatically on the next run.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `--url` | First run only | Job search URL (LinkedIn: enable Easy Apply filter with `f_AL=true`) |
-| `--resume` | No | Path to resume PDF or TXT (default: `resume.txt`) |
-| `--preferences` | No | Preferences to guide evaluation (e.g. `'prefer backend, Python, remote'`) |
-| `--level` | No | Seniority level filter (multiple allowed): `junior`, `pleno`, `senior` |
+| `--url` | First run* | Full search URL (overrides `--keywords`) |
+| `--keywords` `-k` | First run* | Search terms (e.g. `'python backend'`) |
+| `--date-posted` | No | Filter: `24h`, `week`, `month`, `any` |
+| `--workplace` | No | Filter: `on-site`, `remote`, `hybrid` |
+| `--location` | No | Location filter (e.g. `'Brasil'`) |
+| `--experience` | No | Level: `internship`, `entry`, `associate`, `mid-senior`, `director`, `executive` |
+| `--resume` `-r` | No | Path to resume PDF or TXT (default: `resume.txt`) |
+| `--preferences` `-p` | No | Preferences to guide evaluation |
+| `--level` `-l` | No | Seniority level filter (repeat: `--level junior --level pleno`) |
 | `--max-pages` | No | Max pages to process (default: 100) |
 | `--max-applications` | No | Stop after N applications (default: unlimited) |
-| `--no-save` | No | Run without overwriting the saved URL/config for this site |
-| `--site` | No | Resume saved config for a specific site: `linkedin`, `glassdoor`, `indeed` |
-| `--eval-provider` | No | Override eval AI for this run only: `claude` or `langchain` |
-| `--eval-model` | No | Override eval model for this run only |
-| `--llm-provider` | No | Override form Q&A AI for this run only: `claude` or `langchain` |
-| `--llm-model` | No | Override form Q&A model for this run only |
+| `--no-save` | No | Run without overwriting the saved config |
+| `--no-submit` | No | Fill forms but do not submit (for testing) |
+| `--site` | No | Target site: `linkedin`, `glassdoor`, `indeed` |
+| `--eval-provider` | No | Override eval AI: `claude` or `langchain` |
+| `--eval-model` | No | Override eval model for this run |
+| `--llm-provider` | No | Override form Q&A AI: `claude` or `langchain` |
+| `--llm-model` | No | Override form Q&A model for this run |
+
+> \* Either `--url` or `--keywords` is required on first run. Easy Apply (`f_AL=true`) is always enabled automatically.
 
 **Example (LinkedIn):**
 ```bash
 uv run main.py apply \
-  --url "https://www.linkedin.com/jobs/search/?keywords=python+developer&f_AL=true" \
+  --keywords "python developer" \
+  --site linkedin \
+  --workplace remote \
+  --date-posted 24h \
+  --location Brasil \
   --resume "resume.pdf" \
   --preferences "Python ou Node.js backend, remoto, apenas vagas em português" \
-  --level junior pleno \
+  --level junior --level pleno \
   --eval-provider langchain
 ```
 
@@ -125,22 +140,29 @@ uv run main.py apply \
 ### Send connection requests (LinkedIn)
 
 ```bash
-# First run — URL required
-uv run main.py connect --url "PEOPLE_SEARCH_URL"
+# First run — keywords required
+uv run main.py connect --keywords "tech recruiter" --network S
 
-# Subsequent runs — reuses last saved URL
+# Subsequent runs — reuses last saved search
 uv run main.py connect
 
 # Resume from the last page where it stopped
 uv run main.py connect --continue
+
+# Raw URL fallback
+uv run main.py connect --url "PEOPLE_SEARCH_URL"
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `--url` | First run only | LinkedIn people search URL |
+| `--url` `-u` | First run* | Full LinkedIn people search URL |
+| `--keywords` `-k` | First run* | Search terms (e.g. `'tech recruiter'`) |
+| `--network` | No | Connection degree: `F`=1st, `S`=2nd, `O`=3rd+ |
 | `--start-page` | No | Page to start from (default: 1) |
 | `--max-pages` | No | Max pages to process (default: 100) |
 | `--continue` | No | Resume from the last page where the previous run stopped |
+
+> \* Either `--url` or `--keywords` is required on first run.
 
 > The current page is saved in real time as the bot runs. If execution is interrupted, `--continue` picks up exactly where it left off.
 
