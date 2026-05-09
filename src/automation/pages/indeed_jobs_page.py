@@ -83,6 +83,8 @@ class IndeedJobsPage:
             return ""
 
     def get_apply_btn(self) -> WebElement | None:
+        # Strict: only Indeed-managed Apply selectors. Generic containers
+        # (e.g. div#viewJobButtonLinkContainer) caught external ATS redirects (Gupy etc).
         css_selectors = [
             "#indeedApplyButton",
             "button#indeedApplyButton",
@@ -90,7 +92,6 @@ class IndeedJobsPage:
             "[data-testid='indeedApplyButton']",
             "button.ia-IndeedApplyButton",
             "button[class*='IndeedApplyButton']",
-            "div#viewJobButtonLinkContainer button",
             "div.jobsearch-IndeedApplyButton-newDesign button",
         ]
         # Wait up to 5s for any selector to appear (right pane loads async)
@@ -114,32 +115,54 @@ class IndeedJobsPage:
             except Exception:
                 continue
 
+        # Strict fallback: only Indeed-managed apply (class must contain indeed-apply / IndeedApply).
+        # Text-only fallback removed — it caught external "Candidatar-se no site da empresa" buttons.
         try:
             btn = self.driver.find_element(
                 By.XPATH,
-                "//button[contains(@class,'indeed-apply') or contains(@class,'IndeedApply') or "
-                "contains(@aria-label,'Candidatar') or contains(@aria-label,'Apply') or "
-                "contains(normalize-space(),'Candidatar-se facilmente') or "
-                "contains(normalize-space(),'Candidatar-se com perfil') or "
-                "contains(normalize-space(),'Candidatar-se agora') or "
-                "contains(normalize-space(),'Candidatar-se') or "
-                "contains(normalize-space(),'Apply now') or "
-                "contains(normalize-space(),'Easily apply')]",
+                "//button[contains(@class,'indeed-apply') or contains(@class,'IndeedApply')]",
             )
             if btn.is_displayed() and btn.is_enabled():
-                logger.info("Found apply button via text/aria match")
+                logger.info("Found Indeed Apply button via class match")
                 return btn
         except Exception:
             pass
 
-        # External-only apply ("Aplicar no site da empresa") is not actionable here
-        logger.info("No Indeed Apply button found (likely external application)")
+        if self._has_external_apply():
+            logger.info("External apply detected (company site) — skipping (not Indeed Apply)")
+        else:
+            logger.info("No Indeed Apply button found")
         return None
 
-    def next_page_url(self, base_url: str, page_num: int) -> str:
-        start = (page_num - 1) * 10
-        if "start=" in base_url:
+    def _has_external_apply(self) -> bool:
+        """Detect 'Candidatar-se no site da empresa' / 'Apply on company site' button."""
+        try:
+            for el in self.driver.find_elements(
+                By.XPATH,
+                "//a | //button",
+            ):
+                if not el.is_displayed():
+                    continue
+                txt = (el.text or "").lower()
+                aria = (el.get_attribute("aria-label") or "").lower()
+                joined = f"{txt} {aria}"
+                if any(k in joined for k in (
+                    "site da empresa", "company site", "company website",
+                    "external", "candidate-se no site", "aplicar no site",
+                )):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def next_page_url(self, base_url: str, page_num: int, page_size: int = 50) -> str:
+        start = (page_num - 1) * page_size
+        url = base_url
+        if "limit=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}limit={page_size}"
+        if "start=" in url:
             import re
-            return re.sub(r"start=\d+", f"start={start}", base_url)
-        separator = "&" if "?" in base_url else "?"
-        return f"{base_url}{separator}start={start}"
+            return re.sub(r"start=\d+", f"start={start}", url)
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}start={start}"

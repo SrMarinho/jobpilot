@@ -38,6 +38,25 @@ class GlassdoorJobsPage:
             logger.info("No job cards found on page")
             return []
 
+    def scroll_to_load(self, target: int = 60, max_attempts: int = 10) -> int:
+        """Lazy-load more cards by scrolling. Stops when target reached or no growth."""
+        last = len(self.get_job_cards())
+        plateau = 0
+        for _ in range(max_attempts):
+            if last >= target:
+                break
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1.2)
+            cur = len(self.get_job_cards())
+            if cur == last:
+                plateau += 1
+                if plateau >= 2:
+                    break
+            else:
+                plateau = 0
+            last = cur
+        return last
+
     def get_job_title(self) -> str:
         try:
             el = WebDriverWait(self.driver, 10).until(
