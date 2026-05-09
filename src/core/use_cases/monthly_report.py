@@ -10,6 +10,7 @@ _APPLIED_FILE = _FILES_DIR / "applied_jobs.json"
 _REJECTED_FILE = _FILES_DIR / "rejected_jobs.json"
 _SKILLS_FILE = _FILES_DIR / "skills_gap.json"
 _CONNECTIONS_FILE = _FILES_DIR / "connections_log.json"
+_QA_FILE = _FILES_DIR / "form_answers.json"
 
 
 def _load_json(path: Path) -> dict:
@@ -91,6 +92,44 @@ def _level_breakdown(applied: dict, year: int, month: int) -> dict:
     return breakdown
 
 
+def _site_breakdown(data: dict, date_field: str, year: int, month: int) -> dict:
+    prefix = _month_key(year, month)
+    breakdown: dict[str, int] = {}
+    for v in data.values():
+        if not isinstance(v, dict) or not (v.get(date_field) or "").startswith(prefix):
+            continue
+        site = v.get("site") or "unknown"
+        breakdown[site] = breakdown.get(site, 0) + 1
+    return breakdown
+
+
+def _qa_pending_count() -> int:
+    qa = _load_json(_QA_FILE)
+    n = 0
+    for entry in qa.values():
+        if isinstance(entry, dict):
+            ans = (entry.get("answer") or "").strip()
+            if not ans:
+                n += 1
+        elif not entry:
+            n += 1
+    return n
+
+
+def _site_avg_salary(applied: dict, year: int, month: int) -> dict:
+    prefix = _month_key(year, month)
+    buckets: dict[str, list[int]] = {}
+    for v in applied.values():
+        if not isinstance(v, dict) or not (v.get("applied_at") or "").startswith(prefix):
+            continue
+        salary = v.get("salary_offered")
+        if not salary:
+            continue
+        site = v.get("site") or "unknown"
+        buckets.setdefault(site, []).append(salary)
+    return {s: int(sum(xs) / len(xs)) for s, xs in buckets.items()}
+
+
 def _top_skills_global(n: int = 3) -> list[tuple[str, int]]:
     skills = _load_json(_SKILLS_FILE)
     sorted_skills = sorted(skills.items(), key=lambda x: x[1].get("count", 0), reverse=True)
@@ -149,6 +188,11 @@ def generate_report(year: int, month: int) -> dict:
     total_seen = applications + rejections
     match_rate = round(applications / total_seen * 100) if total_seen else 0
 
+    site_apps = _site_breakdown(applied, "applied_at", year, month)
+    site_rejs = _site_breakdown(rejected, "rejected_at", year, month)
+    site_avg_salary = _site_avg_salary(applied, year, month)
+    qa_pending = _qa_pending_count()
+
     return {
         "month": _month_key(year, month),
         "applications": applications,
@@ -156,12 +200,17 @@ def generate_report(year: int, month: int) -> dict:
         "rejections": rejections,
         "rejection_breakdown": breakdown,
         "level_breakdown": level_breakdown,
+        "site_applications": site_apps,
+        "site_rejections": site_rejs,
+        "site_avg_salary": site_avg_salary,
         "match_rate_pct": match_rate,
         "avg_salary_offered": avg_salary,
+        "qa_pending": qa_pending,
         "top_skills": [{"skill": s, "count": c} for s, c in top_skills],
         "top_skills_month": [{"skill": s, "count": c} for s, c in top_skills_month],
         "prev_applications": prev.get("applications") if prev else None,
         "prev_connections": prev.get("connections") if prev else None,
+        "prev_site_applications": (prev.get("site_applications") if prev else None) or {},
     }
 
 
@@ -181,11 +230,17 @@ def generate_year_report(year: int) -> dict:
     # Merge breakdowns across all months
     breakdown: dict[str, int] = {}
     level_breakdown: dict[str, int] = {}
+    site_apps: dict[str, int] = {}
+    site_rejs: dict[str, int] = {}
     for m in range(1, 13):
         for k, v in _rejection_breakdown(rejected, year, m).items():
             breakdown[k] = breakdown.get(k, 0) + v
         for k, v in _level_breakdown(applied, year, m).items():
             level_breakdown[k] = level_breakdown.get(k, 0) + v
+        for k, v in _site_breakdown(applied, "applied_at", year, m).items():
+            site_apps[k] = site_apps.get(k, 0) + v
+        for k, v in _site_breakdown(rejected, "rejected_at", year, m).items():
+            site_rejs[k] = site_rejs.get(k, 0) + v
 
     # Avg salary across year
     mk_prefix = str(year)
@@ -208,6 +263,8 @@ def generate_year_report(year: int) -> dict:
         "rejections": rejections,
         "rejection_breakdown": breakdown,
         "level_breakdown": level_breakdown,
+        "site_applications": site_apps,
+        "site_rejections": site_rejs,
         "match_rate_pct": match_rate,
         "avg_salary_offered": avg_salary,
         "top_skills": [{"skill": s, "count": c} for s, c in _top_skills_global(3)],
@@ -238,6 +295,20 @@ def _format_year_report(report: dict) -> str:
         f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(",", ".")
         if report.get("avg_salary_offered") else ""
     )
+    site_apps = report.get("site_applications", {})
+    site_rejs = report.get("site_rejections", {})
+    _site_order = ["linkedin", "indeed", "glassdoor", "unknown"]
+    site_lines_parts = []
+    for s in _site_order:
+        a = site_apps.get(s, 0)
+        r = site_rejs.get(s, 0)
+        if a == 0 and r == 0:
+            continue
+        seen = a + r
+        rate = round(a / seen * 100) if seen else 0
+        site_lines_parts.append(f"\n    • {s}: {a} aplic / {r} rej ({rate}%)")
+    site_lines = "".join(site_lines_parts)
+
     return (
         f"📊 <b>Relatório Anual — {year}</b>\n\n"
         f"✅ Candidaturas enviadas: <b>{report['applications']}</b>\n"
@@ -245,6 +316,7 @@ def _format_year_report(report: dict) -> str:
         f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
         f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
         f"{salary_line}\n\n"
+        f"🌐 <b>Por site:</b>{site_lines or ' —'}\n\n"
         f"🎓 <b>Candidaturas por nível:</b>{level_lines or ' —'}\n\n"
         f"📋 <b>Motivos de rejeição:</b>{breakdown_lines or ' —'}\n\n"
         f"🔥 <b>Top 3 skills mais exigidas:</b>{skills_lines or ' —'}"
@@ -293,13 +365,37 @@ def _format_report(report: dict) -> str:
         if (v := level_breakdown.get(k, 0)) > 0
     )
 
+    site_apps = report.get("site_applications", {})
+    site_rejs = report.get("site_rejections", {})
+    site_avg = report.get("site_avg_salary", {})
+    prev_site_apps = report.get("prev_site_applications", {}) or {}
+    _site_order = ["linkedin", "indeed", "glassdoor", "unknown"]
+    site_lines_parts = []
+    for s in _site_order:
+        a = site_apps.get(s, 0)
+        r = site_rejs.get(s, 0)
+        if a == 0 and r == 0:
+            continue
+        seen = a + r
+        rate = round(a / seen * 100) if seen else 0
+        delta = _delta(a, prev_site_apps.get(s) if prev_site_apps else None)
+        sal = site_avg.get(s)
+        sal_str = f", R$ {f'{sal:,.0f}'.replace(',', '.')}" if sal else ""
+        site_lines_parts.append(f"\n    • {s}: {a} aplic{delta} / {r} rej ({rate}%{sal_str})")
+    site_lines = "".join(site_lines_parts)
+
+    qa_pending = report.get("qa_pending", 0)
+    qa_line = f"\n📝 Respostas pendentes: <b>{qa_pending}</b>" if qa_pending else ""
+
     return (
         f"📊 <b>Relatório Mensal — {month_label}</b>\n\n"
         f"✅ Candidaturas enviadas: <b>{apps}</b>{apps_delta}\n"
         f"🤝 Conexões feitas: <b>{conns}</b>{conns_delta}\n"
         f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
         f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
-        f"{salary_line}\n\n"
+        f"{salary_line}"
+        f"{qa_line}\n\n"
+        f"🌐 <b>Por site:</b>{site_lines or ' —'}\n\n"
         f"🎓 <b>Candidaturas por nível:</b>{level_lines or ' —'}\n\n"
         f"📋 <b>Motivos de rejeição:</b>{breakdown_lines or ' —'}\n\n"
         f"🚫 <b>Skills que mais bloquearam este mês:</b>{skills_month_lines or ' —'}\n\n"
