@@ -111,7 +111,13 @@ SITE_DOMAINS = {
 
 
 SKILLS_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "skills_gap.json")
-QA_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "qa.json")
+QA_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "form_answers.json")
+_LEGACY_QA_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "qa.json")
+if os.path.exists(_LEGACY_QA_FILE) and not os.path.exists(QA_FILE):
+    try:
+        os.rename(_LEGACY_QA_FILE, QA_FILE)
+    except Exception:
+        pass
 
 _LEVEL_LABELS = {1: "dias", 2: "semanas", 3: "1-3 meses", 4: "3-12 meses", 5: "1+ ano"}
 _CATEGORY_COLORS = {"python": "Python", "node": "Node", "frontend": "Frontend",
@@ -313,23 +319,43 @@ def run_answers_clear():
 ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 
 _PROVIDER_KEYS = {
-    "llm":  ("LLM_PROVIDER",      "LANGCHAIN_MODEL",      "CLAUDE_MODEL"),
-    "eval": ("LLM_PROVIDER_EVAL", "LANGCHAIN_MODEL_EVAL", "CLAUDE_MODEL"),
+    "llm":  ("LLM_PROVIDER",      "LANGCHAIN_MODEL",      "CLAUDE_MODEL", "LANGCHAIN_BACKEND"),
+    "eval": ("LLM_PROVIDER_EVAL", "LANGCHAIN_MODEL_EVAL", "CLAUDE_MODEL", "LANGCHAIN_BACKEND_EVAL"),
 }
 
-_CLAUDE_DEFAULT  = "claude-haiku-4-5-20251001"
-_OLLAMA_DEFAULT  = "llama3.1:8b"
+_CLAUDE_DEFAULT    = "claude-haiku-4-5-20251001"
+_OLLAMA_DEFAULT    = "llama3.1:8b"
+_DEEPSEEK_DEFAULT  = "deepseek-v4-flash"
+
+_LC_BACKEND_DEFAULTS = {
+    "ollama":   _OLLAMA_DEFAULT,
+    "deepseek": _DEEPSEEK_DEFAULT,
+}
+
+_PROVIDER_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "deepseek":  "DEEPSEEK_API_KEY",
+}
+
+
+def _mask_key(value: str) -> str:
+    if not value:
+        return "(missing)"
+    if len(value) <= 8:
+        return "set"
+    return f"{value[:6]}...{value[-4:]}"
 
 
 def run_provider_show():
     from dotenv import dotenv_values
     cfg = dotenv_values(ENV_FILE)
 
-    def _fmt(provider_key: str, lc_model_key: str, _: str) -> str:
+    def _fmt(provider_key: str, lc_model_key: str, _: str, lc_backend_key: str) -> str:
         backend = cfg.get(provider_key, "(not set)").lower()
         if backend == "langchain":
             model = cfg.get(lc_model_key, "(not set)")
-            return f"langchain  model={model}"
+            lc_backend = (cfg.get(lc_backend_key) or cfg.get("LANGCHAIN_BACKEND") or "ollama").lower()
+            return f"langchain  backend={lc_backend}  model={model}"
         if backend == "claude":
             model = cfg.get("CLAUDE_MODEL", _CLAUDE_DEFAULT)
             return f"claude     model={model}"
@@ -337,23 +363,53 @@ def run_provider_show():
 
     print(f"  llm  (form Q&A):       {_fmt(*_PROVIDER_KEYS['llm'])}")
     print(f"  eval (job evaluation): {_fmt(*_PROVIDER_KEYS['eval'])}")
+    print()
+    print("  API keys:")
+    for prov, env_var in _PROVIDER_KEY_ENV.items():
+        print(f"    {prov:10s} {env_var:20s} {_mask_key(cfg.get(env_var, ''))}")
 
 
-def run_provider_set(target: str, backend: str, model: str | None):
+def run_provider_set(target: str, backend: str, model: str | None, lc_backend: str | None = None):
     from dotenv import set_key
-    provider_key, lc_model_key, _ = _PROVIDER_KEYS[target]
+    provider_key, lc_model_key, _, lc_backend_key = _PROVIDER_KEYS[target]
 
     set_key(ENV_FILE, provider_key, backend)
 
     if backend == "langchain":
-        m = model or _OLLAMA_DEFAULT
+        b = (lc_backend or "ollama").lower()
+        m = model or _LC_BACKEND_DEFAULTS.get(b, _OLLAMA_DEFAULT)
         set_key(ENV_FILE, lc_model_key, m)
-        print(f"[provider] {target} -> langchain  model={m}")
+        set_key(ENV_FILE, lc_backend_key, b)
+        print(f"[provider] {target} -> langchain  backend={b}  model={m}")
+        if b == "deepseek" and not (os.getenv("DEEPSEEK_API_KEY") or _read_env_value("DEEPSEEK_API_KEY")):
+            print("  [warn] DEEPSEEK_API_KEY not set. Run: provider key set deepseek <key>")
     else:
         if model:
             set_key(ENV_FILE, "CLAUDE_MODEL", model)
         m = model or os.getenv("CLAUDE_MODEL") or _CLAUDE_DEFAULT
         print(f"[provider] {target} -> claude     model={m}")
+
+
+def _read_env_value(key: str) -> str | None:
+    from dotenv import dotenv_values
+    return dotenv_values(ENV_FILE).get(key)
+
+
+def run_provider_key_set(provider: str, value: str):
+    from dotenv import set_key
+    if provider not in _PROVIDER_KEY_ENV:
+        print(f"Unknown provider '{provider}'. Available: {', '.join(_PROVIDER_KEY_ENV)}")
+        raise typer.Exit(code=1)
+    env_var = _PROVIDER_KEY_ENV[provider]
+    set_key(ENV_FILE, env_var, value)
+    print(f"[provider] {env_var} -> {_mask_key(value)}")
+
+
+def run_provider_key_show():
+    from dotenv import dotenv_values
+    cfg = dotenv_values(ENV_FILE)
+    for prov, env_var in _PROVIDER_KEY_ENV.items():
+        print(f"  {prov:10s} {env_var:20s} {_mask_key(cfg.get(env_var, ''))}")
 
 
 def run_logout(site: str):
@@ -457,7 +513,7 @@ class NetworkDegree(str, Enum):
 
 app = typer.Typer(help="JobPilot \u2014 Automated job application bot")
 skills_app = typer.Typer(help="View missing skills detected during job evaluation")
-answers_app = typer.Typer(help="Manage cached form answers (files/qa.json)")
+answers_app = typer.Typer(help="Manage cached form answers (files/form_answers.json)")
 provider_app = typer.Typer(help="Show or change LLM provider settings")
 
 app.add_typer(skills_app, name="skills")
@@ -629,8 +685,8 @@ def apply(
     location: Optional[str] = typer.Option(None, "--location", help="Location filter (e.g. 'Brasil', 'Sao Paulo')"),
     experience: Optional[ExperienceLevel] = typer.Option(None, "--experience", help="Experience level filter"),
     resume: Optional[str] = typer.Option(None, "--resume", "-r", help="Path to resume PDF or TXT (default: resume.txt)"),
-    preferences: str = typer.Option("", "--preferences", "-p", help="Preferences to guide evaluation"),
-    level: List[str] = typer.Option([], "--level", "-l", help="Accepted seniority levels (repeat: --level junior --level pleno)"),
+    preferences: Optional[str] = typer.Option(None, "--preferences", "-p", help="Preferences to guide evaluation"),
+    level: Optional[List[str]] = typer.Option(None, "--level", "-l", help="Accepted seniority levels (repeat: --level junior --level pleno)"),
     start_page: Optional[int] = typer.Option(None, "--start-page", help="Page to start from (default: 1)"),
     max_pages: int = typer.Option(100, "--max-pages", help="Max pages to process (default: 100)"),
     max_applications: int = typer.Option(0, "--max-applications", metavar="N", help="Stop after N applications (default: 0 = unlimited)"),
@@ -642,6 +698,8 @@ def apply(
     eval_model: Optional[str] = typer.Option(None, "--eval-model", help="Override eval model for this run"),
     no_save: bool = typer.Option(False, "--no-save", help="Run without overwriting the saved URL/config for this site"),
     no_submit: bool = typer.Option(False, "--no-submit", help="Fill forms but do not submit (for testing)"),
+    eval_concurrency: int = typer.Option(1, "--eval-concurrency", min=1, help="Concurrent eval calls (1=sequential, max=site PAGE_SIZE)"),
+    tui: bool = typer.Option(False, "--tui", help="Show live Rich TUI panel of pipeline state"),
 ):
     """Apply to jobs via Easy Apply (LinkedIn, Glassdoor, Indeed)."""
     headless = ctx.obj.get("headless", False)
@@ -665,8 +723,10 @@ def apply(
     saved = last_urls.get(site_key, {})
 
     # Merge: CLI args > saved > defaults
-    final_level = level or _resolve_saved_options(saved)[0]
-    final_preferences = preferences or _resolve_saved_options(saved)[1]
+    DEFAULT_PREFS = "remoto obrigatório, nível pleno ou junior, linguagens Python ou Node.js"
+    DEFAULT_LEVELS = ["junior", "pleno"]
+    final_level = level or _resolve_saved_options(saved)[0] or DEFAULT_LEVELS
+    final_preferences = preferences or _resolve_saved_options(saved)[1] or DEFAULT_PREFS
     final_llm_prov = llm_provider or _resolve_saved_options(saved)[2]
     final_llm_mod = llm_model or _resolve_saved_options(saved)[3]
     final_eval_prov = eval_provider or _resolve_saved_options(saved)[4]
@@ -708,6 +768,10 @@ def apply(
         logger.info(f"[override] {key}={final_eval_mod}")
 
     from src.core.ai.llm_provider import get_llm_provider, get_eval_provider
+    llm_provider = get_llm_provider()
+    eval_provider = get_eval_provider()
+    logger.info(f"LLM:  {llm_provider.describe()}")
+    logger.info(f"EVAL: {eval_provider.describe()}")
     logger.info("Warming up LLM models...")
 
     async def _warmup():
@@ -718,8 +782,8 @@ def apply(
             except Exception as e:
                 logger.warning(f"Warmup failed for {name}: {e}")
         await asyncio.gather(
-            _try("llm", get_llm_provider()),
-            _try("eval", get_eval_provider()),
+            _try("llm", llm_provider),
+            _try("eval", eval_provider),
         )
     asyncio.run(_warmup())
     logger.info("LLM models ready.")
@@ -757,18 +821,32 @@ def apply(
 
     driver = setup(force_headless=headless)
     try:
-        JobApplicationManager(
-            driver,
-            url=resolved_url,
-            resume_path=resolved_resume,
-            preferences=final_preferences,
-            level=final_level,
-            max_pages=max_pages,
-            max_applications=max_applications,
-            start_page=resolved_start_page if resume_from else (start_page or 1),
-            on_page_change=on_page_change,
-            no_submit=no_submit,
-        ).run()
+        board_ctx = None
+        on_update = None
+        if tui:
+            from src.utils.tui import TuiBoard
+            board_ctx = TuiBoard()
+            board_ctx.__enter__()
+            on_update = board_ctx.update
+
+        try:
+            JobApplicationManager(
+                driver,
+                url=resolved_url,
+                resume_path=resolved_resume,
+                preferences=final_preferences,
+                level=final_level,
+                max_pages=max_pages,
+                max_applications=max_applications,
+                start_page=resolved_start_page if resume_from else (start_page or 1),
+                on_page_change=on_page_change,
+                no_submit=no_submit,
+                eval_concurrency=eval_concurrency,
+                on_update=on_update,
+            ).run()
+        finally:
+            if board_ctx:
+                board_ctx.__exit__(None, None, None)
         try:
             driver.save_screenshot(f"{setting.screenshots_path}.png")
         except Exception:
@@ -905,7 +983,7 @@ def test_apply(
     no_submit: bool = typer.Option(False, "--no-submit", help="Fill forms but do not submit"),
 ):
     """Test Easy Apply on a specific job URL (skips evaluation)."""
-    from src.core.use_cases.job_application_handler import JobApplicationHandler
+    from src.automation.tasks.job_application_manager import _detect_site
 
     resume_path = resume or "resume.txt"
     rp = _Path(resume_path)
@@ -915,23 +993,44 @@ def test_apply(
     else:
         resume_text = rp.read_text(encoding="utf-8")
 
+    site = _detect_site(job_url)
+    print(f"Site detected: {site}")
+
     driver = setup(force_headless=False)
     try:
         driver.get(job_url)
         time.sleep(3)
-        from src.automation.pages.jobs_search_page import JobsSearchPage
-        page = JobsSearchPage(driver, job_url)
-        btn = page.get_easy_apply_btn()
-        if not btn:
-            print("No Easy Apply button found on this job page.")
-            return
-        title = page.get_job_title() or "Test Job"
-        description = page.get_job_description() or ""
-        print(f"Applying to: {title}")
-        btn.click()
-        time.sleep(1.5)
-        handler = JobApplicationHandler(driver, resume=resume_text)
-        success = handler.submit_easy_apply(job_title=title, job_description=description, no_submit=no_submit)
+
+        if site == "indeed":
+            from src.automation.pages.indeed_jobs_page import IndeedJobsPage
+            from src.core.use_cases.indeed_application_handler import IndeedApplicationHandler
+            page = IndeedJobsPage(driver, job_url)
+            btn = page.get_apply_btn()
+            if not btn:
+                print("No Apply button found on this Indeed job page.")
+                return
+            title = page.get_job_title() or "Test Job"
+            print(f"Applying to: {title}")
+            btn.click()
+            time.sleep(1.5)
+            handler = IndeedApplicationHandler(driver, resume=resume_text)
+            success = handler.submit(salary_expectation=None, no_submit=no_submit)
+        else:
+            from src.automation.pages.jobs_search_page import JobsSearchPage
+            from src.core.use_cases.job_application_handler import JobApplicationHandler
+            page = JobsSearchPage(driver, job_url)
+            btn = page.get_easy_apply_btn()
+            if not btn:
+                print("No Easy Apply button found on this job page.")
+                return
+            title = page.get_job_title() or "Test Job"
+            description = page.get_job_description() or ""
+            print(f"Applying to: {title}")
+            btn.click()
+            time.sleep(1.5)
+            handler = JobApplicationHandler(driver, resume=resume_text)
+            success = handler.submit_easy_apply(job_title=title, job_description=description, no_submit=no_submit)
+
         if no_submit:
             print("Dry run complete \u2014 form was filled but not submitted.")
         else:
@@ -1079,9 +1178,29 @@ def provider_set(
     target: ProviderTarget = typer.Argument(..., help="Which provider to change: 'llm' (form Q&A) or 'eval' (job evaluation)"),
     backend: LLMBackend = typer.Argument(..., help="Backend to use: claude or langchain"),
     model: Optional[str] = typer.Option(None, "--model", help="Model name (e.g. claude-haiku-4-5-20251001 or llama3.1:8b)"),
+    lc_backend: Optional[str] = typer.Option(None, "--backend", help="LangChain backend: ollama (default) or deepseek"),
 ):
     """Set a provider (claude or langchain)."""
-    run_provider_set(target.value, backend.value, model)
+    run_provider_set(target.value, backend.value, model, lc_backend)
+
+
+key_app = typer.Typer(help="Manage API keys per provider")
+provider_app.add_typer(key_app, name="key")
+
+
+@key_app.command("set")
+def provider_key_set(
+    provider: str = typer.Argument(..., help="Provider name: anthropic, deepseek"),
+    value: str = typer.Argument(..., help="API key value"),
+):
+    """Save an API key for a provider in .env."""
+    run_provider_key_set(provider.lower(), value)
+
+
+@key_app.command("show")
+def provider_key_show():
+    """Show stored API keys (masked)."""
+    run_provider_key_show()
 
 
 def main():

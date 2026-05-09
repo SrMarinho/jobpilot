@@ -19,7 +19,14 @@ SALARY_KEYWORDS = [
     "remuner", "wage", "pay ", "ctc",
 ]
 
-_QA_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "qa.json"
+_QA_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "form_answers.json"
+_LEGACY_QA_FILE = _QA_FILE.parent / "qa.json"
+if _LEGACY_QA_FILE.exists() and not _QA_FILE.exists():
+    try:
+        _LEGACY_QA_FILE.rename(_QA_FILE)
+        logger.info(f"Migrated qa.json → {_QA_FILE.name}")
+    except Exception as e:
+        logger.warning(f"qa.json migration failed: {e}")
 
 
 def _normalize(s: str) -> str:
@@ -46,7 +53,7 @@ def _save_qa(qa: dict) -> None:
         with open(_QA_FILE, "w", encoding="utf-8") as f:
             json.dump(qa, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.warning(f"Could not save qa.json: {e}")
+        logger.warning(f"Could not save form_answers.json: {e}")
 
 
 def _qa_answer(entry) -> str:
@@ -416,7 +423,7 @@ class JobApplicationHandler:
 
             answers = {**cached_answers, **ai_answers}
 
-            # Save unanswered questions to qa.json so user can fill them manually
+            # Save unanswered questions to form_answers.json so user can fill them manually
             for i, field in enumerate(fields):
                 if answers.get(str(i)):
                     continue
@@ -424,7 +431,7 @@ class JobApplicationHandler:
                 if key not in qa:
                     qa[key] = _qa_entry("", field["question"], field["type"], field.get("options"))
                     _save_qa(qa)
-                    logger.warning(f"No answer for '{field['question']}' — saved to qa.json for manual input")
+                    logger.warning(f"No answer for '{field['question']}' — saved to form_answers.json for manual input")
 
             # Apply answers and validate; retry with AI on validation errors
             for i, field in enumerate(fields):

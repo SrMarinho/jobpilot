@@ -32,7 +32,7 @@ User CLI
         → handler.submit_easy_apply()
           → per step:
             → collect unfilled fields
-            → qa.json cache lookup
+            → form_answers.json cache lookup
             → single LLM batch for uncached questions
             → fill fields + validate
             → click next or submit

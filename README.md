@@ -9,7 +9,7 @@ Automated job application bot with AI-powered evaluation. Currently supports Lin
   - Multi-site: LinkedIn, Glassdoor, Indeed
   - Filters by language (pt-BR by default) and seniority level
   - AI estimates salary expectation based on job description and market data
-  - Answers custom form questions using LLM (cached in `files/qa.json`)
+  - Answers custom form questions using LLM (cached in `files/form_answers.json`)
   - Tracks applied and rejected jobs to avoid duplicates across runs
   - Resume from interruption: `--continue` picks up at the last page
 - **Connect** — Sends LinkedIn connection requests automatically
@@ -233,7 +233,7 @@ uv run main.py provider set eval claude --model claude-opus-4-6
 
 ### Manage form answers
 
-JobPilot caches answers to form questions in `files/qa.json` so it doesn't need to call the AI repeatedly. Use the `answers` command to inspect and edit this cache:
+JobPilot caches answers to form questions in `files/form_answers.json` so it doesn't need to call the AI repeatedly. Use the `answers` command to inspect and edit this cache:
 
 ```bash
 # Show questions with missing answers (numbered)
@@ -421,9 +421,9 @@ For each job found:
      - Click apply button
      - Fill form fields:
          - Salary filled directly from AI evaluation
-         - Other questions checked against files/qa.json first (no AI if cached)
+         - Other questions checked against files/form_answers.json first (no AI if cached)
          - Remaining unknown questions sent to AI in a single batch call
-         - All answers saved back to files/qa.json for future reuse
+         - All answers saved back to files/form_answers.json for future reuse
      - Submit
      - Save to applied_jobs.json
 ```
@@ -435,7 +435,7 @@ For each job found:
 | `applied_jobs.json` | Record of all submitted applications |
 | `rejected_jobs.json` | Record of all rejected jobs (skipped by AI or quick reject) |
 | `files/last_urls.json` | Saved search params, URL, and page per task (`connect`, `apply_linkedin`, `apply_indeed`, `apply_glassdoor`) |
-| `files/qa.json` | Cached form Q&A — edit manually to correct or pre-fill answers |
+| `files/form_answers.json` | Cached form Q&A — edit manually to correct or pre-fill answers |
 | `files/skills_gap.json` | Missing skills tracked across job evaluations (view with `skills list`) |
 | `files/monthly_reports/` | Monthly report JSONs (`YYYY-MM.json`) |
 | `screenshots.png` | Screenshot taken at the end of execution |

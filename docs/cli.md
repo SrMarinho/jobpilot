@@ -185,7 +185,7 @@ uv run main.py provider set llm langchain --model deepseek-r1:14b
 
 ## `answers`
 
-Manage cached form answers (`files/qa.json`).
+Manage cached form answers (`files/form_answers.json`).
 
 ```bash
 uv run main.py answers list          # Show unanswered questions
