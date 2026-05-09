@@ -139,11 +139,14 @@ class JobEvaluator:
 
         return False
 
-    def evaluate(self, title: str, description: str) -> tuple[bool, int | None, str, list[str]]:
-        """Returns (is_match, salary_estimate, reason, missing_skills)."""
-        return asyncio.run(self._evaluate_async(title, description))
+    def evaluate(self, title: str, description: str) -> tuple[bool, int | None, str, list[str], str]:
+        """Returns (is_match, salary_estimate, reason, missing_skills, contract_type).
 
-    async def _evaluate_async(self, title: str, description: str) -> tuple[bool, int | None, str, list[str]]:
+        contract_type: 'CLT' | 'PJ' | 'unknown'. Salary is tuned to whichever was detected.
+        """
+        return asyncio.run(self.evaluate_async(title, description))
+
+    async def evaluate_async(self, title: str, description: str) -> tuple[bool, int | None, str, list[str], str]:
         description = description[:MAX_DESCRIPTION_CHARS]
 
         preferences_section = (
@@ -174,16 +177,28 @@ RULES (answer NO if any fails):
 {level_rule}3. Technologies and preferences must match.
 4. Work location: if the description does not explicitly mention on-site or hybrid work, assume it is fully remote and accept it. Only reject if it explicitly requires presential or hybrid attendance.
 
-Salary reference (BRL/month): Junior CLT 3000-6000 PJ 4000-8000 | Pleno CLT 6000-10000 PJ 8000-14000 | Senior CLT 10000-18000 PJ 14000-25000
+Contract type detection (look for keywords in description):
+- "CLT", "carteira assinada", "consolidação das leis", "registro CLT" → CLT
+- "PJ", "pessoa jurídica", "MEI", "contrato PJ", "como PJ" → PJ
+- Both mentioned (candidate choice) → pick PJ (higher gross)
+- Not mentioned → unknown
+
+Salary reference (BRL/month):
+- Junior CLT 3000-6000 | Junior PJ 4000-8000
+- Pleno  CLT 6000-10000 | Pleno  PJ 8000-14000
+- Senior CLT 10000-18000 | Senior PJ 14000-25000
+
+Use CLT range if contract=CLT, PJ range if contract=PJ. If unknown, default to CLT range (more conservative).
 
 IMPORTANT: reply with ONLY one line, no extra text:
-If match: YES|<salary number>|<short reason>|<missing skills>
+If match: YES|<salary number>|<short reason>|<missing skills>|<CLT|PJ|unknown>
 If no match: NO|<short reason>|<missing skills>
 
 <missing skills>: comma-separated hard skills/technologies the job requires that are NOT in the candidate's resume. Leave empty if none.
 
 Examples:
-YES|7000|Python/Node backend role, remote, pleno level matches|kubernetes,redis
+YES|7000|Python/Node backend role, remote, pleno level matches|kubernetes,redis|CLT
+YES|11000|Pleno PJ Node fullstack remoto|next.js|PJ
 NO|Requires Angular, candidate works with Python/Node|angular,typescript
 NO|Go required|golang"""
 
@@ -194,6 +209,7 @@ NO|Go required|golang"""
         salary = None
         reason = result
         missing_skills: list[str] = []
+        contract_type = "unknown"
 
         for line in result.splitlines():
             line = line.strip()
@@ -206,16 +222,19 @@ NO|Go required|golang"""
                         salary = int(re.sub(r"\D", "", parts[1]))
                     except Exception:
                         salary = None
-                # reason is always the last field before skills (index 2 for NO, 3 for YES — or last-1)
                 if is_match:
                     reason = parts[2].strip() if len(parts) >= 3 else (parts[-1].strip() if parts else line)
                     skills_raw = parts[3].strip() if len(parts) >= 4 else ""
+                    if len(parts) >= 5:
+                        ct_raw = parts[4].strip().upper()
+                        if ct_raw in ("CLT", "PJ"):
+                            contract_type = ct_raw
                 else:
                     reason = parts[1].strip() if len(parts) >= 2 else line
                     skills_raw = parts[2].strip() if len(parts) >= 3 else ""
                 missing_skills = [s.strip().lower() for s in skills_raw.split(",") if s.strip()]
                 break
 
-        logger.info(f"Evaluation: {'YES' if is_match else 'NO'} | salary={salary} | {reason}" +
+        logger.info(f"Evaluation: {'YES' if is_match else 'NO'} | salary={salary} | contract={contract_type} | {reason}" +
                     (f" | missing: {missing_skills}" if missing_skills else ""))
-        return is_match, salary, reason, missing_skills
+        return is_match, salary, reason, missing_skills, contract_type

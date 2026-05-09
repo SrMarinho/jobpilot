@@ -61,7 +61,7 @@ class AppliedJobsTracker:
     def already_rejected(self, job_url: str) -> bool:
         return self._job_id(job_url) in self._rejected
 
-    def mark_applied(self, job_url: str, title: str, salary: int | None = None, company: str = "", level: str = ""):
+    def mark_applied(self, job_url: str, title: str, salary: int | None = None, company: str = "", level: str = "", site: str = "", contract: str = ""):
         job_id = self._job_id(job_url)
         self._applied[job_id] = {
             "title": title,
@@ -70,25 +70,31 @@ class AppliedJobsTracker:
             "applied_at": datetime.now().isoformat(),
             "salary_offered": salary,
             "level": level or "unknown",
+            "site": site or "unknown",
+            "contract": contract or "unknown",
         }
         self._save_applied()
         logger.info(f"Saved application: '{title}' at '{company}' (id={job_id})")
 
-        salary_line = f"\n💰 Pretensão: R$ {salary:,.0f}".replace(",", ".") if salary else ""
+        salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
+        contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
+        salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
         company_line = f"\n🏢 {company}" if company else ""
+        site_line = f"\n🌐 {site.capitalize()}" if site else ""
         send_telegram(
             f"✅ <b>Candidatura enviada!</b>\n"
-            f"📋 {title}{company_line}{salary_line}\n"
+            f"📋 {title}{company_line}{site_line}{salary_line}\n"
             f"🔗 <a href='{job_url}'>Ver vaga</a>"
         )
 
-    def mark_rejected(self, job_url: str, title: str, reason: str = ""):
+    def mark_rejected(self, job_url: str, title: str, reason: str = "", site: str = ""):
         job_id = self._job_id(job_url)
         self._rejected[job_id] = {
             "title": title,
             "url": job_url,
             "rejected_at": datetime.now().isoformat(),
             "reason": reason,
+            "site": site or "unknown",
         }
         self._save_rejected()
         logger.debug(f"Saved rejection: '{title}' (id={job_id})")
