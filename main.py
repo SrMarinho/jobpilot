@@ -91,7 +91,7 @@ def setup(force_headless: bool = False) -> uc.Chrome:
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=config["headless"])
+    driver = uc.Chrome(options=options, headless=config["headless"], version_main=147)
     if not config["headless"]:
         driver.maximize_window()
     return driver
@@ -362,7 +362,7 @@ def run_logout(site: str):
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=False)
+    driver = uc.Chrome(options=options, headless=False, version_main=147)
     try:
         driver.get(login_url)
         time.sleep(2)
@@ -387,7 +387,7 @@ def run_login(site: str):
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
     options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=False)
+    driver = uc.Chrome(options=options, headless=False, version_main=147)
     driver.get(url)
     print(f"Browser opened at {url}")
     print("Log in and close the browser window when done.")
