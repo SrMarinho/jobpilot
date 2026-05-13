@@ -385,20 +385,20 @@ Automate apply, connect, and report to run on every login — no terminal window
 
 ```powershell
 # Run once as admin per task
-schtasks /create /xml "local\jobpilot_task.xml" /tn "JobPilot\Apply"
-schtasks /create /xml "local\jobpilot_connect_task.xml" /tn "JobPilot\Connect"
-schtasks /create /xml "local\jobpilot_report_task.xml" /tn "JobPilot\Report"
+schtasks /create /xml ".local\jobpilot_task.xml" /tn "JobPilot\Apply"
+schtasks /create /xml ".local\jobpilot_connect_task.xml" /tn "JobPilot\Connect"
+schtasks /create /xml ".local\jobpilot_report_task.xml" /tn "JobPilot\Report"
 ```
 
 ### How it works
 
 | File | Purpose | Trigger |
 |------|---------|---------|
-| `local/startup_apply.bat` | Searches and applies to jobs every login | Logon |
-| `local/startup_connect.bat` | Sends connection requests (scheduled mode) | Logon |
-| `local/startup_report.bat` | Sends monthly Telegram report | Logon |
-| `local/run_hidden.ps1` | PowerShell wrapper that hides the terminal | Called by XML tasks |
-| `local/*.xml` | Task Scheduler definitions — import once | — |
+| `.local/startup_apply.bat` | Searches and applies to jobs every login | Logon |
+| `.local/startup_connect.bat` | Sends connection requests (scheduled mode) | Logon |
+| `.local/startup_report.bat` | Sends monthly Telegram report | Logon |
+| `.local/run_hidden.ps1` | PowerShell wrapper that hides the terminal | Called by XML tasks |
+| `.local/*.xml` | Task Scheduler definitions — import once | — |
 
 The `--scheduled` flag on connect/report ensures they only run once per day/month.
 The `--headless` flag keeps Chrome invisible. `run_hidden.ps1` hides the terminal via `Start-Process -WindowStyle Hidden`.
