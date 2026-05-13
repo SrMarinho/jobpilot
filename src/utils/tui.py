@@ -1,21 +1,15 @@
-"""Optional Rich-based TUI for the apply pipeline.
-
-Activated via `--tui` flag. Imports rich lazily so it stays optional.
-Manager calls `board.update(item)` on each state change of a JobItem.
-"""
 from __future__ import annotations
 
-import threading
-from typing import TYPE_CHECKING
+from typing import Callable
 
-if TYPE_CHECKING:
-    from src.automation.tasks.base_application_manager import JobItem
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import DataTable, Footer, Header, Static
 
+from src.automation.tasks.base_application_manager import BaseJobApplicationManager, JobItem
 
 _STATE_STYLE = {
-    "pending":    "white",
     "extracted":  "cyan",
-    "filtered":   "yellow",
     "evaluating": "bold blue",
     "approved":   "bold green",
     "rejected":   "red",
@@ -25,86 +19,113 @@ _STATE_STYLE = {
 }
 
 
-class TuiBoard:
-    """Live job-pipeline status board.
-
-    Thread-safe-ish: update() may be called from sync code; live rendering happens
-    in a background refresh thread managed by rich.live.
+class JobPipelineApp(App):
+    CSS = """
+    Horizontal {
+        height: 1fr;
+    }
+    DataTable {
+        height: 100%;
+        border: solid $primary;
+    }
+    DataTable#extract-table {
+        border: solid cyan;
+    }
+    DataTable#eval-table {
+        border: solid blue;
+    }
+    DataTable#apply-table {
+        border: solid magenta;
+    }
+    #stats {
+        height: 1;
+        dock: bottom;
+        content-align: center middle;
+        background: $surface;
+        color: $text;
+    }
     """
-    def __init__(self):
-        from rich.console import Console
-        from rich.live import Live
-        from rich.table import Table
-        from rich.layout import Layout
 
-        self._Console = Console
-        self._Table = Table
-        self._Layout = Layout
-        self._console = Console()
-        self._items: dict[int, "JobItem"] = {}
-        self._lock = threading.Lock()
-        self._live: Live | None = None
+    def __init__(self, manager_factory: Callable[[Callable], BaseJobApplicationManager]):
+        super().__init__()
+        self._manager_factory = manager_factory
+        self._rows: dict[str, tuple[str, str]] = {}
+        self._prev_state: dict[str, str] = {}
+        self._counts: dict[str, int] = {}
 
-    def __enter__(self):
-        from rich.live import Live
-        self._live = Live(self._render(), console=self._console, refresh_per_second=4, screen=False)
-        self._live.__enter__()
-        return self
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Horizontal():
+            yield DataTable(id="extract-table")
+            yield DataTable(id="eval-table")
+            yield DataTable(id="apply-table")
+        yield Static(id="stats")
+        yield Footer()
 
-    def __exit__(self, *exc):
-        if self._live:
-            self._live.__exit__(*exc)
-            self._live = None
+    def on_mount(self):
+        for tid, title in [("extract-table", "Extract"), ("eval-table", "Eval"), ("apply-table", "Apply")]:
+            t = self.query_one(f"#{tid}", DataTable)
+            t.add_columns("#", "Title", "State", "Note")
+            t.border_title = title
+        self._update_stats()
+        self.run_worker(self._run_pipeline(), name="pipeline", exclusive=True)
 
-    def update(self, item: "JobItem") -> None:
-        with self._lock:
-            self._items[item.idx] = item
-        if self._live:
-            try:
-                self._live.update(self._render())
-            except Exception:
-                pass
+    async def _run_pipeline(self):
+        manager = self._manager_factory(self._on_job_update)
+        await manager.run()
+        self.exit(0)
 
-    def _render(self):
-        Table = self._Table
-        Layout = self._Layout
+    def _on_job_update(self, item: JobItem):
+        self._update_ui(item)
 
-        eval_tbl = Table(title="Eval", expand=True)
-        eval_tbl.add_column("#", width=4)
-        eval_tbl.add_column("Title", overflow="ellipsis", no_wrap=True)
-        eval_tbl.add_column("State", width=12)
-        eval_tbl.add_column("Note", overflow="ellipsis", no_wrap=True)
+    def _update_ui(self, item: JobItem):
+        key = item.job_url or str(id(item))
+        new_tid = self._table_id(item.state)
+        tbl = self.query_one(f"#{new_tid}", DataTable)
+        style = _STATE_STYLE.get(item.state, "")
+        styled_state = f"[{style}]{item.state}[/]"
+        row_data = (str(item.idx), item.title[:50], styled_state, item.note[:50])
 
-        apply_tbl = Table(title="Apply", expand=True)
-        apply_tbl.add_column("#", width=4)
-        apply_tbl.add_column("Title", overflow="ellipsis", no_wrap=True)
-        apply_tbl.add_column("State", width=12)
-        apply_tbl.add_column("Note", overflow="ellipsis", no_wrap=True)
+        if key in self._rows:
+            old_rk, old_tid = self._rows[key]
+            if old_tid != new_tid:
+                try:
+                    self.query_one(f"#{old_tid}", DataTable).remove_row(old_rk)
+                except Exception:
+                    pass
+                self._rows[key] = (tbl.add_row(*row_data), new_tid)
+            else:
+                tbl.update_cell(old_rk, "#", str(item.idx))
+                tbl.update_cell(old_rk, "Title", item.title[:50])
+                tbl.update_cell(old_rk, "State", styled_state)
+                tbl.update_cell(old_rk, "Note", item.note[:50])
+        else:
+            self._rows[key] = (tbl.add_row(*row_data), new_tid)
 
-        with self._lock:
-            items = list(self._items.values())
+        old_state = self._prev_state.get(key)
+        if old_state:
+            self._counts[old_state] = max(0, self._counts.get(old_state, 0) - 1)
+        self._prev_state[key] = item.state
+        self._counts[item.state] = self._counts.get(item.state, 0) + 1
+        self._update_stats()
 
-        counts = {"applied": 0, "rejected": 0, "approved": 0, "failed": 0, "evaluating": 0}
-        for it in items:
-            counts[it.state] = counts.get(it.state, 0) + 1
-            style = _STATE_STYLE.get(it.state, "white")
-            row = (str(it.idx), it.title[:60], f"[{style}]{it.state}[/]", it.note[:60])
-            target = apply_tbl if it.state in ("applying", "applied", "failed", "approved") else eval_tbl
-            target.add_row(*row)
+    @staticmethod
+    def _table_id(state: str) -> str:
+        if state in ("extracted",):
+            return "extract-table"
+        if state in ("evaluating", "approved", "rejected"):
+            return "eval-table"
+        return "apply-table"
 
-        layout = Layout()
-        layout.split_column(
-            Layout(name="top", ratio=8),
-            Layout(name="footer", size=3),
+    def _update_stats(self):
+        c = self._counts
+        content = (
+            f"[cyan]extracted:[/] {c.get('extracted', 0)}  "
+            f"[blue]evaluating:[/] {c.get('evaluating', 0)}  "
+            f"[green]approved:[/] {c.get('approved', 0)}  "
+            f"[bold green]applied:[/] {c.get('applied', 0)}  "
+            f"[red]rejected:[/] {c.get('rejected', 0)}  "
+            f"[bold red]failed:[/] {c.get('failed', 0)}"
         )
-        layout["top"].split_row(Layout(eval_tbl), Layout(apply_tbl))
-        footer = (
-            f"[cyan]eval:[/] {counts.get('evaluating',0)}  "
-            f"[green]approved:[/] {counts.get('approved',0)}  "
-            f"[bold green]applied:[/] {counts.get('applied',0)}  "
-            f"[red]rejected:[/] {counts.get('rejected',0)}  "
-            f"[bold red]failed:[/] {counts.get('failed',0)}"
-        )
-        from rich.panel import Panel
-        layout["footer"].update(Panel(footer, title="Stats"))
-        return layout
+        stats = self.query_one("#stats", Static)
+        stats.update(content)

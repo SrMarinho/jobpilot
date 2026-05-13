@@ -1,9 +1,8 @@
-import time
 import asyncio
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Callable
 from playwright.async_api import Page
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
 from src.core.use_cases.skills_tracker import track_missing_skills_async
@@ -96,34 +95,28 @@ class BaseJobApplicationManager(ABC):
     @abstractmethod
     async def _submit_application(self, salary, title: str, description: str) -> bool: ...
 
-    async def _relocate_card(self, item: JobItem) -> bool:
-        try:
-            cards = await self.page_obj.get_job_cards()
-            for c in cards:
-                if await self._get_card_id(c) == item.card_id:
-                    await c.scroll_into_view_if_needed()
-                    await self.page.wait_for_timeout(300)
-                    try:
-                        await c.click()
-                    except Exception:
-                        await self.page.evaluate("(el) => el.click()", c)
-                    await self.page.wait_for_timeout(1500)
-                    return True
-        except Exception as e:
-            logger.debug(f"_relocate_card failed: {e}")
-        return False
-
-    # ── pipeline ──────────────────────────────────────────────────────────────
+    # ── overlap pipeline ──────────────────────────────────────────────────────
 
     async def run(self):
         logger.info(f"Site detected: {self.site}")
         logger.info(f"Eval concurrency: {self.eval_concurrency} (max page = {self.PAGE_SIZE})")
+
+        eval_queue: asyncio.Queue[JobItem | None] = asyncio.Queue()
+        apply_queue: asyncio.Queue[JobItem | None] = asyncio.Queue()
+
+        extract_task = asyncio.create_task(self._extract_all(eval_queue))
+        eval_task = asyncio.create_task(self._evaluate_all(eval_queue, apply_queue))
+        apply_task = asyncio.create_task(self._apply_all(apply_queue))
+
+        await asyncio.gather(extract_task, eval_task, apply_task)
+
+        logger.info(f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}")
+
+    async def _extract_all(self, eval_queue: asyncio.Queue):
         seen_page_ids: list[frozenset] = []
         for page_num in range(self.start_page, self.start_page + self.max_pages):
             if self.stop_event.is_set():
-                logger.info("Stop requested, halting job application manager")
                 break
-
             if self.on_page_change:
                 self.on_page_change(page_num)
             url = self._next_page_url(page_num)
@@ -142,9 +135,133 @@ class BaseJobApplicationManager(ABC):
             seen_page_ids = seen_page_ids[-1:] + [current_ids]
 
             logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
-            await self._process_jobs(job_cards, page_num)
+            items = await self._extract_jobs(job_cards, page_num)
+            for item in items:
+                await eval_queue.put(item)
 
-        logger.info(f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}")
+        await eval_queue.put(None)
+
+    async def _evaluate_all(self, eval_queue: asyncio.Queue, apply_queue: asyncio.Queue):
+        sem = asyncio.Semaphore(self.eval_concurrency)
+        while True:
+            item = await eval_queue.get()
+            if item is None:
+                eval_queue.task_done()
+                apply_queue.put_nowait(None)
+                break
+            async with sem:
+                if self.stop_event.is_set():
+                    eval_queue.task_done()
+                    continue
+                item.state = "evaluating"
+                self.on_update(item)
+                try:
+                    result = await self.evaluator.evaluate_async(item.title, item.description)
+                except Exception as e:
+                    logger.error(f"Eval error '{item.title}': {e}")
+                    item.state = "failed"
+                    item.note = f"eval error: {e}"
+                    self.on_update(item)
+                    eval_queue.task_done()
+                    continue
+                item.eval_result = result
+                is_match, salary, reason, missing, contract = result
+                if missing:
+                    await track_missing_skills_async(missing)
+                if is_match:
+                    item.state = "approved"
+                    item.note = reason
+                    self.on_update(item)
+                    await apply_queue.put(item)
+                else:
+                    item.state = "rejected"
+                    item.note = reason
+                    self.tracker.mark_rejected(item.job_url, item.title, reason=reason, site=self.site)
+                    self.on_update(item)
+                self.evaluated_count += 1
+                eval_queue.task_done()
+
+    async def _apply_all(self, apply_queue: asyncio.Queue):
+        while True:
+            item = await apply_queue.get()
+            if item is None:
+                apply_queue.task_done()
+                break
+            if self.stop_event.is_set():
+                apply_queue.task_done()
+                continue
+            if self.max_applications and self.applied_count >= self.max_applications:
+                logger.info(f"Reached max applications limit ({self.max_applications}), stopping")
+                self.stop_event.set()
+                apply_queue.task_done()
+                continue
+            await self._apply_one(item)
+            apply_queue.task_done()
+
+    async def _apply_one(self, item: JobItem):
+        apply_page = await self.page.context.new_page()
+        item.state = "applying"
+        self.on_update(item)
+        try:
+            await apply_page.goto(item.job_url, wait_until="domcontentloaded")
+            await apply_page.wait_for_timeout(2000)
+
+            temp_page_obj = self._build_page(apply_page, item.job_url)
+            temp_handler = self._build_handler(apply_page, resume=self.evaluator.resume)
+
+            if hasattr(temp_page_obj, 'get_easy_apply_btn'):
+                btn = await temp_page_obj.get_easy_apply_btn()
+            elif hasattr(temp_page_obj, 'get_apply_btn'):
+                btn = await temp_page_obj.get_apply_btn()
+            else:
+                btn = None
+
+            if not btn:
+                skip_reason = getattr(self, "_last_skip_reason", None)
+                if skip_reason:
+                    self.tracker.mark_rejected(item.job_url, item.title, reason=skip_reason, site=self.site)
+                    item.state = "rejected"
+                    item.note = skip_reason
+                else:
+                    item.state = "failed"
+                    item.note = "no apply button"
+                self.on_update(item)
+                return
+
+            await btn.click()
+            await apply_page.wait_for_timeout(1500)
+
+            _, salary, _, _, contract = item.eval_result
+            if hasattr(temp_handler, 'submit_easy_apply'):
+                success = await temp_handler.submit_easy_apply(salary, item.title, item.description, no_submit=self.no_submit)
+            elif hasattr(temp_handler, 'submit'):
+                success = await temp_handler.submit(salary_expectation=salary, no_submit=self.no_submit)
+            else:
+                success = False
+
+            if success:
+                self.applied_count += 1
+                lvl = detect_level(item.title, item.description)
+                self.tracker.mark_applied(item.job_url, item.title, salary, company=item.company, level=lvl, site=self.site, contract=contract)
+                item.state = "applied"
+                self.on_update(item)
+                logger.info(f"Applied ({self.applied_count} total)")
+            else:
+                item.state = "failed"
+                item.note = "submit failed"
+                self.on_update(item)
+        except Exception as e:
+            logger.error(f"Error applying '{item.title}': {e}")
+            item.state = "failed"
+            item.note = str(e)[:60]
+            self.on_update(item)
+        finally:
+            try:
+                await apply_page.close()
+            except Exception:
+                pass
+
+    # ── shared helpers ────────────────────────────────────────────────────────
 
     async def _wait_for_job_cards(self, page_num: int) -> list:
         await self.page.wait_for_timeout(1500)
@@ -175,15 +292,6 @@ class BaseJobApplicationManager(ABC):
                 await self.page.wait_for_timeout(2000)
         return []
 
-    async def _process_jobs(self, job_cards, page_num: int = 1):
-        items = await self._extract_jobs(job_cards, page_num)
-        if not items:
-            return
-        approved = await self._eval_jobs(items)
-        if approved:
-            await self._apply_jobs(approved)
-
-    # Phase 1: extract + cheap filters (sequential, drives browser)
     async def _extract_jobs(self, job_cards, page_num: int) -> list[JobItem]:
         items: list[JobItem] = []
         count = len(job_cards)
@@ -220,10 +328,7 @@ class BaseJobApplicationManager(ABC):
                 if not job_url:
                     job_url = self.page.url
 
-                item = JobItem(
-                    idx=i + 1, title=title, description=description, company=company,
-                    job_url=job_url, card_id=card_id, state="extracted",
-                )
+                item = JobItem(idx=i + 1, title=title, description=description, company=company, job_url=job_url, card_id=card_id, state="extracted")
                 self.on_update(item)
 
                 if self.tracker.already_applied(job_url):
@@ -251,107 +356,3 @@ class BaseJobApplicationManager(ABC):
                 logger.error(f"Error extracting job {i + 1}: {e}")
         logger.info(f"Extracted {len(items)} candidates for evaluation")
         return items
-
-    # Phase 2: eval concurrent
-    async def _eval_jobs(self, items: list[JobItem]) -> list[JobItem]:
-        async def _eval_one(item: JobItem, sem: asyncio.Semaphore):
-            async with sem:
-                if self.stop_event.is_set():
-                    return
-                item.state = "evaluating"
-                self.on_update(item)
-                try:
-                    result = await self.evaluator.evaluate_async(item.title, item.description)
-                except Exception as e:
-                    logger.error(f"Eval error '{item.title}': {e}")
-                    item.state = "failed"
-                    item.note = f"eval error: {e}"
-                    self.on_update(item)
-                    return
-                item.eval_result = result
-                is_match, salary, reason, missing, contract = result
-                if missing:
-                    await track_missing_skills_async(missing)
-                if is_match:
-                    item.state = "approved"
-                    item.note = reason
-                else:
-                    item.state = "rejected"
-                    item.note = reason
-                    self.tracker.mark_rejected(item.job_url, item.title, reason=reason, site=self.site)
-                self.on_update(item)
-
-        async def _eval_all():
-            sem = asyncio.Semaphore(self.eval_concurrency)
-            await asyncio.gather(*(_eval_one(it, sem) for it in items))
-
-        logger.info(f"Evaluating {len(items)} jobs (concurrency={self.eval_concurrency})...")
-        await _eval_all()
-        self.evaluated_count += len(items)
-        approved = [i for i in items if i.state == "approved"]
-        logger.info(f"Approved: {len(approved)}/{len(items)}")
-        return approved
-
-    # Phase 3: apply sequential
-    async def _apply_jobs(self, approved: list[JobItem]):
-        for item in approved:
-            if self.stop_event.is_set():
-                logger.info("Stop requested, halting apply phase")
-                return
-            if self.max_applications and self.applied_count >= self.max_applications:
-                logger.info(f"Reached max applications limit ({self.max_applications}), stopping")
-                self.stop_event.set()
-                return
-            try:
-                item.state = "applying"
-                self.on_update(item)
-
-                if not await self._relocate_card(item):
-                    logger.warning(f"Could not relocate card for '{item.title}', skipping")
-                    item.state = "failed"
-                    item.note = "relocate failed"
-                    self.on_update(item)
-                    continue
-
-                apply_btn = await self._get_apply_btn()
-                if not apply_btn:
-                    skip_reason = getattr(self, "_last_skip_reason", None)
-                    if skip_reason:
-                        self.tracker.mark_rejected(item.job_url, item.title, reason=skip_reason, site=self.site)
-                        item.state = "rejected"
-                        item.note = skip_reason
-                        logger.info(f"Job '{item.title}': {skip_reason}")
-                    else:
-                        item.state = "failed"
-                        item.note = "no apply button"
-                        logger.info(f"Job '{item.title}': No apply button, skipping")
-                    self.on_update(item)
-                    continue
-
-                logger.info(f"Applying to '{item.title}'")
-                await apply_btn.click()
-                await self.page.wait_for_timeout(1500)
-
-                _, salary, _, _, contract = item.eval_result
-                success = await self._submit_application(salary, item.title, item.description)
-                if success:
-                    self.applied_count += 1
-                    detected_level = detect_level(item.title, item.description)
-                    self.tracker.mark_applied(
-                        item.job_url, item.title, salary,
-                        company=item.company, level=detected_level,
-                        site=self.site, contract=contract,
-                    )
-                    item.state = "applied"
-                    self.on_update(item)
-                    logger.info(f"Applied ({self.applied_count} total)")
-                else:
-                    item.state = "failed"
-                    item.note = "submit failed"
-                    self.on_update(item)
-                await self.page.wait_for_timeout(1000)
-            except Exception as e:
-                logger.error(f"Error applying '{item.title}': {e}")
-                item.state = "failed"
-                item.note = str(e)[:60]
-                self.on_update(item)

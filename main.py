@@ -27,6 +27,25 @@ BOT_PROFILE_DIR = os.path.join(LOCAL_DIR, "bot_profile")
 LAST_URLS_FILE = os.path.join(os.path.dirname(__file__), ".local", "files", "last_urls.json")
 
 
+def _find_resume(hint: str = "") -> str:
+    if hint and os.path.exists(hint):
+        return hint
+    if not os.path.isdir(LOCAL_DIR):
+        return hint or "resume.txt"
+    if hint:
+        p = os.path.join(LOCAL_DIR, hint)
+        if os.path.exists(p):
+            return p
+    for f in os.listdir(LOCAL_DIR):
+        if f.lower().endswith((".pdf", ".txt")) and ("curriculo" in f.lower() or "resume" in f.lower() or "cv" in f.lower()):
+            return os.path.join(LOCAL_DIR, f)
+    for ext in (".pdf", ".txt"):
+        for f in os.listdir(LOCAL_DIR):
+            if f.lower().endswith(ext):
+                return os.path.join(LOCAL_DIR, f)
+    return hint or "resume.txt"
+
+
 def load_last_urls() -> dict:
     if os.path.exists(LAST_URLS_FILE):
         with open(LAST_URLS_FILE, "r") as f:
@@ -86,10 +105,11 @@ def save_weekly_limit_reached():
 
 def get_config(force_headless: bool = False) -> dict:
     env_val = os.getenv("HEADLESS")
-    if env_val is None:
-        headless = force_headless
-    else:
-        headless = force_headless or env_val.upper() != "FALSE"
+    headless = True
+    if env_val is not None and env_val.upper() == "FALSE":
+        headless = False
+    if force_headless:
+        headless = True
     return {"headless": headless}
 
 
@@ -661,7 +681,7 @@ def _resolve_apply_url_task(
         resume_path_arg
         or (saved.get("resume") if isinstance(saved, dict) else None)
         or last_urls.get("default_resume")
-        or "resume.txt"
+        or _find_resume()
     )
 
     return resolved_url, start_page, site_key, resolved_resume, search_params
@@ -751,11 +771,9 @@ def apply(
     last_urls = load_last_urls()
     saved = last_urls.get(site_key, {})
 
-    # Merge: CLI args > saved > defaults
-    DEFAULT_PREFS = "remoto obrigatório, nível pleno ou junior, linguagens Python ou Node.js"
-    DEFAULT_LEVELS = ["junior", "pleno"]
-    final_level = level or _resolve_saved_options(saved)[0] or DEFAULT_LEVELS
-    final_preferences = preferences or _resolve_saved_options(saved)[1] or DEFAULT_PREFS
+    # Merge: CLI args > saved
+    final_level = level or _resolve_saved_options(saved)[0] or []
+    final_preferences = preferences or _resolve_saved_options(saved)[1] or ""
     final_llm_prov = llm_provider or _resolve_saved_options(saved)[2]
     final_llm_mod = llm_model or _resolve_saved_options(saved)[3]
     final_eval_prov = eval_provider or _resolve_saved_options(saved)[4]
@@ -853,33 +871,29 @@ def apply(
         async with async_playwright() as pw:
             context, page = await _create_context(pw, force_headless=headless)
             try:
-                board_ctx = None
-                on_update = None
                 if tui:
-                    from src.utils.tui import TuiBoard
-                    board_ctx = TuiBoard()
-                    board_ctx.__enter__()
-                    on_update = board_ctx.update
-
-                try:
+                    from src.utils.tui import JobPipelineApp
+                    def mf(on_update):
+                        return JobApplicationManager(
+                            page, url=resolved_url, resume_path=resolved_resume,
+                            preferences=final_preferences, level=final_level,
+                            max_pages=max_pages, max_applications=max_applications,
+                            start_page=resolved_start_page if resume_from else (start_page or 1),
+                            on_page_change=on_page_change, no_submit=no_submit,
+                            eval_concurrency=eval_concurrency, on_update=on_update,
+                        )
+                    app = JobPipelineApp(mf)
+                    await app.run_async()
+                else:
                     manager = JobApplicationManager(
-                        page,
-                        url=resolved_url,
-                        resume_path=resolved_resume,
-                        preferences=final_preferences,
-                        level=final_level,
-                        max_pages=max_pages,
-                        max_applications=max_applications,
+                        page, url=resolved_url, resume_path=resolved_resume,
+                        preferences=final_preferences, level=final_level,
+                        max_pages=max_pages, max_applications=max_applications,
                         start_page=resolved_start_page if resume_from else (start_page or 1),
-                        on_page_change=on_page_change,
-                        no_submit=no_submit,
+                        on_page_change=on_page_change, no_submit=no_submit,
                         eval_concurrency=eval_concurrency,
-                        on_update=on_update,
                     )
                     await manager.run()
-                finally:
-                    if board_ctx:
-                        board_ctx.__exit__(None, None, None)
                 try:
                     await page.screenshot(path=f"{setting.screenshots_path}.png")
                 except Exception:
@@ -1092,7 +1106,7 @@ def test_apply(
 
 @app.command()
 def bot(
-    resume: str = typer.Option("resume.txt", "--resume", help="Path to resume file (default: resume.txt)"),
+    resume: str = typer.Option(_find_resume(), "--resume", help="Path to resume file"),
 ):
     """Start Telegram bot to control JobPilot remotely."""
     set_run_context("bot")
