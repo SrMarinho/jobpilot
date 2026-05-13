@@ -11,6 +11,7 @@ from typing import Optional, List
 import typer
 
 import src.config.settings as setting
+from src.utils.logger import set_run_context
 import undetected_chromedriver as uc
 from src.automation.tasks.connection_manager import ConnectionManager
 from src.automation.tasks.job_application_manager import JobApplicationManager, _detect_site
@@ -702,6 +703,7 @@ def apply(
     tui: bool = typer.Option(False, "--tui", help="Show live Rich TUI panel of pipeline state"),
 ):
     """Apply to jobs via Easy Apply (LinkedIn, Glassdoor, Indeed)."""
+    set_run_context("apply")
     headless = ctx.obj.get("headless", False)
     k_date_posted = date_posted.value if date_posted and date_posted != DatePosted.any_ else None
     k_workplace = workplace.value if workplace else None
@@ -879,6 +881,7 @@ def connect(
     scheduled: bool = typer.Option(False, "--scheduled", help="Scheduled mode: skip if already ran today or weekly limit reached"),
 ):
     """Send connection requests (LinkedIn people search)."""
+    set_run_context("connect")
     headless = ctx.obj.get("headless", False)
     last_urls = load_last_urls()
     site_key = "connect"
@@ -983,6 +986,7 @@ def test_apply(
     no_submit: bool = typer.Option(False, "--no-submit", help="Fill forms but do not submit"),
 ):
     """Test Easy Apply on a specific job URL (skips evaluation)."""
+    set_run_context("test-apply")
     from src.automation.tasks.job_application_manager import _detect_site
 
     resume_path = resume or "resume.txt"
@@ -1050,6 +1054,7 @@ def bot(
     resume: str = typer.Option("resume.txt", "--resume", help="Path to resume file (default: resume.txt)"),
 ):
     """Start Telegram bot to control JobPilot remotely."""
+    set_run_context("bot")
     from src.bot.telegram_bot import TelegramBot
     TelegramBot(driver_factory=setup, resume_path=resume).run()
 
@@ -1065,6 +1070,7 @@ def report(
     scheduled: bool = typer.Option(False, "--scheduled", help="Scheduled mode: send via Telegram only once per month"),
 ):
     """Generate and print monthly report (default: current month)."""
+    set_run_context("report")
     from datetime import date as _date
     from src.core.use_cases.monthly_report import (
         generate_report, generate_year_report, _save_report,

@@ -8,7 +8,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.common.by import By
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
-from src.core.use_cases.skills_tracker import track_missing_skills
+from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
 from src.config.settings import logger
 
@@ -290,7 +290,7 @@ class BaseJobApplicationManager(ABC):
                 item.eval_result = result
                 is_match, salary, reason, missing, contract = result
                 if missing:
-                    track_missing_skills(missing)
+                    await track_missing_skills_async(missing)
                 if is_match:
                     item.state = "approved"
                     item.note = reason
