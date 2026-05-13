@@ -7,8 +7,8 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-WindowStyle Hidden -ExecutionPolicy Bypass -File "F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.ps1" -BatchPath "F:\Documentos\Projetos\Code\jobpilot\.local\startup_connect.bat"</Arguments>
+      <Command>wscript.exe</Command>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_connect.bat"</Arguments>
     </Exec>
   </Actions>
   <Settings>
