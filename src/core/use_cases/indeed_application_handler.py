@@ -1,624 +1,265 @@
+import json
+import unicodedata
 import asyncio
-import os
-import time
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support.select import Select
-from selenium.common.exceptions import NoSuchElementException
+from playwright.async_api import Page
 from src.core.ai.llm_provider import get_llm_provider
-from src.core.use_cases.job_application_handler import (
-    _load_qa, _save_qa, _qa_answer, _qa_entry, _normalize_question,
-)
 from src.config.settings import logger
 
-_REACT_SET_VALUE = """
-(function(el, val) {
-    var setter = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
-    if (setter && setter.set) {
-        setter.set.call(el, val);
-    } else {
-        el.value = val;
-    }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-})(arguments[0], arguments[1]);
-"""
+_QA_FILE = None  # will use same path as job_application_handler
+
+SALARY_KEYWORDS = [
+    "salário", "salario", "salary", "remuneração", "remuneracao",
+    "pretensão", "pretensao", "compensation", "salarial", "expectativa",
+    "remuner", "wage", "pay ", "ctc",
+]
+
+
+def _normalize(s: str) -> str:
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+
+
+def _normalize_question(q: str) -> str:
+    return " ".join(_normalize(q).split())
 
 
 class IndeedApplicationHandler:
-    MAX_STEPS = 10
-
-    def __init__(self, driver: WebDriver, resume: str = ""):
-        self.driver = driver
+    def __init__(self, page: Page, resume: str = ""):
+        self.page = page
         self.resume = resume
-        self._original_window = None
 
-    def submit(self, salary_expectation: int | None = None, no_submit: bool = False) -> bool:
-        try:
-            self._original_window = self.driver.current_window_handle
-            # Indeed may open application in a new tab
-            WebDriverWait(self.driver, 5).until(lambda d: len(d.window_handles) > 1)
-            new_window = [w for w in self.driver.window_handles if w != self._original_window][0]
-            self.driver.switch_to.window(new_window)
-            logger.info("Switched to Indeed application tab")
-        except Exception:
-            logger.info("Application opened in same tab")
-
-        # URL guard: bail out if redirected to external ATS (Gupy, Greenhouse, Workday etc)
-        time.sleep(1.5)
-        cur_url = self.driver.current_url.lower()
-        if not any(d in cur_url for d in ("smartapply.indeed.com", "indeed.com/apply", "indeed.com/viewjob")):
-            logger.warning(f"Redirected to external ATS ({cur_url}) — aborting Indeed apply flow")
+    async def _get_iframe(self):
+        """Find Indeed apply iframe."""
+        for sel in ["iframe[src*='apply.indeed.com']", "iframe[class*='indeed-apply']", "iframe#indeed-apply-frame"]:
+            iframe = self.page.frame_locator(sel)
             try:
-                if self._original_window and self.driver.current_window_handle != self._original_window:
-                    self.driver.close()
+                body = iframe.locator("body")
+                if await body.is_visible(timeout=3000):
+                    logger.info("Found Indeed apply iframe")
+                    return iframe
+            except Exception:
+                continue
+        return None
+
+    async def _wait_for_iframe(self, timeout: int = 15) -> bool:
+        for sel in ["iframe[src*='apply.indeed.com']", "iframe[class*='indeed-apply']", "iframe#indeed-apply-frame"]:
+            try:
+                await self.page.wait_for_selector(sel, timeout=timeout * 1000)
+                return True
             except Exception:
                 pass
-            self._return_to_main()
-            return False
+        return False
 
+    async def _fill_input(self, el, value: str):
+        tag = await el.evaluate("el => el.tagName.toLowerCase()")
+        readonly = await el.get_attribute("readonly")
+        if tag == "select":
+            await el.select_option(value=value)
+        elif not readonly:
+            await el.fill(value)
+
+    async def _ask_llm(self, question: str, job_title: str, job_description: str) -> str:
+        model = get_llm_provider()
+        prompt = (
+            f"You are applying for the job '{job_title}'. "
+            f"Job description: {job_description[:1500]}\n"
+            f"Answer the following question concisely for a job application form: {question}\n"
+            f"Answer with only the value, no explanation."
+        )
         try:
-            for step in range(self.MAX_STEPS):
-                self._wait_loading()
-
-                self._scroll_bottom()
-                self._select_default_radios()
-                self._check_required_checkboxes()
-                self._fill_all_fields(salary_expectation)
-                self._scroll_bottom()
-
-                if self._submit_visible():
-                    if no_submit:
-                        logger.info("[no-submit] Submit button reached — stopping before final click")
-                        self._return_to_main()
-                        return True
-                    if not self._wait_submit_enabled():
-                        logger.warning("Submit button never became enabled (reCAPTCHA blocked?)")
-                        self._dump_buttons(step + 1)
-                        self._return_to_main()
-                        return False
-                    if self._try_submit():
-                        self._return_to_main()
-                        return True
-
-                if not self._click_next():
-                    self._dump_fields(step + 1)
-                    self._dump_buttons(step + 1)
-                    self._dump_iframes(step + 1)
-                    logger.warning(f"No actionable button on step {step + 1} — skipping")
-                    self._return_to_main()
-                    return False
-
-            logger.warning("Exceeded max steps in Indeed application flow")
-            self._return_to_main()
-            return False
-
+            return await model.complete(prompt)
         except Exception as e:
-            logger.error(f"Error during Indeed application: {e}")
-            self._return_to_main()
+            logger.error(f"LLM error on '{question[:50]}': {e}")
+            return ""
+
+    async def submit(self, salary_expectation: int | str = "", no_submit: bool = False) -> bool:
+        if not await self._wait_for_iframe():
+            logger.warning("Indeed apply iframe not found")
             return False
 
-    def _return_to_main(self):
+        iframe = await self._get_iframe()
+        if not iframe:
+            return False
+
         try:
-            if self._original_window and self._original_window in self.driver.window_handles:
-                self.driver.switch_to.window(self._original_window)
-        except Exception:
-            pass
+            max_steps = 20
+            for step in range(max_steps):
+                if no_submit:
+                    break
 
-    def _fill_all_fields(self, salary: int | None) -> None:
-        try:
-            inputs = self.driver.find_elements(
-                By.XPATH,
-                "//input[(@type='text' or @type='number' or @type='tel' or @type='email' or @type='url')]"
-            )
-            for inp in inputs:
-                try:
-                    if not inp.is_displayed() or inp.get_attribute("value") or inp.get_attribute("readonly"):
-                        continue
-                    question, required = self._get_field_label_required(inp)
-                    answer = self._decide_answer(question, salary)
-                    if answer:
-                        self._set_input_value(inp, str(answer))
-                        logger.info(f"Filled '{question}' -> '{answer}'")
-                    elif required:
-                        logger.warning(f"[required*] '{question}' sem resposta — preencha via 'answers set' ou complete manualmente")
-                except Exception:
-                    continue
+                await self.page.wait_for_timeout(1500)
 
-            textareas = self.driver.find_elements(By.XPATH, "//textarea")
-            for ta in textareas:
-                try:
-                    if not ta.is_displayed() or ta.get_attribute("value") or ta.get_attribute("readonly"):
-                        continue
-                    question, required = self._get_field_label_required(ta)
-                    answer = self._qa_lookup(question)
-                    if answer is None:
-                        answer = self._ask_claude(question)
-                        self._qa_store(question, answer, "textarea")
-                    else:
-                        logger.info(f"form_answers hit for '{question}'")
-                    if answer:
-                        ta.clear()
-                        ta.send_keys(answer)
-                        logger.info(f"Filled textarea '{question}'")
-                    elif required:
-                        logger.warning(f"[required*] textarea '{question}' sem resposta")
-                except Exception:
-                    continue
+                # Fill salary if present
+                if salary_expectation:
+                    for sel in ["input[aria-label*='salari']", "input[aria-label*='salary']", "input[aria-label*='remuner']", "input[placeholder*='salari']", "input[placeholder*='salary']"]:
+                        try:
+                            inp = iframe.locator(sel)
+                            if await inp.is_visible(timeout=500):
+                                await inp.fill(str(salary_expectation))
+                                logger.info(f"Filled salary input: {salary_expectation}")
+                        except Exception:
+                            pass
 
-            selects = self.driver.find_elements(By.XPATH, "//select")
-            for sel in selects:
-                if not sel.is_displayed() or sel.get_attribute("value"):
-                    continue
-                question = self._get_field_label(sel)
-                options = [o.text.strip() for o in Select(sel).options if o.get_attribute("value")]
-                if not options:
-                    continue
-                cached = self._qa_lookup(question, options)
-                if cached is not None:
-                    answer = cached
-                    logger.info(f"form_answers hit for '{question}' -> '{cached}'")
-                else:
-                    answer = self._ask_claude_choice(question, options)
-                    self._qa_store(question, answer, "select", options)
-                # Re-find element to avoid stale reference after AI call
+                # Fill required fields in iframe
+                for scope in [iframe, self.page]:
+                    # inputs
+                    inputs = await scope.locator("xpath=.//input[not(@type='hidden') and not(@type='radio') and not(@type='checkbox') and not(@type='submit') and not(@type='button') and @required]").all()
+                    for inp in inputs:
+                        if not await inp.is_visible():
+                            continue
+                        readonly = await inp.get_attribute("readonly")
+                        if readonly:
+                            continue
+                        label = await inp.get_attribute("aria-label") or await inp.get_attribute("placeholder") or ""
+                        if not label:
+                            continue
+                        cached = self._resolve_cached(label)
+                        if cached:
+                            await inp.fill(cached)
+                        else:
+                            answer = await self._ask_llm(label, "", "")
+                            if answer:
+                                await inp.fill(answer)
+                                self._save_cached(label, answer)
+
+                    # selects
+                    selects = await scope.locator("xpath=.//select[@required]").all()
+                    for sel in selects:
+                        if not await sel.is_visible():
+                            continue
+                        label = await sel.get_attribute("aria-label") or ""
+                        if not label:
+                            sid = await sel.get_attribute("id")
+                            if sid:
+                                lbl = scope.locator(f"xpath=.//label[@for='{sid}']")
+                                if await lbl.count():
+                                    label = (await lbl.first.inner_text()).strip()
+                        if not label:
+                            continue
+                        options = await sel.locator("option").all()
+                        option_values = []
+                        for opt in options:
+                            v = await opt.get_attribute("value")
+                            if v and v.strip():
+                                option_values.append(v)
+                        if not option_values:
+                            continue
+                        cached = self._resolve_cached(label)
+                        if cached:
+                            for opt in options:
+                                t = (await opt.inner_text()).strip()
+                                v = await opt.get_attribute("value")
+                                if cached.lower() in t.lower() or cached.lower() == v:
+                                    await sel.select_option(value=v)
+                                    break
+                        else:
+                            await sel.select_option(value=option_values[0])
+                            self._save_cached(label, option_values[0])
+
+                # Handle radios
                 try:
-                    fresh_els = self.driver.find_elements(By.XPATH, "//select[@required]")
-                    for fresh in fresh_els:
-                        if fresh.is_displayed() and self._get_field_label(fresh) == question:
-                            sel = fresh
-                            break
+                    radio_groups = await (iframe if step == 0 else self.page).evaluate("""
+                        () => {
+                            const inputs = document.querySelectorAll('input[type="radio"]');
+                            const seen = new Set();
+                            const groups = [];
+                            inputs.forEach(inp => {
+                                const name = inp.name;
+                                if (!name || seen.has(name)) return;
+                                seen.add(name);
+                                const id = inp.id;
+                                let label = '';
+                                if (id) {
+                                    const l = document.querySelector('label[for="'+id+'"]');
+                                    if (l) label = l.innerText.trim();
+                                }
+                                if (!label) label = inp.getAttribute('aria-label') || '';
+                                groups.push({name, label});
+                            });
+                            return groups;
+                        }
+                    """)
+                    for group in radio_groups:
+                        name = group["name"]
+                        label = group["label"]
+                        if not label:
+                            continue
+                        radios = (iframe if step == 0 else self.page).locator(f"xpath=.//input[@type='radio' and @name='{name}']")
+                        rcount = await radios.count()
+                        if rcount > 0:
+                            await radios.first.click()
+                            logger.info(f"Clicked radio '{label}'")
                 except Exception:
                     pass
+
+                # Handle checkboxes
                 try:
-                    sel_obj = Select(sel)
-                    if answer:
-                        matched = next((o for o in options if o.lower() == answer.lower()), None)
-                        matched = matched or next((o for o in options if answer.lower() in o.lower() or o.lower() in answer.lower()), None)
-                        if matched:
-                            sel_obj.select_by_visible_text(matched)
-                            logger.info(f"Selected '{matched}' for '{question}'")
-                        else:
-                            # Fallback: first non-placeholder option
-                            for opt_el in sel_obj.options:
-                                if opt_el.get_attribute("value"):
-                                    sel_obj.select_by_value(opt_el.get_attribute("value"))
-                                    logger.warning(f"No match for '{answer}' in '{question}' — selected first option: '{opt_el.text.strip()}'")
-                                    break
-                except Exception as e:
-                    logger.warning(f"Failed to select for '{question}': {e}")
+                    cbs = (iframe if step == 0 else self.page).locator("xpath=.//input[@type='checkbox' and @required]")
+                    cb_count = await cbs.count()
+                    for c in range(cb_count):
+                        cb = cbs.nth(c)
+                        if not await cb.is_checked():
+                            await cb.click()
+                except Exception:
+                    pass
 
-        except Exception as e:
-            logger.debug(f"Error filling fields: {e}")
+                # Submit / Next
+                btn_selectors = [
+                    "button[type='submit']",
+                    "button[aria-label='Submit']",
+                    "button[aria-label='Next']",
+                    "xpath=.//button[contains(normalize-space(),'Next') or contains(normalize-space(),'Próximo') or contains(normalize-space(),'Proximo') or contains(normalize-space(),'Avançar')]",
+                    "xpath=.//button[contains(normalize-space(),'Submit') or contains(normalize-space(),'Enviar') or contains(normalize-space(),'Send')]",
+                ]
+                clicked = False
+                for btn_sel in btn_selectors:
+                    try:
+                        btn = iframe.locator(btn_sel[len("xpath=."):] if btn_sel.startswith("xpath=.") else btn_sel)
+                        if await btn.is_visible(timeout=1000) and await btn.is_enabled():
+                            await btn.click()
+                            clicked = True
+                            logger.info(f"Indeed form button clicked (step {step + 1})")
+                            await self.page.wait_for_timeout(2000)
+                            break
+                    except Exception:
+                        continue
 
-    def _decide_answer(self, question: str, salary: int | None) -> str | None:
-        if not question or question == "(unknown)":
-            return None
-        salary_keywords = [
-            "salário", "salario", "salary", "remuneração", "remuneracao",
-            "pretensão", "pretensao", "compensation", "salarial", "expectativa",
-            "remuner", "wage", "pay ", "ctc",
-        ]
-        if salary and any(kw in question.lower() for kw in salary_keywords):
-            return str(salary)
-        cached = self._qa_lookup(question)
-        if cached is not None:
-            logger.info(f"form_answers hit for '{question}' -> '{cached}'")
-            return cached
-        ans = self._ask_claude(question)
-        self._qa_store(question, ans, "text")
-        return ans
-
-    def _qa_context(self, max_entries: int = 25) -> str:
-        try:
-            qa = _load_qa()
-            lines = []
-            for entry in qa.values():
-                if not isinstance(entry, dict):
-                    continue
-                q = entry.get("original") or ""
-                a = (entry.get("answer") or "").strip()
-                if q and a:
-                    lines.append(f"- {q} → {a}")
-                if len(lines) >= max_entries:
+                if not clicked:
+                    logger.info(f"No more Indeed form buttons (step {step + 1})")
                     break
-            return "\n".join(lines) if lines else "(nenhuma)"
-        except Exception:
-            return "(nenhuma)"
 
-    def _qa_lookup(self, question: str, options: list[str] | None = None) -> str | None:
-        qa = _load_qa()
+            return True
+        except Exception as e:
+            logger.error(f"Indeed submit error: {e}")
+            return False
+
+    def _resolve_cached(self, question: str) -> str | None:
+        from src.core.use_cases.job_application_handler import _normalize_question
+        qa = self._load_qa()
         key = _normalize_question(question)
         entry = qa.get(key)
         if entry is None:
             return None
-        ans = _qa_answer(entry)
-        return ans or None
+        if isinstance(entry, dict):
+            return entry.get("answer") or None
+        return str(entry) if entry else None
 
-    def _qa_store(self, question: str, answer: str | None, field_type: str, options: list[str] | None = None) -> None:
-        try:
-            qa = _load_qa()
-            key = _normalize_question(question)
-            qa[key] = _qa_entry(answer or "", original=question, field_type=field_type, options=options)
-            _save_qa(qa)
-        except Exception as e:
-            logger.debug(f"form_answers.json save failed: {e}")
+    def _save_cached(self, question: str, answer: str, options: list | None = None):
+        from src.core.use_cases.job_application_handler import _normalize_question
+        qa = self._load_qa()
+        key = _normalize_question(question)
+        if isinstance(qa.get(key), dict):
+            qa[key]["answer"] = answer
+        else:
+            qa[key] = {"original": question, "answer": answer, "options": options} if options else answer
+        self._save_qa(qa)
 
-    def _set_input_value(self, element, value: str) -> None:
-        try:
-            self.driver.execute_script(_REACT_SET_VALUE, element, value)
-            time.sleep(0.2)
-        except Exception:
-            try:
-                element.clear()
-                element.send_keys(value)
-            except Exception:
-                pass
+    def _load_qa(self) -> dict:
+        from src.core.use_cases.job_application_handler import _QA_FILE
+        if _QA_FILE.exists():
+            return json.loads(_QA_FILE.read_text(encoding="utf-8"))
+        return {}
 
-    def _ask_claude(self, question: str) -> str | None:
-        try:
-            return asyncio.run(self._ask_claude_async(question))
-        except Exception:
-            return None
-
-    def _ask_claude_choice(self, question: str, options: list[str]) -> str | None:
-        try:
-            return asyncio.run(self._ask_claude_choice_async(question, options))
-        except Exception:
-            return None
-
-    async def _ask_claude_async(self, question: str) -> str | None:
-        prompt = f"""Com base no currículo do candidato e em respostas anteriores, responda a seguinte pergunta do formulário de candidatura.
-
-CURRÍCULO:
-{self.resume}
-
-RESPOSTAS ANTERIORES (use como contexto para inferir):
-{self._qa_context()}
-
-PERGUNTA: {question}
-
-Responda APENAS com o valor — um número, palavra curta ou frase breve em português, adequado para um campo de formulário.
-Se não souber e não puder inferir do currículo nem das respostas anteriores, responda exatamente: null
-Não invente. Não inclua explicações ou pontuação."""
-
-        result = (await get_llm_provider().complete(prompt) or "").strip()
-        if not result or result.lower() == "null":
-            return None
-        return result
-
-    async def _ask_claude_choice_async(self, question: str, options: list[str]) -> str | None:
-        options_str = "\n".join(f"- {o}" for o in options)
-        prompt = f"""Com base no currículo do candidato e em respostas anteriores, escolha a melhor opção.
-
-CURRÍCULO:
-{self.resume}
-
-RESPOSTAS ANTERIORES (contexto):
-{self._qa_context()}
-
-PERGUNTA: {question}
-
-OPÇÕES:
-{options_str}
-
-Responda APENAS com o texto exato da opção escolhida. Sem explicações."""
-
-        result = await get_llm_provider().complete(prompt)
-
-        for opt in options:
-            if opt.lower() == result.lower():
-                return opt
-        for opt in options:
-            if result.lower() in opt.lower() or opt.lower() in result.lower():
-                return opt
-        return None
-
-    _SUBMIT_TEXTS = (
-        "enviar candidatura", "submit application", "enviar", "submit",
-        "send application", "candidatar-se", "apply now",
-    )
-    _NEXT_TEXTS = (
-        "continuar", "continue", "próximo", "proximo", "next",
-        "avançar", "avancar", "prosseguir", "continue applying",
-        "review your application", "revisar candidatura", "revisar",
-    )
-    _SUBMIT_TESTIDS = ("submit", "ia-submit", "indeedapplybutton", "ia-submitbutton")
-    _NEXT_TESTIDS = ("next", "continue", "ia-continue", "ia-continuebutton")
-
-    def _find_clickable(self, texts: tuple[str, ...], testids: tuple[str, ...]):
-        candidates = self.driver.find_elements(
-            By.XPATH,
-            "//button | //a[@role='button'] | //input[@type='submit' or @type='button']"
-        )
-        for el in candidates:
-            try:
-                if not el.is_displayed() or not el.is_enabled():
-                    continue
-                testid = (el.get_attribute("data-testid") or "").lower()
-                label = (el.text or el.get_attribute("value") or el.get_attribute("aria-label") or "").strip().lower()
-                if any(tid in testid for tid in testids):
-                    return el
-                if any(t in label for t in texts):
-                    return el
-            except Exception:
-                continue
-        return None
-
-    def _submit_visible(self) -> bool:
-        if self._find_clickable(self._SUBMIT_TEXTS, self._SUBMIT_TESTIDS):
-            return True
-        # Submit may exist but be disabled (reCAPTCHA / form validation pending) — still counts as "we reached review"
-        return self._find_disabled_submit() is not None
-
-    def _find_disabled_submit(self):
-        for el in self.driver.find_elements(
-            By.XPATH,
-            "//button | //a[@role='button'] | //input[@type='submit' or @type='button']",
-        ):
-            try:
-                if not el.is_displayed():
-                    continue
-                testid = (el.get_attribute("data-testid") or "").lower()
-                label = (el.text or el.get_attribute("value") or el.get_attribute("aria-label") or "").strip().lower()
-                if any(tid in testid for tid in self._SUBMIT_TESTIDS) or any(t in label for t in self._SUBMIT_TEXTS):
-                    return el
-            except Exception:
-                continue
-        return None
-
-    def _scroll_to_captcha(self) -> None:
-        try:
-            for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
-                src = (f.get_attribute("src") or "").lower()
-                title = (f.get_attribute("title") or "").lower()
-                if "recaptcha" in src or "recaptcha" in title or "captcha" in title:
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView({block:'center', inline:'center'});", f
-                    )
-                    time.sleep(0.4)
-                    return
-        except Exception:
-            pass
-
-    def _captcha_present(self) -> bool:
-        try:
-            for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
-                src = (f.get_attribute("src") or "").lower()
-                title = (f.get_attribute("title") or "").lower()
-                if "recaptcha" in src or "recaptcha" in title or "captcha" in title:
-                    return True
-        except Exception:
-            pass
-        return False
-
-    def _wait_submit_enabled(
-        self,
-        timeout: int | None = None,
-        manual_timeout: int | None = None,
-    ) -> bool:
-        if timeout is None:
-            timeout = int(os.getenv("INDEED_SUBMIT_TIMEOUT", "30"))
-        if manual_timeout is None:
-            manual_timeout = int(os.getenv("INDEED_CAPTCHA_TIMEOUT", "15"))
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            btn = self._find_clickable(self._SUBMIT_TEXTS, self._SUBMIT_TESTIDS)
-            if btn:
-                return True
-            time.sleep(1)
-
-        if not self._captcha_present():
-            return False
-
-        self._scroll_to_captcha()
-        logger.warning(f"reCAPTCHA detected — switching to manual mode ({manual_timeout}s window)")
-        print("\n" + "=" * 60)
-        print(">>> reCAPTCHA: resolva o captcha na janela do navegador <<<")
-        print(f">>> Aguardando até {manual_timeout}s para o submit habilitar... <<<")
-        print("=" * 60 + "\n")
-        deadline = time.time() + manual_timeout
-        last_log = 0
-        while time.time() < deadline:
-            btn = self._find_clickable(self._SUBMIT_TEXTS, self._SUBMIT_TESTIDS)
-            if btn:
-                logger.info("Submit habilitou após captcha manual")
-                return True
-            remaining = int(deadline - time.time())
-            if remaining <= last_log - 30 or last_log == 0:
-                logger.info(f"Aguardando captcha... {remaining}s restantes")
-                last_log = remaining
-            time.sleep(2)
-        logger.warning(f"Captcha timeout ({manual_timeout}s) — desistindo desta vaga")
-        return False
-
-    def _try_submit(self) -> bool:
-        btn = self._find_clickable(self._SUBMIT_TEXTS, self._SUBMIT_TESTIDS)
-        if not btn:
-            return False
-        try:
-            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-            btn.click()
-            logger.info("Application submitted on Indeed")
-            time.sleep(2)
-            return True
-        except Exception as e:
-            logger.warning(f"Submit click failed: {e}")
-            return False
-
-    def _click_next(self) -> bool:
-        btn = self._find_clickable(self._NEXT_TEXTS, self._NEXT_TESTIDS)
-        if not btn:
-            return False
-        try:
-            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-            btn.click()
-            return True
-        except Exception as e:
-            logger.warning(f"Next click failed: {e}")
-            return False
-
-    def _scroll_bottom(self) -> None:
-        try:
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(0.5)
-        except Exception:
-            pass
-
-    def _dump_iframes(self, step: int) -> None:
-        try:
-            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
-            entries = []
-            for f in iframes:
-                try:
-                    entries.append(f"src='{(f.get_attribute('src') or '')[:80]}' id='{f.get_attribute('id') or ''}' title='{(f.get_attribute('title') or '')[:40]}'")
-                except Exception:
-                    continue
-            if entries:
-                logger.warning(f"[indeed step {step}] Iframes:\n  " + "\n  ".join(entries))
-        except Exception:
-            pass
-
-    def _select_default_radios(self) -> None:
-        try:
-            groups: dict[str, list] = {}
-            for r in self.driver.find_elements(By.XPATH, "//input[@type='radio']"):
-                try:
-                    if not r.is_displayed():
-                        continue
-                    name = r.get_attribute("name") or ""
-                    groups.setdefault(name, []).append(r)
-                except Exception:
-                    continue
-            for name, radios in groups.items():
-                if any(r.is_selected() for r in radios):
-                    continue
-                try:
-                    self.driver.execute_script("arguments[0].click();", radios[0])
-                    label = self._get_field_label(radios[0]) or name
-                    logger.info(f"Selected default radio for '{label}'")
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.debug(f"Radio default selection error: {e}")
-
-    def _check_required_checkboxes(self) -> None:
-        try:
-            for cb in self.driver.find_elements(By.XPATH, "//input[@type='checkbox' and @required]"):
-                try:
-                    if cb.is_displayed() and not cb.is_selected():
-                        self.driver.execute_script("arguments[0].click();", cb)
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-    def _dump_fields(self, step: int) -> None:
-        try:
-            entries = []
-            for el in self.driver.find_elements(By.XPATH, "//input | //select | //textarea"):
-                try:
-                    if not el.is_displayed():
-                        continue
-                    tag = el.tag_name
-                    typ = el.get_attribute("type") or ""
-                    name = el.get_attribute("name") or ""
-                    el_id = el.get_attribute("id") or ""
-                    req = el.get_attribute("required") is not None or el.get_attribute("aria-required") == "true"
-                    val = (el.get_attribute("value") or "")[:40]
-                    label = self._get_field_label(el)[:40]
-                    entries.append(f"{tag}[type={typ}] id='{el_id}' name='{name}' req={req} val='{val}' label='{label}'")
-                except Exception:
-                    continue
-            logger.warning(f"[indeed step {step}] Visible fields:\n  " + "\n  ".join(entries) if entries else f"[indeed step {step}] No visible fields")
-        except Exception as e:
-            logger.debug(f"Field dump error: {e}")
-
-    def _dump_buttons(self, step: int) -> None:
-        try:
-            els = self.driver.find_elements(
-                By.XPATH,
-                "//button | //a[@role='button'] | //input[@type='submit' or @type='button']"
-            )
-            entries = []
-            for el in els:
-                try:
-                    if not el.is_displayed():
-                        continue
-                    text = (el.text or el.get_attribute("value") or "").strip()[:60]
-                    testid = el.get_attribute("data-testid") or ""
-                    aria = (el.get_attribute("aria-label") or "")[:60]
-                    cls = (el.get_attribute("class") or "")[:80]
-                    typ = el.get_attribute("type") or ""
-                    enabled = el.is_enabled()
-                    entries.append(f"text='{text}' aria='{aria}' type='{typ}' testid='{testid}' class='{cls}' enabled={enabled}")
-                except Exception:
-                    continue
-            logger.warning(f"[indeed step {step}] Visible buttons:\n  " + "\n  ".join(entries) if entries else f"[indeed step {step}] No visible buttons")
-            logger.warning(f"[indeed step {step}] URL: {self.driver.current_url}")
-        except Exception as e:
-            logger.debug(f"Button dump error: {e}")
-
-    # Indeed-specific known fields → friendly question keys (matches form_answers.json entries)
-    _INDEED_FIELD_KEYS = {
-        "location-postal-code": "Código postal (CEP)",
-        "location-locality":    "Cidade, estado",
-        "location-address":     "Endereço",
-        "location-country":     "País",
-    }
-
-    def _get_field_label(self, element) -> str:
-        label, _ = self._get_field_label_required(element)
-        return label
-
-    def _get_field_label_required(self, element) -> tuple[str, bool]:
-        """Return (clean_label, is_required). Required if label ends with '*' or @required attr set."""
-        try:
-            raw = ""
-            field_id = element.get_attribute("id")
-            if field_id:
-                labels = self.driver.find_elements(By.XPATH, f"//label[@for='{field_id}']")
-                if labels:
-                    raw = labels[0].text.strip()
-            if not raw:
-                name = (element.get_attribute("name") or "").strip()
-                if name in self._INDEED_FIELD_KEYS:
-                    raw = self._INDEED_FIELD_KEYS[name]
-            if not raw:
-                raw = (element.get_attribute("placeholder") or "").strip()
-            if not raw:
-                raw = (element.get_attribute("aria-label") or "").strip()
-
-            star_required = raw.endswith("*")
-            attr_required = (
-                element.get_attribute("required") is not None
-                or element.get_attribute("aria-required") == "true"
-            )
-            clean = raw.rstrip("*").strip(" :") if raw else ""
-            return (clean or "(unknown)", star_required or attr_required)
-        except Exception:
-            return ("(unknown)", False)
-
-    def _wait_loading(self, timeout: int = 10) -> None:
-        """Wait for Indeed Smart Apply loading spinner / route transition."""
-        time.sleep(0.6)
-        try:
-            WebDriverWait(self.driver, timeout).until_not(
-                lambda d: any(
-                    e.is_displayed()
-                    for e in d.find_elements(
-                        By.CSS_SELECTOR,
-                        "[class*=Spinner],[class*=spinner],[class*=Loading],[class*=loading],[class*=Skeleton],[role=progressbar]",
-                    )
-                )
-            )
-        except Exception:
-            pass
-        try:
-            WebDriverWait(self.driver, timeout).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
-        except Exception:
-            pass
-        time.sleep(0.5)
+    def _save_qa(self, qa: dict):
+        from src.core.use_cases.job_application_handler import _QA_FILE
+        _QA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _QA_FILE.write_text(json.dumps(qa, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -28,10 +28,10 @@ _MANAGERS = {
 }
 
 
-def JobApplicationManager(driver, url: str, *args, **kwargs) -> BaseJobApplicationManager:
+def JobApplicationManager(page, url: str, *args, **kwargs) -> BaseJobApplicationManager:
     """Factory — picks subclass by URL host."""
     cls = _MANAGERS[_detect_site(url)]
-    return cls(driver, url, *args, **kwargs)
+    return cls(page, url, *args, **kwargs)
 
 
 __all__ = [

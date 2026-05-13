@@ -1,53 +1,45 @@
 import re
-import time
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.remote.webelement import WebElement
+from playwright.async_api import Page
 from src.config.settings import logger
 
 
 class GlassdoorJobsPage:
-    def __init__(self, driver: WebDriver, url: str):
-        self.driver = driver
+    def __init__(self, page: Page, url: str):
+        self.page = page
         self.url = url
 
-    def close_modal(self) -> None:
+    async def close_modal(self) -> None:
         try:
-            btn = self.driver.find_element(
-                By.CSS_SELECTOR,
+            btn = self.page.locator(
                 '[class*=modal_Modal] button[class*=close], '
                 '[class*=modal_Modal] button[class*=Close], '
                 '[class*=modal_Modal] button[aria-label="Close"], '
-                'button[data-test="modal-close-btn"]',
+                'button[data-test="modal-close-btn"]'
             )
-            btn.click()
-            logger.info("Glassdoor modal closed")
-            time.sleep(0.5)
+            if await btn.is_visible(timeout=2000):
+                await btn.click()
+                logger.info("Glassdoor modal closed")
         except Exception:
             pass
 
-    def get_job_cards(self) -> list[WebElement]:
-        self.close_modal()
+    async def get_job_cards(self):
+        await self.close_modal()
         try:
-            WebDriverWait(self.driver, 10).until(
-                lambda d: d.find_elements(By.CSS_SELECTOR, 'li[data-test="jobListing"]')
-            )
-            return self.driver.find_elements(By.CSS_SELECTOR, 'li[data-test="jobListing"]')
+            await self.page.wait_for_selector('li[data-test="jobListing"]', timeout=10000)
+            return await self.page.locator('li[data-test="jobListing"]').all()
         except Exception:
             logger.info("No job cards found on page")
             return []
 
-    def scroll_to_load(self, target: int = 60, max_attempts: int = 10) -> int:
-        """Lazy-load more cards by scrolling. Stops when target reached or no growth."""
-        last = len(self.get_job_cards())
+    async def scroll_to_load(self, target: int = 60, max_attempts: int = 10) -> int:
+        last = len(await self.get_job_cards())
         plateau = 0
         for _ in range(max_attempts):
             if last >= target:
                 break
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1.2)
-            cur = len(self.get_job_cards())
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.page.wait_for_timeout(1200)
+            cur = len(await self.get_job_cards())
             if cur == last:
                 plateau += 1
                 if plateau >= 2:
@@ -57,84 +49,78 @@ class GlassdoorJobsPage:
             last = cur
         return last
 
-    def get_job_title(self) -> str:
+    async def get_job_title(self) -> str:
         try:
-            el = WebDriverWait(self.driver, 10).until(
-                lambda d: d.find_element(By.CSS_SELECTOR, '[data-test="job-title"]')
-            )
-            return el.text.strip()
+            el = self.page.locator('[data-test="job-title"]')
+            await el.wait_for(timeout=10000)
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
-    def get_job_description(self) -> str:
+    async def get_job_description(self) -> str:
         try:
-            el = WebDriverWait(self.driver, 5).until(
-                lambda d: d.find_element(By.CSS_SELECTOR, '[class*=JobDetails_jobDescription]')
-            )
-            return el.text.strip()
+            el = self.page.locator('[class*=JobDetails_jobDescription]')
+            await el.wait_for(timeout=5000)
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
-    def get_apply_btn(self) -> WebElement | None:
+    async def get_apply_btn(self):
         skip_phrases = ["site da empresa", "company site", "empresa parceira"]
-
-        # Try known selectors
         for sel in ['[data-test="easyApply"]', '[data-test="applyButton"]',
                     'button[class*=apply]', 'button[class*=Apply]',
                     '[class*=EasyApply]', '[class*=easyApply]']:
             try:
-                btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                for btn in btns:
-                    if not btn.is_displayed() or not btn.is_enabled():
+                btns = self.page.locator(sel)
+                count = await btns.count()
+                for i in range(count):
+                    btn = btns.nth(i)
+                    if not await btn.is_visible() or not await btn.is_enabled():
                         continue
-                    if any(p in btn.text.strip().lower() for p in skip_phrases):
+                    text = (await btn.inner_text()).strip().lower()
+                    if any(p in text for p in skip_phrases):
                         continue
-                    logger.info(f"Found apply button: '{btn.text.strip()}'")
+                    logger.info(f"Found apply button: '{await btn.inner_text()}'")
                     return btn
             except Exception:
                 pass
-
-        # Text-based fallback
         try:
-            btn = self.driver.find_element(
-                By.XPATH,
-                "//button[contains(normalize-space(),'Candidatura rápida') or "
+            btn = self.page.locator(
+                "xpath=//button[contains(normalize-space(),'Candidatura rápida') or "
                 "contains(normalize-space(),'Candidatar-se agora') or "
-                "contains(normalize-space(),'Easy Apply')]",
+                "contains(normalize-space(),'Easy Apply')]"
             )
-            if btn.is_displayed() and btn.is_enabled():
-                logger.info(f"Found apply button via text: '{btn.text.strip()}'")
+            if await btn.is_visible() and await btn.is_enabled():
+                logger.info(f"Found apply button via text: '{await btn.inner_text()}'")
                 return btn
         except Exception:
             pass
-
         logger.info("No native apply button found")
         return None
 
-    def get_card_job_id(self, card: WebElement) -> str | None:
+    async def get_card_job_id(self, card) -> str | None:
         try:
-            return card.get_attribute("data-jobid")
+            return await card.get_attribute("data-jobid")
         except Exception:
             return None
 
-    def get_card_title(self, card: WebElement) -> str:
+    async def get_card_title(self, card) -> str:
         try:
-            el = card.find_element(By.CSS_SELECTOR, '[class*=JobCard_jobTitle], a[data-test="job-title"], [class*=jobTitle]')
-            return el.text.strip()
+            el = card.locator('[class*=JobCard_jobTitle], a[data-test="job-title"], [class*=jobTitle]')
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
-    def get_card_company(self, card: WebElement) -> str:
+    async def get_card_company(self, card) -> str:
         try:
-            el = card.find_element(By.CSS_SELECTOR, '[class*=EmployerProfile_employerName], [data-test="employer-name"], [class*=employerName]')
-            return el.text.strip()
+            el = card.locator('[class*=EmployerProfile_employerName], [data-test="employer-name"], [class*=employerName]')
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
     def next_page_url(self, base_url: str, page_num: int) -> str:
         if page_num == 1:
             return base_url
-        # Glassdoor pagination: insert _IP{n} before .htm
         if re.search(r'_IP\d+\.htm', base_url):
             return re.sub(r'_IP\d+\.htm', f'_IP{page_num}.htm', base_url)
         return re.sub(r'\.htm', f'_IP{page_num}.htm', base_url)

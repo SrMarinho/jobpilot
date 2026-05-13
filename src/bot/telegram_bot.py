@@ -290,12 +290,11 @@ class TelegramBot:
     # ── Task runners ──────────────────────────────────────────────────────────
 
     def _run_connect(self, url: str, start_page: int = 1, max_pages: int = 100) -> None:
-        from src.automation.tasks.connection_manager import ConnectionManager
-        driver = self.driver_factory()
+        pw, context, page = self.driver_factory()
         manager = None
         try:
-            manager = ConnectionManager(driver, url=url, start_page=start_page, max_pages=max_pages, stop_event=self.stop_event)
-            manager.run()
+            manager = ConnectionManager(page, url=url, start_page=start_page, max_pages=max_pages, stop_event=self.stop_event)
+            asyncio.run(manager.run())
         except Exception as e:
             self.send("❌ Erro ao executar conexões.")
             logger.error(f"connect task error: {e}")
@@ -303,16 +302,19 @@ class TelegramBot:
             sent = manager.connect_people.invite_sended if manager else 0
             self.send(f"🔗 Conexões finalizadas! Total enviado: {sent}")
             try:
-                driver.quit()
+                context.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
             except Exception:
                 pass
 
     def _run_apply(self, url: str) -> None:
-        from src.automation.tasks.job_application_manager import JobApplicationManager
-        driver = self.driver_factory()
+        pw, context, page = self.driver_factory()
         try:
-            manager = JobApplicationManager(driver, url=url, resume_path=self.resume_path, stop_event=self.stop_event)
-            manager.run()
+            manager = JobApplicationManager(page, url=url, resume_path=self.resume_path, stop_event=self.stop_event)
+            asyncio.run(manager.run())
             self.send(
                 f"✅ Candidaturas concluídas!\n"
                 f"Avaliadas: {manager.evaluated_count} | Aplicadas: {manager.applied_count}"
@@ -322,7 +324,11 @@ class TelegramBot:
             logger.error(f"apply task error: {e}")
         finally:
             try:
-                driver.quit()
+                context.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
             except Exception:
                 pass
 

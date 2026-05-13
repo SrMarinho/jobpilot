@@ -1,15 +1,9 @@
 import json
 import unicodedata
 import asyncio
-import time
 import os
 from pathlib import Path
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.select import Select
-from selenium.common.exceptions import NoSuchElementException
+from playwright.async_api import Page
 from src.core.ai.llm_provider import get_llm_provider
 from src.config.settings import logger
 
@@ -19,1063 +13,741 @@ SALARY_KEYWORDS = [
     "remuner", "wage", "pay ", "ctc",
 ]
 
-_QA_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "form_answers.json"
-_LEGACY_QA_FILE = _QA_FILE.parent / "qa.json"
-if _LEGACY_QA_FILE.exists() and not _QA_FILE.exists():
-    try:
-        _LEGACY_QA_FILE.rename(_QA_FILE)
-        logger.info(f"Migrated qa.json → {_QA_FILE.name}")
-    except Exception as e:
-        logger.warning(f"qa.json migration failed: {e}")
+_QA_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "qa.json"
 
 
 def _normalize(s: str) -> str:
     return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
 
+
 def _normalize_question(q: str) -> str:
-    """Normalize question string for use as a stable dict key."""
     return " ".join(_normalize(q).split())
 
 
-def _load_qa() -> dict:
-    try:
-        if _QA_FILE.exists():
-            with open(_QA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-def _save_qa(qa: dict) -> None:
-    try:
-        _QA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(_QA_FILE, "w", encoding="utf-8") as f:
-            json.dump(qa, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.warning(f"Could not save form_answers.json: {e}")
-
-
-def _qa_answer(entry) -> str:
-    """Extract the answer string from a qa entry (supports legacy string format and new dict format)."""
-    if isinstance(entry, dict):
-        return entry.get("answer", "") or ""
-    return str(entry) if entry is not None else ""
-
-
-def _qa_entry(answer: str, original: str = "", field_type: str = "text", options: list | None = None) -> dict:
-    """Build a rich qa entry dict."""
-    return {"answer": answer, "original": original, "type": field_type, "options": options}
-
-# React-aware value setter — triggers React's synthetic onChange
-_REACT_SET_VALUE = """
-(function(el, val) {
-    var setter = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
-    if (setter && setter.set) {
-        setter.set.call(el, val);
-    } else {
-        el.value = val;
-    }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-})(arguments[0], arguments[1]);
-"""
-
-# React-aware select setter — uses HTMLSelectElement.prototype.value setter
-_REACT_SET_SELECT = """
-(function(el, val) {
-    var setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value');
-    if (setter && setter.set) {
-        setter.set.call(el, val);
-    } else {
-        el.value = val;
-    }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-})(arguments[0], arguments[1]);
+# React-aware select setter
+_REACT_SELECT_SETTER = """
+var setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+var event = new Event('change', { bubbles: true });
+setter.call(arguments[0], arguments[1]);
+arguments[0].dispatchEvent(event);
 """
 
 
 class JobApplicationHandler:
-    MAX_STEPS = 10
-
-    def __init__(self, driver: WebDriver, resume: str = ""):
-        self.driver = driver
+    def __init__(self, page: Page, resume: str = ""):
+        self.page = page
         self.resume = resume
-        self.job_title = ""
-        self.job_description = ""
 
-    def submit_easy_apply(
+    # ── select helpers ───────────────────────────────────────────────────────
+
+    async def _fill_input(self, el, value: str):
+        tag = await el.evaluate("el => el.tagName.toLowerCase()")
+        readonly = await el.get_attribute("readonly")
+        if tag == "select":
+            await el.select_option(value=value)
+        elif readonly:
+            pass
+        else:
+            await el.fill(value)
+
+    async def _fill_react_select(self, el, value: str):
+        tag = await el.evaluate("el => el.tagName.toLowerCase()")
+        if tag == "select":
+            await self.page.evaluate(_REACT_SELECT_SETTER, el, value)
+        elif tag == "input":
+            await el.fill(value)
+
+    async def _is_unfilled(self, el) -> bool:
+        tag = await el.evaluate("el => el.tagName.toLowerCase()")
+        if tag == "select":
+            val = await el.evaluate("el => el.value")
+            return not val or val == ""
+        else:
+            val = await el.input_value()
+            return not val.strip()
+
+    # ── LLM-driven answer ────────────────────────────────────────────────────
+
+    async def _ask_llm(self, question: str, job_title: str, job_description: str) -> str:
+        model = get_llm_provider()
+        prompt = (
+            f"You are applying for the job '{job_title}'. "
+            f"Job description: {job_description[:1500]}\n"
+            f"Answer the following question concisely for a job application form: {question}\n"
+            f"Answer with only the value, no explanation."
+        )
+        try:
+            return await model.complete(prompt)
+        except Exception as e:
+            logger.error(f"LLM error on '{question[:50]}': {e}")
+            return ""
+
+    # ── QA cache ─────────────────────────────────────────────────────────────
+
+    def _load_qa(self) -> dict:
+        if _QA_FILE.exists():
+            return json.loads(_QA_FILE.read_text(encoding="utf-8"))
+        return {}
+
+    def _save_qa(self, qa: dict):
+        _QA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _QA_FILE.write_text(json.dumps(qa, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _resolve_cached(self, question: str) -> str | None:
+        qa = self._load_qa()
+        key = _normalize_question(question)
+        entry = qa.get(key)
+        if entry is None:
+            return None
+        if isinstance(entry, dict):
+            return entry.get("answer") or None
+        return str(entry) if entry else None
+
+    def _save_cached(self, question: str, answer: str, options: list | None = None):
+        qa = self._load_qa()
+        key = _normalize_question(question)
+        if isinstance(qa.get(key), dict):
+            qa[key]["answer"] = answer
+        else:
+            qa[key] = {"original": question, "answer": answer, "options": options} if options else answer
+        self._save_qa(qa)
+
+    # ── salary ───────────────────────────────────────────────────────────────
+
+    async def _fill_salary(self, salary_value: int | str) -> bool:
+        """Fill salary-only inputs — no question text, just a number field."""
+        for sel in ["input[type='text'][aria-label*='salari']",
+                     "input[aria-label*='salari']",
+                     "input[type='text'][aria-label*='salary']",
+                     "input[aria-label*='salary']",
+                     "input[aria-label*='remuner']",
+                     "input[placeholder*='salari']",
+                     "input[placeholder*='salary']",
+                     "input[placeholder*='remuner']"]:
+            try:
+                inp = self.page.locator(sel)
+                if await inp.is_visible(timeout=1000):
+                    await inp.fill(str(salary_value))
+                    logger.info(f"Filled salary input: {salary_value}")
+                    return True
+            except Exception:
+                pass
+        return False
+
+    async def _find_question_in_modal(self) -> str:
+        try:
+            modal = self.page.locator("[data-test-modal-container], [class*=artdeco-modal], [role='dialog']")
+            spans = modal.locator("span, label, legend, p, div[class*=title], div[class*=heading]")
+            count = await spans.count()
+            texts = []
+            for i in range(min(count, 20)):
+                t = (await spans.nth(i).inner_text()).strip()
+                if t:
+                    texts.append(t)
+            return " | ".join(texts)
+        except Exception:
+            return ""
+
+    async def _extract_modal_options(self) -> list[str]:
+        opts: list[str] = []
+        modal = self.page.locator("[data-test-modal-container], [class*=artdeco-modal], [role='dialog']")
+        for sel in ["select option", "input[type='radio']", "label", "span.radio-label"]:
+            try:
+                els = modal.locator(sel)
+                count = await els.count()
+                for i in range(count):
+                    t = (await els.nth(i).inner_text()).strip()
+                    val = await els.nth(i).get_attribute("value")
+                    if t:
+                        opts.append(t)
+                    elif val:
+                        opts.append(val)
+            except Exception:
+                pass
+        if not opts:
+            try:
+                sel = modal.locator("select")
+                if await sel.is_visible(timeout=500):
+                    opts = await sel.locator("option").all_inner_texts()
+            except Exception:
+                pass
+        return list(dict.fromkeys(o for o in opts if o))
+
+    # ── main fill logic ──────────────────────────────────────────────────────
+
+    async def _fill_field(self, el, question: str, job_title: str, job_description: str, salary_expectation: int | str):
+        tag = await el.evaluate("el => el.tagName.toLowerCase()")
+        label_text = question.lower()
+
+        if any(k in label_text for k in SALARY_KEYWORDS):
+            if salary_expectation:
+                await self._fill_input(el, str(salary_expectation))
+                logger.info(f"Filled salary with '{salary_expectation}'")
+                return
+
+        cached = self._resolve_cached(question)
+        if cached:
+            await self._fill_input(el, cached)
+            logger.info(f"Filled '{question[:40]}' with cached: '{cached}'")
+            return
+
+        if tag == "select":
+            options_list = await el.locator("option").all()
+            option_values = []
+            for opt in options_list:
+                v = await opt.get_attribute("value")
+                option_values.append(v)
+            filtered = [v for v in option_values if v and v.strip()]
+            if filtered:
+                answer = await self._ask_llm(f"{question} (options: {filtered})", job_title, job_description)
+                if answer and answer in option_values:
+                    await el.select_option(value=answer)
+                    self._save_cached(question, answer, options=filtered)
+                    logger.info(f"LLM selected '{answer}' for '{question[:40]}'")
+                    return
+                elif filtered[0]:
+                    await el.select_option(value=filtered[0])
+                    logger.info(f"Selected default '{filtered[0]}' for '{question[:40]}'")
+                    return
+        else:
+            answer = await self._ask_llm(question, job_title, job_description)
+            if answer:
+                await el.fill(answer)
+                self._save_cached(question, answer)
+                logger.info(f"LLM filled '{question[:40]}' with '{answer[:40]}'")
+                return
+
+    async def _fill_scope(self, scope, job_title: str, job_description: str, salary_expectation: int | str, visited_select_ids: set):
+        # inputs
+        inputs = await scope.locator("xpath=.//input[not(@type='hidden') and not(@type='radio') and not(@type='checkbox') and not(@type='submit') and not(@type='button') and not(@type='file')]").all()
+        logger.info(f"Input elements found in scope: {len(inputs)}")
+        for inp in inputs:
+            if not await inp.is_visible():
+                continue
+            try:
+                readonly = await inp.get_attribute("readonly")
+                if readonly:
+                    continue
+                label_text = ""
+                lid = await inp.get_attribute("id")
+                if lid:
+                    lbl = scope.locator(f"xpath=.//label[@for='{lid}']")
+                    if await lbl.count():
+                        label_text = (await lbl.first.inner_text()).strip()
+                if not label_text:
+                    aria = await inp.get_attribute("aria-label") or ""
+                    ph = await inp.get_attribute("placeholder") or ""
+                    label_text = aria or ph
+                if not label_text:
+                    continue
+                await self._fill_field(inp, label_text, job_title, job_description, salary_expectation)
+            except Exception as e:
+                logger.warning(f"Input error: {e}")
+
+        # textareas
+        textareas = await scope.locator("xpath=.//textarea").all()
+        logger.info(f"Textarea elements found in scope: {len(textareas)}")
+        for ta in textareas:
+            if not await ta.is_visible():
+                continue
+            try:
+                readonly = await ta.get_attribute("readonly")
+                if readonly:
+                    continue
+                label_text = ""
+                tid = await ta.get_attribute("id")
+                if tid:
+                    lbl = scope.locator(f"xpath=.//label[@for='{tid}']")
+                    if await lbl.count():
+                        label_text = (await lbl.first.inner_text()).strip()
+                if not label_text:
+                    aria = await ta.get_attribute("aria-label") or ""
+                    label_text = aria
+                if not label_text:
+                    continue
+                cached = self._resolve_cached(label_text)
+                if cached:
+                    await ta.fill(cached)
+                    logger.info(f"Filled textarea '{label_text[:30]}' with cached")
+                else:
+                    answer = await self._ask_llm(label_text, job_title, job_description)
+                    if answer:
+                        await ta.fill(answer)
+                        self._save_cached(label_text, answer)
+                        logger.info(f"LLM filled textarea '{label_text[:30]}'")
+            except Exception as e:
+                logger.warning(f"Textarea error: {e}")
+
+        # selects
+        selects = await scope.locator("xpath=.//select").all()
+        logger.info(f"Select elements found in scope: {len(selects)}")
+        for sel in selects:
+            sel_id = await sel.get_attribute("id") or ""
+            if sel_id in visited_select_ids:
+                continue
+            visited_select_ids.add(sel_id)
+            if not await sel.is_visible():
+                logger.warning(f"Select not displayed (hidden?): id={sel_id!r}")
+                continue
+            try:
+                current_val = await sel.evaluate("el => el.value")
+                logger.debug(f"Select shows current value '{current_val}'")
+                if current_val and current_val != "" and current_val != "Select..." and current_val != "Selecione...":
+                    logger.info(f"Select already filled (val={current_val!r}), skipping")
+                    continue
+                label_text = ""
+                sid = sel_id
+                if sid:
+                    lbl = scope.locator(f"xpath=.//label[@for='{sid}']")
+                    if await lbl.count():
+                        label_text = (await lbl.first.inner_text()).strip()
+                if not label_text:
+                    aria = await sel.get_attribute("aria-label") or ""
+                    label_text = aria
+                if not label_text:
+                    logger.warning(f"Select label unknown, skipping: id={sid!r}")
+                    continue
+                options = await sel.locator("option").all()
+                option_values = []
+                for opt in options:
+                    v = await opt.get_attribute("value")
+                    if v:
+                        option_values.append(v)
+                if not option_values:
+                    logger.warning(f"Select has no options, skipping: id={sid!r}")
+                    continue
+                await self._fill_field(sel, label_text, job_title, job_description, salary_expectation)
+            except Exception as e:
+                logger.warning(f"Select error: {e}")
+
+    # ── radio groups ─────────────────────────────────────────────────────────
+
+    async def _fill_radio_groups(self, job_title: str, job_description: str):
+        try:
+            groups = await self.page.evaluate("""
+                () => {
+                    const inputs = document.querySelectorAll('input[type="radio"]');
+                    const seen = new Set();
+                    const groups = [];
+                    inputs.forEach(inp => {
+                        const name = inp.name;
+                        if (!name || seen.has(name)) return;
+                        seen.add(name);
+                        const id = inp.id;
+                        let label = '';
+                        if (id) {
+                            const l = document.querySelector('label[for="'+id+'"]');
+                            if (l) label = l.innerText.trim();
+                        }
+                        if (!label) label = inp.getAttribute('aria-label') || '';
+                        groups.push({name, label});
+                    });
+                    return groups;
+                }
+            """)
+            for group in groups:
+                name = group["name"]
+                label = group["label"]
+                if not label:
+                    continue
+                logger.info(f"Radio group: '{label}'")
+                els = self.page.locator(f"xpath=//input[@type='radio' and @name='{name}']")
+                count = await els.count()
+                if count == 0:
+                    continue
+                if count == 1:
+                    await els.first.click()
+                    logger.info(f"Clicked single radio for '{label}'")
+                    continue
+                cached = self._resolve_cached(label)
+                if cached:
+                    for i in range(count):
+                        val = await els.nth(i).get_attribute("value")
+                        lbl = await els.nth(i).evaluate("""el => {
+                            const id = el.id;
+                            if (id) {
+                                const l = document.querySelector('label[for="'+id+'"]');
+                                if (l) return l.innerText.trim();
+                            }
+                            return el.getAttribute('aria-label') || el.value;
+                        }""")
+                        if cached.lower() in [str(val or "").lower(), lbl.lower()]:
+                            await els.nth(i).click()
+                            logger.info(f"Selected cached radio '{cached}' for '{label}'")
+                            break
+                    else:
+                        await els.first.click()
+                        logger.info(f"Selected first radio for '{label}' (cache mismatch)")
+                else:
+                    labels = []
+                    for i in range(count):
+                        lbl = await els.nth(i).evaluate("""el => {
+                            const id = el.id;
+                            if (id) {
+                                const l = document.querySelector('label[for="'+id+'"]');
+                                if (l) return l.innerText.trim();
+                            }
+                            return el.getAttribute('aria-label') || el.value;
+                        }""")
+                        labels.append(lbl)
+                    answer = await self._ask_llm(f"{label} (options: {labels})", job_title, job_description)
+                    if answer:
+                        for i in range(count):
+                            lbl_text = labels[i] if i < len(labels) else ""
+                            if answer.lower() in lbl_text.lower() or lbl_text.lower() in answer.lower():
+                                await els.nth(i).click()
+                                self._save_cached(label, lbl_text)
+                                logger.info(f"LLM selected radio '{lbl_text}' for '{label}'")
+                                break
+                        else:
+                            await els.first.click()
+                            logger.info(f"Selected first radio for '{label}' (LLM no match)")
+                    else:
+                        await els.first.click()
+                        logger.info(f"Selected default radio for '{label}'")
+        except Exception as e:
+            logger.warning(f"Radio fill error: {e}")
+
+    # ── checkboxes ───────────────────────────────────────────────────────────
+
+    async def _fill_checkboxes(self):
+        try:
+            cbs = self.page.locator("xpath=//input[@type='checkbox' and @required]")
+            count = await cbs.count()
+            for i in range(count):
+                cb = cbs.nth(i)
+                if not await cb.is_checked():
+                    await cb.click()
+                    logger.info("Checked required checkbox")
+        except Exception:
+            pass
+
+    # ── remaining required fields ────────────────────────────────────────────
+
+    async def _fill_remaining_required(self, job_title: str, job_description: str, salary_expectation: int | str):
+        els = self.page.locator("xpath=//input[@required and @type!='hidden'] | //select[@required] | //textarea[@required]")
+        count = await els.count()
+        for i in range(count):
+            el = els.nth(i)
+            if not await el.is_visible():
+                continue
+            if not await self._is_unfilled(el):
+                continue
+            tag = await el.evaluate("el => el.tagName.toLowerCase()")
+            label_text = ""
+            eid = await el.get_attribute("id")
+            if eid:
+                lbl = self.page.locator(f"xpath=//label[@for='{eid}']")
+                if await lbl.count():
+                    label_text = (await lbl.first.inner_text()).strip()
+            if not label_text:
+                aria = await el.get_attribute("aria-label") or ""
+                if aria:
+                    label_text = aria
+                else:
+                    try:
+                        parent = el.locator("xpath=..")
+                        parent_text = (await parent.inner_text()).strip()
+                        if parent_text:
+                            label_text = parent_text
+                    except Exception:
+                        pass
+                if not label_text:
+                    try:
+                        legend = await el.evaluate("""el => {
+                            const p = el.closest('fieldset');
+                            if (p) {
+                                const leg = p.querySelector('legend');
+                                if (leg) return leg.innerText.trim();
+                            }
+                            return '';
+                        }""")
+                        if legend:
+                            label_text = legend
+                    except Exception:
+                        pass
+            if not label_text:
+                continue
+            await self._fill_field(el, label_text, job_title, job_description, salary_expectation)
+
+    async def _handle_radio_in_scope(self, scope):
+        try:
+            rid = await scope.get_attribute("id")
+            lbl = scope.locator(f"xpath=.//label[@for='{rid}']")
+            label_text = ""
+            if await lbl.count():
+                label_text = (await lbl.first.inner_text()).strip()
+            if not label_text:
+                legend = scope.locator("xpath=.//legend")
+                if await legend.count():
+                    label_text = (await legend.first.inner_text()).strip()
+            if label_text:
+                radio = self.page.locator(f"xpath=//input[@type='radio' and @id='{rid}']")
+                if await radio.count():
+                    await radio.first.click()
+                    logger.info(f"Selected radio '{label_text}'")
+        except Exception:
+            pass
+
+    # ── scroll to review ─────────────────────────────────────────────────────
+
+    async def scroll_to_review(self):
+        try:
+            submit_btn = self.page.locator(
+                "xpath=//button[contains(@aria-label,'Review') or contains(normalize-space(),'Review')]"
+                " | button[class*=review]"
+            )
+            if await submit_btn.is_visible(timeout=3000):
+                await submit_btn.scroll_into_view_if_needed()
+                return
+            btns = self.page.locator("button[type='submit']")
+            if await btns.count():
+                await btns.first.scroll_into_view_if_needed()
+        except Exception:
+            pass
+
+    # ── select handler (React-aware) ─────────────────────────────────────────
+
+    async def _handle_react_select(self, el, question: str, job_title: str, job_description: str, salary_expectation: int | str):
+        # Approach 1: Playwright native select_option
+        options = await el.locator("option").all()
+        target_val = None
+        target_label = ""
+        for opt in options:
+            v = await opt.get_attribute("value")
+            t = (await opt.inner_text()).strip()
+            if v and v.strip():
+                target_val = v
+                target_label = t
+                break
+        if not target_val:
+            logger.warning("No selectable option found")
+            return
+
+        cached = self._resolve_cached(question)
+        if cached:
+            for opt in options:
+                v = await opt.get_attribute("value")
+                t = (await opt.inner_text()).strip()
+                if cached.lower() in t.lower() or cached.lower() == v:
+                    await el.select_option(value=v)
+                    logger.info(f"Selected '{t}' for '{question[:40]}' (cached)")
+                    return
+
+        answer = await self._ask_llm(f"{question} (options: {[await o.inner_text() for o in options]})", job_title, job_description)
+        if answer:
+            for opt in options:
+                t = (await opt.inner_text()).strip()
+                if answer.lower() in t.lower() or t.lower() in answer.lower():
+                    v = await opt.get_attribute("value")
+                    await el.select_option(value=v)
+                    self._save_cached(question, t)
+                    logger.info(f"Selected '{t}' for '{question[:40]}' (LLM)")
+                    return
+        await el.select_option(value=target_val)
+        logger.info(f"Selected default '{target_label}' for '{question[:40]}'")
+
+    # ── error detection ──────────────────────────────────────────────────────
+
+    async def _has_form_errors(self) -> bool:
+        try:
+            err = self.page.locator("[aria-describedby*='error'], [class*=error], [class*=feedback], [role='alert']")
+            return await err.is_visible(timeout=1000)
+        except Exception:
+            return False
+
+    # ── modal management ─────────────────────────────────────────────────────
+
+    async def _get_modal(self):
+        for sel in ["[data-test-modal-container]", "[class*=artdeco-modal]", "[role='dialog']"]:
+            modal = self.page.locator(sel)
+            if await modal.is_visible(timeout=1000):
+                return modal
+        return self.page.locator("body")
+
+    async def _wait_for_modal(self, timeout: int = 15):
+        for sel in ["[data-test-modal-container]", "[class*=artdeco-modal]", "[role='dialog']"]:
+            try:
+                await self.page.wait_for_selector(sel, timeout=timeout * 1000)
+                return
+            except Exception:
+                pass
+
+    async def _close_modal(self):
+        try:
+            close_btn = self.page.locator("button[aria-label='Dismiss'], button[aria-label='Close'], button[data-test-modal-close-btn]")
+            if await close_btn.is_visible(timeout=2000):
+                await close_btn.click()
+                await self.page.wait_for_timeout(500)
+                return
+        except Exception:
+            pass
+        try:
+            await self.page.keyboard.press("Escape")
+            await self.page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+    async def _wait_for_modal_close(self, timeout: int = 10):
+        for sel in ["[data-test-modal-container]", "[class*=artdeco-modal]", "[role='dialog']"]:
+            try:
+                await self.page.locator(sel).wait_for(state="hidden", timeout=timeout * 1000)
+                return
+            except Exception:
+                pass
+
+    # ── required check ───────────────────────────────────────────────────────
+
+    async def _check_required_after_close(self) -> list[dict]:
+        """Check for required fields after closing a modal section."""
+        errors = []
+        inputs = await self.page.locator("xpath=//input[@required and @type!='hidden'] | //select[@required] | //textarea[@required]").all()
+        for inp in inputs:
+            if not await inp.is_visible():
+                continue
+            if not await self._is_unfilled(inp):
+                continue
+            lid = await inp.get_attribute("id")
+            label = ""
+            if lid:
+                lbl = self.page.locator(f"xpath=//label[@for='{lid}']")
+                if await lbl.count():
+                    label = (await lbl.first.inner_text()).strip()
+            if not label:
+                legend = await inp.evaluate("""el => {
+                    const p = el.closest('fieldset');
+                    if (p) {
+                        const leg = p.querySelector('legend');
+                        if (leg) return leg.innerText.trim();
+                    }
+                    return '';
+                }""")
+                if legend:
+                    label = legend
+            errors.append({"element": inp, "label": label or "unknown"})
+        return errors
+
+    async def _fill_errors(self, errors: list[dict], job_title: str, job_description: str, salary_expectation: int | str):
+        for err in errors:
+            el = err["element"]
+            label = err["label"]
+            try:
+                tag = await el.evaluate("el => el.tagName.toLowerCase()")
+                if tag == "select":
+                    options = await el.locator("option").all()
+                    for opt in options:
+                        v = await opt.get_attribute("value")
+                        t = (await opt.inner_text()).strip()
+                        if v and v.strip():
+                            await el.select_option(value=v)
+                            logger.info(f"Error-fix: selected '{t}' for '{label}'")
+                            break
+                else:
+                    await self._fill_field(el, label, job_title, job_description, salary_expectation)
+            except Exception as e:
+                logger.warning(f"Error-fix failed for '{label}': {e}")
+
+    # ── submit ───────────────────────────────────────────────────────────────
+
+    async def submit_easy_apply(
         self,
-        salary_expectation: int | None = None,
+        salary_expectation: int | str = "",
         job_title: str = "",
         job_description: str = "",
         no_submit: bool = False,
     ) -> bool:
-        self.job_title = job_title
-        self.job_description = job_description[:1500]
-        try:
-            for step in range(self.MAX_STEPS):
-                time.sleep(1.5)
-
-                if step == 0 and self._form_is_spanish():
-                    logger.warning("Form is in Spanish — skipping application")
-                    self._close_modal()
-                    return False
-
-                self._fill_all_fields(salary_expectation)
-
-                if self._has_unanswered_required_fields():
-                    logger.warning("Required fields not filled — skipping")
-                    self._close_modal()
-                    return False
-
-                if not no_submit and self._try_submit():
-                    return True
-
-                if no_submit and self._is_submit_step():
-                    logger.info("no_submit=True — stopping before final submit")
-                    return False
-
-                if not self._click_next():
-                    logger.warning(f"No actionable button on step {step + 1} — skipping")
-                    self._close_modal()
-                    return False
-
-            logger.warning("Exceeded max steps in Easy Apply flow")
-            self._close_modal()
-            return False
-
-        except Exception as e:
-            logger.error(f"Error during Easy Apply: {e}")
-            self._close_modal()
-            return False
-
-    # ── helpers ──────────────────────────────────────────────────────────────
-
-    def _click_select_option(self, select_el, option_value: str) -> bool:
-        """Click the select to open its dropdown, then click the matching option."""
-        try:
-            label = self._get_field_label(select_el)
-            if not label:
-                label = "?"
-            # click the select element to trigger React dropdown render
-            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", select_el)
-            time.sleep(0.2)
-            self.driver.execute_script("arguments[0].click();", select_el)
-            time.sleep(0.5)
-
-            # wait up to 2s for option element to appear in DOM
-            import datetime
-            deadline = datetime.datetime.now() + datetime.timedelta(seconds=2)
-            option = None
-            while datetime.datetime.now() < deadline:
-                try:
-                    possible = self.driver.find_elements(By.XPATH, f"//option[@value='{option_value}']")
-                    for p in possible:
-                        if p.is_displayed():
-                            option = p
-                            break
-                    if option:
-                        break
-                except Exception:
-                    pass
-                time.sleep(0.2)
-
-            if not option:
-                logger.warning(f"Select option '{option_value}' not visible for '{label}'")
-                return False
-
-            self.driver.execute_script("arguments[0].click();", option)
-            time.sleep(0.3)
-
-            # dispatch change event so React picks it up
-            self.driver.execute_script("""
-                var el = arguments[0];
-                ['input','change'].forEach(function(ev){
-                    el.dispatchEvent(new Event(ev,{bubbles:true}));
-                });
-            """, select_el)
-            time.sleep(0.2)
-
-            current = self.driver.execute_script("return arguments[0].value;", select_el)
-            if current == option_value:
-                logger.info(f"Selected option '{option_value}' via click-dropdown for '{label}'")
-                return True
-            logger.warning(f"Click-dropdown approach: value mismatch (expected {option_value!r}, got {current!r})")
-            return False
-        except Exception as e:
-            logger.debug(f"click-select-option failed: {e}")
-            return False
-
-    # ── field filling ────────────────────────────────────────────────────────
-
-    _ES_FORM_MARKERS = {"¿", "ñ", "años", "experiencia", "cuántos", "cuantos",
-                        "seleccionado", "comenzar", "trabajar", "empresa"}
-
-    def _form_is_spanish(self) -> bool:
-        try:
-            modal = self._get_modal()
-            text = (modal or self.driver).text.lower()
-            hits = sum(1 for m in self._ES_FORM_MARKERS if m in text)
-            return hits >= 2
-        except Exception:
-            return False
-
-    def _get_modal(self):
-        """Return the Easy Apply modal element, or None if not found."""
-        for selector in [
-            "//div[contains(@class,'jobs-easy-apply-modal')]",
-            "//div[contains(@class,'artdeco-modal') and .//*[contains(@class,'jobs-easy-apply')]]",
-            "//div[@role='dialog' and .//*[contains(@aria-label,'apply') or contains(@aria-label,'Apply') or contains(@aria-label,'candidatura')]]",
-            "//div[@role='dialog']",
-        ]:
-            try:
-                els = self.driver.find_elements(By.XPATH, selector)
-                if els:
-                    return els[0]
-            except Exception:
-                continue
-        return None
-
-    def _fill_all_fields(self, salary: int | None) -> None:
-        """Collect all unfilled required fields and answer them in a single AI call."""
-        try:
-            fields = []  # list of {"el": element, "question": str, "type": "text"|"choice"|"radio"|"checkbox"|"textarea", "options": list}
-
-            modal = self._get_modal()
-            scope = modal or self.driver  # fall back to full page if modal not found
-            if modal:
-                logger.debug("Scoping field search to Easy Apply modal")
-            else:
-                logger.debug("Modal not found — searching full page")
-
-            # ── text / number / tel / email / search inputs (all visible) ──
-            inputs = scope.find_elements(
-                By.XPATH,
-                ".//input[@type!='hidden' and (@type='text' or @type='number' or @type='tel' or @type='email' or @type='search')]"
-            )
-            for inp in inputs:
-                if not inp.is_displayed():
-                    continue
-                current_val = (inp.get_attribute("value") or "").strip()
-                error = self._get_field_error(inp)
-                # Skip if already filled and no validation error
-                if current_val and not error:
-                    continue
-                question = self._get_field_label(inp)
-                if not question or question == "(unknown)":
-                    continue
-                if salary and any(kw in question.lower() for kw in SALARY_KEYWORDS):
-                    self._set_input_value(inp, str(salary))
-                    logger.info(f"Filled '{question}' → '{salary}' (salary)")
-                    continue
-                fields.append({
-                    "el": inp,
-                    "question": question,
-                    "type": "text",
-                    "options": [],
-                    "current_value": current_val,
-                    "error": error,
-                })
-
-            # ── textareas ─────────────────────────────────────────────────────
-            textareas = scope.find_elements(By.XPATH, ".//textarea")
-            for ta in textareas:
-                if not ta.is_displayed():
-                    continue
-                current_val = (ta.get_attribute("value") or "").strip()
-                error = self._get_field_error(ta)
-                if current_val and not error:
-                    continue
-                question = self._get_field_label(ta)
-                if not question or question == "(unknown)":
-                    continue
-                fields.append({
-                    "el": ta,
-                    "question": question,
-                    "type": "textarea",
-                    "options": [],
-                    "current_value": current_val,
-                    "error": error,
-                })
-
-            # ── select dropdowns ──────────────────────────────────────────────
-            selects = scope.find_elements(By.XPATH, ".//select")
-            logger.info(f"Select elements found in scope: {len(selects)}")
-            for sel in selects:
-                try:
-                    if not sel.is_displayed():
-                        logger.warning(f"Select not displayed (hidden?): id={sel.get_attribute('id')!r}")
-                        continue
-                    sel_data = self.driver.execute_script(
-                        "var s=arguments[0]; return {val:s.value,"
-                        "opts:Array.from(s.options).map(o=>({v:o.value,t:o.text.trim()}))}",
-                        sel
-                    )
-                    current_val = sel_data["val"] or ""
-                    # Exclude placeholder options: empty value OR text that looks like a placeholder
-                    _placeholder_texts = {
-                        "select an option", "selecione uma opção", "selecione uma opcao",
-                        "choose an option", "please select", "select", "choose", "pick one",
-                        "selecionar opção", "selecionar opcao",
-                    }
-                    non_empty = [
-                        o for o in sel_data["opts"]
-                        if o["v"] and _normalize(o["t"]) not in _placeholder_texts
-                    ]
-                    # check if current value is itself a placeholder (LinkedIn sometimes uses the label as value)
-                    if current_val and _normalize(current_val) in _placeholder_texts:
-                        logger.debug(f"Select shows placeholder value '{current_val}' — treating as unfilled")
-                        current_val = ""
-                    if current_val and any(o["v"] == current_val for o in non_empty):
-                        logger.info(f"Select already filled (val={current_val!r}), skipping")
-                        continue
-                    question = self._get_field_label(sel)
-                    if not question or question == "(unknown)":
-                        logger.warning(f"Select label unknown, skipping: id={sel.get_attribute('id')!r}")
-                        continue
-                    option_labels = [o["t"] for o in non_empty]
-                    if not option_labels:
-                        logger.warning(f"Select has no options, skipping: id={sel.get_attribute('id')!r}")
-                        continue
-                    fields.append({"el": sel, "question": question, "type": "choice", "options": option_labels, "_option_map": {o["t"]: o["v"] for o in non_empty}, "error": None, "current_value": ""})
-                except Exception as e:
-                    logger.warning(f"Error processing select: {e}")
-                    continue
-
-            # ── radio button groups ───────────────────────────────────────────
-            radio_script = """
-                var root = arguments[0] || document;
-                var inputs = root.querySelectorAll('input[type="radio"]');
-                var groups = {};
-                inputs.forEach(function(r) {
-                    if (!r.offsetParent) return;
-                    var name = r.name || r.id || '';
-                    if (!name) return;
-                    if (!groups[name]) groups[name] = [];
-                    var id = r.id || '';
-                    var lbl = '';
-                    if (id) { var l = document.querySelector('label[for="'+id+'"]'); if (l) lbl = l.innerText.trim(); }
-                    if (!lbl) lbl = r.value || '';
-                    groups[name].push({id: r.id, name: r.name, value: r.value, label: lbl, checked: r.checked});
-                });
-                return groups;
-            """
-            radio_groups = self.driver.execute_script(radio_script, modal)
-            for group_name, radios_data in (radio_groups or {}).items():
-                if any(r["checked"] for r in radios_data):
-                    continue
-                options = [r["label"] or r["value"] for r in radios_data if r["label"] or r["value"]]
-                if not options:
-                    continue
-                # Get the DOM elements fresh for clicking later
-                group_els = self.driver.find_elements(By.XPATH, f"//input[@type='radio' and @name='{group_name}']")
-                if not group_els:
-                    continue
-                question = self._get_radio_group_label(group_els) or self._get_field_label(group_els[0])
-                if not question or question == "(unknown)":
-                    continue
-                fields.append({"el": group_els, "question": question, "type": "radio", "options": options, "_radio_data": radios_data, "error": None, "current_value": ""})
-
-            # ── checkboxes ────────────────────────────────────────────────────
-            checkboxes = scope.find_elements(By.XPATH, ".//input[@type='checkbox']")
-            for chk in checkboxes:
-                if not chk.is_displayed() or chk.is_selected():
-                    continue
-                question = self._get_field_label(chk)
-                if not question or question == "(unknown)":
-                    continue
-                fields.append({"el": chk, "question": question, "type": "checkbox", "options": ["Yes", "No"], "error": None, "current_value": ""})
-
-            if not fields:
-                logger.debug("No unfilled fields found on this step")
-                return
-
-            logger.info(f"Fields found: {[f['question'] + ' (' + f['type'] + ')' for f in fields]}")
-            qa = _load_qa()
-
-            # Resolve fields from cache first; collect remaining for AI
-            cached_answers: dict[str, str] = {}
-            pending_fields: list[dict] = []
-            pending_indices: list[int] = []
-
-            for i, field in enumerate(fields):
-                key = _normalize_question(field["question"])
-                saved_answer = _qa_answer(qa.get(key))
-                if saved_answer:
-                    cached_answers[str(i)] = saved_answer
-                else:
-                    pending_fields.append(field)
-                    pending_indices.append(i)
-
-            # Single AI call only for fields without cached answers
-            ai_answers: dict[str, str] = {}
-            if pending_fields:
-                raw = asyncio.run(self._batch_answer(pending_fields))
-                # remap local indices back to original indices
-                _NULL_WORDS = {"null", "nulo", "nenhum", "nenhuma", "none", "n/a", "não sei", "nao sei", "desconhecido", "sem experiencia", "sem experiência"}
-                for local_i, orig_i in enumerate(pending_indices):
-                    val = raw.get(str(local_i))
-                    # null or empty = LLM doesn't know, skip (will be saved for manual input)
-                    if val is not None and str(val).strip() and str(val).strip().lower() not in _NULL_WORDS:
-                        ai_answers[str(orig_i)] = str(val)
-
-            answers = {**cached_answers, **ai_answers}
-
-            # Save unanswered questions to form_answers.json so user can fill them manually
-            for i, field in enumerate(fields):
-                if answers.get(str(i)):
-                    continue
-                key = _normalize_question(field["question"])
-                if key not in qa:
-                    qa[key] = _qa_entry("", field["question"], field["type"], field.get("options"))
-                    _save_qa(qa)
-                    logger.warning(f"No answer for '{field['question']}' — saved to form_answers.json for manual input")
-
-            # Apply answers and validate; retry with AI on validation errors
-            for i, field in enumerate(fields):
-                answer = answers.get(str(i))
-                if not answer:
-                    continue
-
-                key = _normalize_question(field["question"])
-
-                if field["type"] in ("text", "textarea"):
-                    self._set_input_value(field["el"], str(answer))
-                    time.sleep(0.4)
-                    error = self._get_field_error(field["el"])
-                    if error:
-                        logger.warning(f"Validation error for '{field['question']}' (answer='{answer}'): {error}")
-                        corrected = asyncio.run(self._retry_answer(field["question"], answer, error))
-                        if corrected:
-                            self._set_input_value(field["el"], corrected)
-                            logger.info(f"Corrected '{field['question']}' → '{corrected}'")
-                            answer = corrected
-                        else:
-                            logger.warning(f"Could not correct '{field['question']}' — leaving as is")
-                    else:
-                        logger.info(f"Filled '{field['question']}' → '{answer}'")
-                elif field["type"] == "radio":
-                    self._apply_radio(field, answer)
-                elif field["type"] == "checkbox":
-                    self._apply_checkbox(field, answer)
-                else:
-                    self._apply_select(field, answer)
-
-                if _qa_answer(qa.get(key)) != answer:
-                    qa[key] = _qa_entry(answer, field["question"], field["type"], field.get("options"))
-                    _save_qa(qa)
-
-            # ── post-fill validation pass ─────────────────────────────────────
-            # Collect all inputs still marked invalid after filling, fix in one AI call
-            time.sleep(0.5)
-            invalid_fields = []
-            for field in fields:
-                if field["type"] not in ("text", "textarea"):
-                    continue
-                el = field["el"]
-                try:
-                    error = self._get_field_error(el)
-                    if error:
-                        current_val = (el.get_attribute("value") or "").strip()
-                        invalid_fields.append({"field": field, "bad_answer": current_val, "error": error})
-                except Exception:
-                    continue
-
-            if invalid_fields:
-                logger.warning(f"Post-fill: {len(invalid_fields)} field(s) still invalid — asking AI to correct")
-                corrections = asyncio.run(self._batch_correct(invalid_fields))
-                for item in invalid_fields:
-                    q = item["field"]["question"]
-                    corrected = corrections.get(_normalize_question(q))
-                    if corrected:
-                        self._set_input_value(item["field"]["el"], corrected)
-                        logger.info(f"Post-fill corrected '{q}' → '{corrected}'")
-                        key = _normalize_question(q)
-                        qa[key] = _qa_entry(corrected, q, item["field"]["type"], item["field"].get("options"))
-                        _save_qa(qa)
-
-        except Exception as e:
-            import traceback
-            logger.warning(f"Error filling fields: {e}\n{traceback.format_exc()}")
-
-    def _get_field_error(self, element) -> str | None:
-        """Returns the validation error message for a field, or None if valid."""
-        try:
-            if element.get_attribute("aria-invalid") != "true":
-                return None
-            described_by = element.get_attribute("aria-describedby") or ""
-            for eid in described_by.split():
-                try:
-                    err_el = self.driver.find_element(By.ID, eid)
-                    text = err_el.text.strip()
-                    if text:
-                        return text
-                except Exception:
-                    pass
-            # Fallback: look for nearby error element
-            try:
-                parent = self.driver.execute_script("return arguments[0].parentElement;", element)
-                if parent:
-                    err = parent.find_element(By.XPATH, ".//*[contains(@class,'error') or contains(@class,'feedback')]")
-                    text = err.text.strip()
-                    if text:
-                        return text
-            except Exception:
-                pass
-            return "Invalid value"
-        except Exception:
-            return None
-
-    async def _batch_correct(self, invalid_fields: list[dict]) -> dict:
-        """Ask AI to correct multiple invalid fields in one call. Returns {normalized_question: corrected_value}."""
-        items_str = ""
-        for i, item in enumerate(invalid_fields):
-            items_str += (
-                f"{i}. PERGUNTA: {item['field']['question']}\n"
-                f"   RESPOSTA ERRADA: {item['bad_answer']}\n"
-                f"   ERRO: {item['error']}\n\n"
-            )
-
-        job_context = ""
-        if self.job_title:
-            job_context = f"\nVAGA: {self.job_title}\n"
-        if self.job_description:
-            job_context += f"DESCRIÇÃO DA VAGA:\n{self.job_description}\n"
-
-        prompt = f"""Você preencheu campos de um formulário de candidatura mas alguns falharam na validação.
-
-CURRÍCULO DO CANDIDATO:
-{self.resume}
-{job_context}
-CAMPOS COM ERRO:
-{items_str}
-Para cada campo, forneça uma resposta corrigida que satisfaça a validação.
-Responda APENAS com um objeto JSON mapeando o número do campo (como string) para a resposta corrigida.
-Dicas: se o erro indica "número", responda só com dígitos. Se indica "obrigatório", responda algo curto e relevante usando o contexto da vaga.
-Exemplo: {{"0": "6000", "1": "3"}}"""
-
-        result = await get_llm_provider().complete(prompt)
-        logger.info(f"Batch correct raw: {result!r}")
+        salary_filled = False
+        visited_select_ids: set[str] = set()
 
         try:
-            import re
-            match = re.search(r"\{.*\}", result, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group())
-                # Remap from index to normalized question key
-                return {
-                    _normalize_question(invalid_fields[int(k)]["field"]["question"]): v
-                    for k, v in parsed.items()
-                    if k.isdigit() and int(k) < len(invalid_fields)
-                }
-        except Exception as e:
-            logger.warning(f"Failed to parse batch correct response: {e}")
-        return {}
-
-    async def _retry_answer(self, question: str, bad_answer: str, error: str) -> str | None:
-        """Ask LLM to correct an answer that failed field validation."""
-        job_context = ""
-        if self.job_title:
-            job_context = f"\nVAGA: {self.job_title}\n"
-        if self.job_description:
-            job_context += f"DESCRIÇÃO DA VAGA:\n{self.job_description}\n"
-
-        prompt = f"""Você preencheu um campo de formulário de candidatura mas recebeu um erro de validação.
-
-CURRÍCULO DO CANDIDATO:
-{self.resume}
-{job_context}
-PERGUNTA: {question}
-SUA RESPOSTA ANTERIOR: {bad_answer}
-ERRO DE VALIDAÇÃO: {error}
-
-Forneça uma resposta corrigida que satisfaça o requisito de validação.
-Responda APENAS com o valor corrigido — um número, palavra curta ou frase breve em português. Sem explicações."""
-        try:
-            result = await get_llm_provider().complete(prompt)
-            return result.strip() if result else None
-        except Exception:
-            return None
-
-    def _get_radio_group_label(self, group: list) -> str | None:
-        """Try to find the fieldset legend or nearest group label for a radio group."""
-        try:
-            el = group[0]
-            # Walk up looking for fieldset > legend
-            script = """
-                var el = arguments[0];
-                for (var i = 0; i < 5; i++) {
-                    el = el.parentElement;
-                    if (!el) break;
-                    if (el.tagName === 'FIELDSET') {
-                        var leg = el.querySelector('legend');
-                        return leg ? leg.innerText.trim() : null;
-                    }
-                }
-                return null;
-            """
-            result = self.driver.execute_script(script, el)
-            return result or None
-        except Exception:
-            return None
-
-    def _apply_radio(self, field: dict, answer: str) -> None:
-        """Click the radio button whose label best matches the answer."""
-        question = field["question"]
-        options = field["options"]
-        radio_data = field.get("_radio_data", [])
-        matched = self._match_option(answer, options)
-
-        def _click_by_id(rid: str) -> bool:
-            """Click label[for=id] first (LinkedIn hides input), fallback to input JS click."""
-            try:
-                lbl = self.driver.find_element(By.XPATH, f"//label[@for='{rid}']")
-                self.driver.execute_script("arguments[0].click();", lbl)
-                return True
-            except Exception:
-                pass
-            try:
-                el = self.driver.find_element(By.ID, rid)
-                self.driver.execute_script("arguments[0].click();", el)
-                return True
-            except Exception:
-                return False
-
-        try:
-            # Try to match using JS-collected data (has IDs for precise clicking)
-            for r in radio_data:
-                label = r.get("label") or r.get("value") or ""
-                if matched and _normalize(label) == _normalize(matched):
-                    if r.get("id") and _click_by_id(r["id"]):
-                        logger.info(f"Selected radio '{label}' for '{question}'")
-                        return
-            # Fallback: click first option
-            if radio_data and radio_data[0].get("id"):
-                first = radio_data[0]
-                if _click_by_id(first["id"]):
-                    logger.warning(f"No radio match for '{answer}' in '{question}' — clicked first: '{first.get('label') or first.get('value')}'")
-                    return
-            # Last resort: click first element in group
-            group = field["el"]
-            if group:
-                self.driver.execute_script("arguments[0].click();", group[0])
-                logger.warning(f"Clicked first radio element for '{question}' as last resort")
-        except Exception as e:
-            logger.warning(f"Failed to select radio for '{question}': {e}")
-
-    def _apply_checkbox(self, field: dict, answer: str) -> None:
-        """Check the checkbox if the answer indicates yes/true."""
-        question = field["question"]
-        el = field["el"]
-        should_check = answer.strip().lower() in ("yes", "sim", "true", "1", "concordo", "aceito")
-        try:
-            if should_check and not el.is_selected():
-                self.driver.execute_script("arguments[0].click();", el)
-                logger.info(f"Checked checkbox '{question}'")
-            elif not should_check:
-                logger.info(f"Left unchecked '{question}' (answer='{answer}')")
-        except Exception as e:
-            logger.warning(f"Failed to handle checkbox '{question}': {e}")
-
-    def _apply_select(self, field: dict, answer: str) -> None:
-        """Apply an answer to a select field."""
-        question = field["question"]
-        option_map: dict = field.get("_option_map", {})
-        options = field.get("options", [])
-
-        # Re-find element fresh to avoid stale reference
-        el = None
-        try:
-            for sel in self.driver.find_elements(By.XPATH, "//select"):
-                if sel.is_displayed() and self._get_field_label(sel) == question:
-                    el = sel
-                    break
-        except Exception:
-            pass
-        el = el or field["el"]
-
-        try:
-            answer_n = _normalize(answer)
-
-            # Build target value: best match first
-            target_val: str | None = None
-            target_label: str | None = None
-
-            # 0. Exact label match
-            for label, val in option_map.items():
-                if _normalize(label) == answer_n and val:
-                    target_val, target_label = val, label
+            await self._wait_for_modal()
+            max_steps = 30
+            for step in range(max_steps):
+                if no_submit:
                     break
 
-            # 1. Substring match
-            if not target_val:
-                for label, val in option_map.items():
-                    lbl_n = _normalize(label)
-                    if val and (answer_n in lbl_n or lbl_n in answer_n):
-                        target_val, target_label = val, label
-                        break
+                await self.page.wait_for_timeout(1500)
 
-            # 2. Word overlap
-            if not target_val:
-                answer_words = set(answer_n.split())
-                for label, val in option_map.items():
-                    if val and answer_words & set(_normalize(label).split()):
-                        target_val, target_label = val, label
-                        break
+                # Fill salary
+                if not salary_filled and salary_expectation:
+                    salary_filled = await self._fill_salary(salary_expectation)
 
-            # 3. First non-placeholder option as last resort
-            if not target_val:
-                for label, val in option_map.items():
-                    if val:
-                        target_val, target_label = val, label
-                        break
+                modal = await self._get_modal()
 
-            if not target_val:
-                logger.warning(f"No valid option found for '{question}'")
-                return
+                await self._fill_scope(modal, job_title, job_description, salary_expectation, visited_select_ids)
+                await self._fill_radio_groups(job_title, job_description)
+                await self._fill_checkboxes()
+                await self._fill_remaining_required(job_title, job_description, salary_expectation)
 
-            logger.debug(f"Targeting option '{target_label}' (val={target_val!r}) for '{question}'")
-
-            # Scroll into view
-            try:
-                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                time.sleep(0.1)
-            except Exception:
-                pass
-
-            # Approach 1: Selenium Select (WebDriver-level click → triggers native browser events)
-            selected = False
-            try:
-                Select(el).select_by_value(target_val)
-                self.driver.execute_script(
-                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el
-                )
-                time.sleep(0.3)
-                current = self.driver.execute_script("return arguments[0].value;", el)
-                if current == target_val:
-                    logger.info(f"Selected '{target_label}' for '{question}'")
-                    selected = True
-            except Exception as e:
-                logger.debug(f"select_by_value failed for '{question}': {e}")
-
-            # Approach 2: React-aware prototype setter
-            if not selected:
-                try:
-                    self.driver.execute_script(_REACT_SET_SELECT, el, target_val)
-                    time.sleep(0.3)
-                    current = self.driver.execute_script("return arguments[0].value;", el)
-                    if current == target_val:
-                        logger.info(f"Selected '{target_label}' for '{question}' (react setter)")
-                        selected = True
-                except Exception as e:
-                    logger.debug(f"React setter failed for '{question}': {e}")
-
-            # Approach 3: JS click on select + option element
-            if not selected:
-                try:
-                    opt_el = next(
-                        (o for o in Select(el).options if o.get_attribute("value") == target_val),
-                        None,
-                    )
-                    if opt_el:
-                        self.driver.execute_script("arguments[0].click();", el)
-                        time.sleep(0.2)
-                        self.driver.execute_script("arguments[0].click();", opt_el)
-                        time.sleep(0.3)
-                        current = self.driver.execute_script("return arguments[0].value;", el)
-                        if current == target_val:
-                            logger.info(f"Selected '{target_label}' for '{question}' (js click)")
-                            selected = True
-                except Exception as e:
-                    logger.debug(f"JS click failed for '{question}': {e}")
-
-            # Approach 4: open dropdown and click the option element (best for React/JS-heavy forms)
-            if not selected:
-                selected = self._click_select_option(el, target_val)
-
-            if not selected:
-                logger.warning(f"Could not set select '{question}' to '{target_label}' — all approaches failed")
-
-        except Exception as e:
-            logger.warning(f"Failed to select for '{question}': {e}")
-
-    async def _batch_answer(self, fields: list[dict]) -> dict:
-        """Send all form questions to AI in one call. Returns {index: answer}."""
-        questions_str = ""
-        for i, f in enumerate(fields):
-            error_hint = f"   ⚠ ERRO DE VALIDAÇÃO: {f['error']}\n" if f.get("error") else ""
-            bad_val_hint = f"   ⚠ VALOR INVÁLIDO ANTERIOR: {f['current_value']}\n" if f.get("current_value") and f.get("error") else ""
-            if f["type"] == "textarea":
-                questions_str += f"{i}. [TIPO: TEXTO_LONGO] {f['question']}\n{error_hint}{bad_val_hint}"
-            elif f["type"] == "text":
-                questions_str += f"{i}. [TIPO: TEXTO] {f['question']}\n{error_hint}{bad_val_hint}"
-            elif f["type"] == "checkbox":
-                questions_str += f"{i}. [TIPO: CHECKBOX] {f['question']}\n   Responda exatamente: Sim ou Não\n{error_hint}"
-            else:
-                opts_str = "\n   ".join(f["options"])
-                questions_str += (
-                    f"{i}. [TIPO: SELEÇÃO_ÚNICA] {f['question']}\n"
-                    f"   Opções disponíveis (responda com o texto EXATO de uma delas):\n"
-                    f"   {opts_str}\n"
-                    f"{error_hint}"
-                )
-
-        job_context = ""
-        if self.job_title:
-            job_context = f"\nVAGA: {self.job_title}\n"
-        if self.job_description:
-            job_context += f"DESCRIÇÃO DA VAGA:\n{self.job_description}\n"
-
-        prompt = f"""Com base no currículo do candidato e na vaga, responda as perguntas do formulário de candidatura abaixo.
-
-CURRÍCULO:
-{self.resume}
-{job_context}
-PERGUNTAS:
-{questions_str}
-REGRAS OBRIGATÓRIAS:
-- Responda APENAS com um objeto JSON, sem texto antes ou depois. Exemplo: {{"0": "3", "1": "Sim", "2": null}}
-- [TIPO: TEXTO] campo de texto livre: responda com valor curto em português
-- [TIPO: TEXTO_LONGO] campo de texto longo: responda com frase ou parágrafo em português
-- [TIPO: TEXTO] campo numérico (anos, salário, etc.): responda SOMENTE com dígitos. Ex: 3 ou 6000
-- [TIPO: SELEÇÃO_ÚNICA] OBRIGATÓRIO: responda com o texto EXATO de uma das opções listadas. Não invente opções.
-- [TIPO: CHECKBOX] responda exatamente: Sim ou Não
-- Use o contexto da vaga para perguntas como "por que se candidatou" ou "experiência com X"
-- Se não souber a resposta mesmo com o contexto, coloque null (não coloque "Nulo", "nenhum" ou texto — use null)"""
-
-        result = await get_llm_provider().complete(prompt)
-        logger.info(f"AI raw response: {result!r}")
-
-        try:
-            import re
-            match = re.search(r"\{.*\}", result, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group())
-                logger.info(f"AI parsed answers: {parsed}")
-                return parsed
-        except Exception as e:
-            logger.warning(f"Failed to parse AI response as JSON: {e} | raw: {result!r}")
-        return {}
-
-    def _match_option(self, answer: str, options: list[str]) -> str | None:
-        """Find the best matching option for a given answer string."""
-        def normalize(s: str) -> str:
-            s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
-            return s.lower().strip()
-
-        answer_n = normalize(answer)
-
-        # 1. Exact match (normalized)
-        for opt in options:
-            if normalize(opt) == answer_n:
-                return opt
-
-        # 2. Answer contains option or option contains answer
-        for opt in options:
-            opt_n = normalize(opt)
-            if answer_n in opt_n or opt_n in answer_n:
-                return opt
-
-        # 3. Any word from answer matches any word in option
-        answer_words = set(answer_n.split())
-        for opt in options:
-            opt_words = set(normalize(opt).split())
-            if answer_words & opt_words:
-                return opt
-
-        return None
-
-    def _set_input_value(self, element, value: str) -> None:
-        try:
-            self.driver.execute_script(_REACT_SET_VALUE, element, value)
-            time.sleep(0.2)
-        except Exception:
-            try:
-                element.clear()
-                element.send_keys(value)
-            except Exception:
-                pass
-
-    # ── form navigation ──────────────────────────────────────────────────────
-
-    def _click_btn(self, btn) -> bool:
-        try:
-            btn.click()
-            return True
-        except Exception:
-            try:
-                self.driver.execute_script("arguments[0].click();", btn)
-                return True
-            except Exception:
-                return False
-
-    def _is_submit_step(self) -> bool:
-        """Return True if the submit button is currently visible (last step of the form)."""
-        try:
-            self.driver.find_element(
-                By.XPATH,
-                "//button["
-                "contains(@aria-label,'Submit application') or "
-                "contains(@aria-label,'Enviar candidatura') or "
-                ".//span[normalize-space()='Submit application'] or "
-                ".//span[normalize-space()='Enviar candidatura']"
-                "]",
-            )
-            return True
-        except NoSuchElementException:
-            return False
-
-    def _try_submit(self) -> bool:
-        try:
-            btn = self.driver.find_element(
-                By.XPATH,
-                "//button["
-                "contains(@aria-label,'Submit application') or "
-                "contains(@aria-label,'Enviar candidatura') or "
-                ".//span[normalize-space()='Submit application'] or "
-                ".//span[normalize-space()='Enviar candidatura']"
-                "]",
-            )
-            if self._click_btn(btn):
-                logger.info("Application submitted")
-                time.sleep(1.5)
-                self._close_modal()
-                return True
-        except NoSuchElementException:
-            pass
-        return False
-
-    def _click_next(self) -> bool:
-        try:
-            btn = self.driver.find_element(
-                By.XPATH,
-                "//button["
-                "contains(@aria-label,'Continue to next step') or "
-                "contains(@aria-label,'Continuar para') or "
-                "contains(@aria-label,'Avançar para') or "
-                "contains(@aria-label,'Review your application') or "
-                "contains(@aria-label,'Revisar') or "
-                ".//span[normalize-space()='Next'] or "
-                ".//span[normalize-space()='Próximo'] or "
-                ".//span[normalize-space()='Avançar'] or "
-                ".//span[normalize-space()='Review'] or "
-                ".//span[normalize-space()='Revisar']"
-                "]",
-            )
-            return self._click_btn(btn)
-        except NoSuchElementException:
-            pass
-        return False
-
-    # ── validation ───────────────────────────────────────────────────────────
-
-    def _has_unanswered_required_fields(self) -> bool:
-        try:
-            inputs = self.driver.find_elements(
-                By.XPATH, "//input[@required and @type!='hidden']"
-            )
-            for inp in inputs:
-                if inp.is_displayed() and not inp.get_attribute("value"):
-                    label = self._get_field_label(inp)
-                    logger.warning(f"Unfilled required input: '{label}'")
-                    return True
-
-            selects = self.driver.find_elements(By.XPATH, "//select[@required]")
-            for sel in selects:
-                if sel.is_displayed() and not sel.get_attribute("value"):
-                    label = self._get_field_label(sel)
-                    logger.warning(f"Unfilled required select: '{label}'")
-                    return True
-        except Exception:
-            pass
-        return False
-
-    def _get_field_label(self, element) -> str:
-        try:
-            field_id = element.get_attribute("id")
-            if field_id:
-                labels = self.driver.find_elements(By.XPATH, f"//label[@for='{field_id}']")
-                if labels:
-                    text = labels[0].text.strip()
-                    if text:
-                        return text
-
-            # aria-labelledby (used by LinkedIn artdeco components)
-            aria_labelledby = element.get_attribute("aria-labelledby") or ""
-            if aria_labelledby:
-                for lbl_id in aria_labelledby.split():
+                # Try Submit / Next / Review
+                btn_selectors = [
+                    "button[aria-label='Submit application']",
+                    "button[aria-label='Enviar candidatura']",
+                    "button[type='submit']",
+                    "xpath=//button[contains(@aria-label,'Next') or contains(normalize-space(),'Next') or contains(normalize-space(),'Próximo') or contains(normalize-space(),'Proximo') or contains(normalize-space(),'Avançar')]",
+                    "xpath=//button[contains(@aria-label,'Review') or contains(normalize-space(),'Review') or contains(normalize-space(),'Revisar')]",
+                    "xpath=//button[contains(@aria-label,'Done') or contains(normalize-space(),'Done') or contains(normalize-space(),'Concluído')]",
+                    "button[class*=artdeco-button--primary]",
+                ]
+                clicked = False
+                for sel in btn_selectors:
                     try:
-                        lbl_el = self.driver.find_element(By.ID, lbl_id)
-                        text = lbl_el.text.strip()
-                        if text:
-                            return text
+                        btn_type = "css" if not sel.startswith("xpath=") else "xpath"
+                        loc = self.page.locator(sel[len("xpath="):] if sel.startswith("xpath=") else sel)
+                        if await loc.is_visible(timeout=1000) and await loc.is_enabled():
+                            btn_text = (await loc.inner_text()).strip().lower()
+                            if "submit" in btn_text or "enviar" in btn_text:
+                                logger.info(f"Submit button clicked: '{btn_text}'")
+                                await loc.click()
+                                await self.page.wait_for_timeout(2000)
+                                return True
+                            await loc.click()
+                            clicked = True
+                            logger.info(f"Clicked '{btn_text}' (step {step + 1})")
+                            await self._wait_for_modal_close(timeout=3)
+                            break
                     except Exception:
-                        pass
+                        continue
+                if not clicked:
+                    logger.info(f"No more buttons to click (step {step + 1})")
+                    break
 
-            aria_label = element.get_attribute("aria-label") or ""
-            if aria_label.strip():
-                return aria_label.strip()
+            # Final submit check
+            for sel in btn_selectors[:4]:
+                try:
+                    loc = self.page.locator(sel)
+                    if await loc.is_visible(timeout=1000) and await loc.is_enabled():
+                        btn_text = (await loc.inner_text()).strip().lower()
+                        if "submit" in btn_text or "enviar" in btn_text or "send" in btn_text:
+                            await loc.click()
+                            logger.info("Final submit clicked")
+                            await self.page.wait_for_timeout(2000)
+                            return True
+                except Exception:
+                    pass
+            return True
+        except Exception as e:
+            logger.error(f"Easy Apply error: {e}")
+            return False
 
-            placeholder = element.get_attribute("placeholder") or ""
-            if placeholder.strip():
-                return placeholder.strip()
+    # ── discard check ────────────────────────────────────────────────────────
 
-            # Walk up DOM: fieldset > legend, or wrapping label
-            result = self.driver.execute_script("""
-                var el = arguments[0];
-                for (var i = 0; i < 6; i++) {
-                    el = el.parentElement;
-                    if (!el) break;
-                    if (el.tagName === 'FIELDSET') {
-                        var leg = el.querySelector('legend');
-                        if (leg && leg.innerText.trim()) return leg.innerText.trim();
-                    }
-                    if (el.tagName === 'LABEL') {
-                        var t = el.innerText.trim();
-                        if (t) return t;
-                    }
-                }
-                return null;
-            """, element)
-            if result and result.strip():
-                return result.strip()
-
-            return "(unknown)"
-        except Exception:
-            return "(unknown)"
-
-    # ── modal control ─────────────────────────────────────────────────────────
-
-    def _close_modal(self) -> None:
+    async def _has_discard_modal(self) -> bool:
         try:
-            btn = self.driver.find_element(
-                By.XPATH,
-                "//button["
-                "@aria-label='Dismiss' or "
-                "@aria-label='Fechar' or "
-                "contains(@class,'artdeco-modal__dismiss')"
-                "]",
+            discard = self.page.locator(
+                "xpath=//button[contains(@aria-label,'Discard') or contains(normalize-space(),'Discard') or contains(normalize-space(),'Descartar')]"
             )
-            btn.click()
-            time.sleep(0.5)
-
-            try:
-                discard_btn = self.driver.find_element(
-                    By.XPATH,
-                    "//button["
-                    ".//span[normalize-space()='Discard'] or "
-                    ".//span[normalize-space()='Descartar']"
-                    "]",
-                )
-                discard_btn.click()
-            except Exception:
-                pass
-
+            return await discard.is_visible(timeout=2000)
         except Exception:
-            try:
-                ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-                time.sleep(0.5)
-            except Exception:
-                pass
+            return False
+
+    async def _close_discard(self):
+        try:
+            discard_btn = self.page.locator(
+                "xpath=//button[contains(@aria-label,'Discard') or contains(normalize-space(),'Discard') or contains(normalize-space(),'Descartar')]"
+            )
+            if await discard_btn.is_visible(timeout=1000):
+                await discard_btn.click()
+                await self.page.wait_for_timeout(500)
+        except Exception:
+            await self.page.keyboard.press("Escape")

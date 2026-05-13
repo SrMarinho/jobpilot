@@ -12,12 +12,15 @@ import typer
 
 import src.config.settings as setting
 from src.utils.logger import set_run_context
-import undetected_chromedriver as uc
+from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 from src.automation.tasks.connection_manager import ConnectionManager
 from src.automation.tasks.job_application_manager import JobApplicationManager, _detect_site
 from src.automation import url_builder as _url_builder
 from src.config.settings import logger
 from dotenv import load_dotenv
+
+_stealth = Stealth()
 
 LOCAL_DIR = os.path.join(os.path.dirname(__file__), ".local")
 BOT_PROFILE_DIR = os.path.join(LOCAL_DIR, "bot_profile")
@@ -82,20 +85,43 @@ def save_weekly_limit_reached():
 
 
 def get_config(force_headless: bool = False) -> dict:
-    env_headless = str(os.getenv("HEADLESS")).upper()
-    headless = force_headless or (False if env_headless == "FALSE" else True)
+    env_val = os.getenv("HEADLESS")
+    if env_val is None:
+        headless = force_headless
+    else:
+        headless = force_headless or env_val.upper() != "FALSE"
     return {"headless": headless}
 
 
-def setup(force_headless: bool = False) -> uc.Chrome:
+async def _create_context(pw, force_headless: bool = False):
     config = get_config(force_headless)
-    options = uc.ChromeOptions()
-    options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
-    options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=config["headless"], version_main=147)
-    if not config["headless"]:
-        driver.maximize_window()
-    return driver
+    context = await pw.chromium.launch_persistent_context(
+        user_data_dir=BOT_PROFILE_DIR,
+        headless=config["headless"],
+        channel="chrome",
+        args=["--start-maximized"],
+        no_viewport=True,
+    )
+    await _stealth.apply_stealth_async(context)
+    page = context.pages[0] if context.pages else await context.new_page()
+    return context, page
+
+
+def _create_context_sync(force_headless: bool = False):
+    """Synchronous factory for TelegramBot (runs in threads)."""
+    from playwright.sync_api import sync_playwright
+    pw = sync_playwright().start()
+    config = get_config(force_headless)
+    context = pw.chromium.launch_persistent_context(
+        user_data_dir=BOT_PROFILE_DIR,
+        headless=config["headless"],
+        channel="chrome",
+        args=["--start-maximized"],
+        no_viewport=True,
+    )
+    _stealth.apply_stealth_sync(context)
+    page = context.pages[0] if context.pages else context.new_page()
+    return pw, context, page
 
 
 LOGIN_URLS = {
@@ -413,48 +439,49 @@ def run_provider_key_show():
         print(f"  {prov:10s} {env_var:20s} {_mask_key(cfg.get(env_var, ''))}")
 
 
-def run_logout(site: str):
+async def run_logout(site: str):
     domains = SITE_DOMAINS[site]
     login_url = LOGIN_URLS[site]
-    options = uc.ChromeOptions()
-    options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
-    options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=False, version_main=147)
-    try:
-        driver.get(login_url)
-        time.sleep(2)
-        removed = 0
-        all_cookies = driver.get_cookies()
-        for cookie in all_cookies:
-            domain = cookie.get("domain", "")
-            if any(domain.endswith(d.lstrip(".")) or domain == d for d in domains):
-                try:
-                    driver.delete_cookie(cookie["name"])
-                    removed += 1
-                except Exception:
-                    pass
-        print(f"Cleared {removed} cookie(s) for {site}.")
-        print(f"Session removed. Run 'login {site}' to log in again.")
-    finally:
-        driver.quit()
-
-
-def run_login(site: str):
-    url = LOGIN_URLS[site]
-    options = uc.ChromeOptions()
-    options.add_argument(f"--user-data-dir={BOT_PROFILE_DIR}")
-    options.add_argument("--start-maximized")
-    driver = uc.Chrome(options=options, headless=False, version_main=147)
-    driver.get(url)
-    print(f"Browser opened at {url}")
-    print("Log in and close the browser window when done.")
-    while True:
+    async with async_playwright() as pw:
+        context, page = await _create_context(pw, force_headless=False)
         try:
-            _ = driver.window_handles
-            time.sleep(1)
-        except Exception:
-            break
-    print("Browser closed. Login session saved.")
+            await page.goto(login_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
+            removed = 0
+            for cookie in await context.cookies():
+                domain = cookie.get("domain", "")
+                if any(domain.endswith(d.lstrip(".")) or domain == d for d in domains):
+                    removed += 1
+                    await context.clear_cookies()
+                    break
+            print(f"Cleared {removed} cookie(s) for {site}.")
+            print(f"Session removed. Run 'login {site}' to log in again.")
+        finally:
+            await context.close()
+
+
+async def run_login(site: str):
+    url = LOGIN_URLS[site]
+    print(f"Opening {url}...", flush=True)
+    async with async_playwright() as pw:
+        context, page = await _create_context(pw, force_headless=False)
+        try:
+            await page.goto(url, wait_until="domcontentloaded")
+            print(f"Browser opened at {url}", flush=True)
+            print("Log in and close the browser window when done.", flush=True)
+            while True:
+                try:
+                    if len(context.pages) == 0:
+                        break
+                    await page.wait_for_timeout(1000)
+                except Exception:
+                    break
+            print("Browser closed. Login session saved.", flush=True)
+        finally:
+            try:
+                await context.close()
+            except Exception:
+                pass
 
 
 # ── Typer CLI ─────────────────────────────────────────────────────────────────
@@ -536,13 +563,13 @@ def _callback(
 @app.command()
 def login(site: SiteName):
     """Open browser to log in to a job site (linkedin, glassdoor, indeed)."""
-    run_login(site.value)
+    asyncio.run(run_login(site.value))
 
 
 @app.command()
 def logout(site: SiteName):
     """Clear saved session for a site."""
-    run_logout(site.value)
+    asyncio.run(run_logout(site.value))
 
 
 # ── apply ──────────────────────────────────────────────────────────────────────
@@ -777,9 +804,9 @@ def apply(
     logger.info("Warming up LLM models...")
 
     async def _warmup():
-        async def _try(name: str, provider):
+        async def _try(name: str, prov):
             try:
-                await provider.complete("hi")
+                await prov.complete("hi")
                 logger.info(f"Warmup OK: {name}")
             except Exception as e:
                 logger.warning(f"Warmup failed for {name}: {e}")
@@ -821,50 +848,56 @@ def apply(
         extra.update(final_search)
         save_last_url(site_key, resolved_url, page=page, extra=extra)
 
-    driver = setup(force_headless=headless)
-    try:
-        board_ctx = None
-        on_update = None
-        if tui:
-            from src.utils.tui import TuiBoard
-            board_ctx = TuiBoard()
-            board_ctx.__enter__()
-            on_update = board_ctx.update
+    async def _run():
+        nonlocal resolved_start_page
+        async with async_playwright() as pw:
+            context, page = await _create_context(pw, force_headless=headless)
+            try:
+                board_ctx = None
+                on_update = None
+                if tui:
+                    from src.utils.tui import TuiBoard
+                    board_ctx = TuiBoard()
+                    board_ctx.__enter__()
+                    on_update = board_ctx.update
 
-        try:
-            JobApplicationManager(
-                driver,
-                url=resolved_url,
-                resume_path=resolved_resume,
-                preferences=final_preferences,
-                level=final_level,
-                max_pages=max_pages,
-                max_applications=max_applications,
-                start_page=resolved_start_page if resume_from else (start_page or 1),
-                on_page_change=on_page_change,
-                no_submit=no_submit,
-                eval_concurrency=eval_concurrency,
-                on_update=on_update,
-            ).run()
-        finally:
-            if board_ctx:
-                board_ctx.__exit__(None, None, None)
-        try:
-            driver.save_screenshot(f"{setting.screenshots_path}.png")
-        except Exception:
-            pass
-    except Exception as e:
-        logger.critical(f"{str(e)}")
-        try:
-            driver.save_screenshot(f"{setting.screenshots_path}.png")
-        except Exception:
-            pass
-        raise
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+                try:
+                    manager = JobApplicationManager(
+                        page,
+                        url=resolved_url,
+                        resume_path=resolved_resume,
+                        preferences=final_preferences,
+                        level=final_level,
+                        max_pages=max_pages,
+                        max_applications=max_applications,
+                        start_page=resolved_start_page if resume_from else (start_page or 1),
+                        on_page_change=on_page_change,
+                        no_submit=no_submit,
+                        eval_concurrency=eval_concurrency,
+                        on_update=on_update,
+                    )
+                    await manager.run()
+                finally:
+                    if board_ctx:
+                        board_ctx.__exit__(None, None, None)
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.critical(f"{str(e)}")
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+
+    asyncio.run(_run())
 
 
 # ── connect ────────────────────────────────────────────────────────────────────
@@ -943,37 +976,41 @@ def connect(
             extra["network"] = final_network
         save_last_url(site_key, resolved_url, page=page, extra=extra if extra else None)
 
-    driver = setup(force_headless=headless)
-    try:
-        from src.core.use_cases.monthly_report import save_connections
-        manager = ConnectionManager(
-            driver, url=resolved_url,
-            max_pages=max_pages, start_page=resolved_start_page,
-            on_page_change=on_page_change,
-        )
-        manager.run()
-        sent = manager.connect_people.invite_sended
-        if sent:
-            save_connections(sent)
-        if manager.connect_people.limit_reached:
-            save_weekly_limit_reached()
-            logger.info("Weekly limit reached \u2014 saved. Will skip until next week.")
-        try:
-            driver.save_screenshot(f"{setting.screenshots_path}.png")
-        except Exception:
-            pass
-    except Exception as e:
-        logger.critical(f"{str(e)}")
-        try:
-            driver.save_screenshot(f"{setting.screenshots_path}.png")
-        except Exception:
-            pass
-        raise
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+    async def _run():
+        async with async_playwright() as pw:
+            context, page = await _create_context(pw, force_headless=headless)
+            try:
+                from src.core.use_cases.monthly_report import save_connections
+                manager = ConnectionManager(
+                    page, url=resolved_url,
+                    max_pages=max_pages, start_page=resolved_start_page,
+                    on_page_change=on_page_change,
+                )
+                await manager.run()
+                sent = manager.connect_people.invite_sended
+                if sent:
+                    save_connections(sent)
+                if manager.connect_people.limit_reached:
+                    save_weekly_limit_reached()
+                    logger.info("Weekly limit reached \u2014 saved. Will skip until next week.")
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.critical(f"{str(e)}")
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+
+    asyncio.run(_run())
 
 
 # ── test-apply ─────────────────────────────────────────────────────────────────
@@ -1000,51 +1037,55 @@ def test_apply(
     site = _detect_site(job_url)
     print(f"Site detected: {site}")
 
-    driver = setup(force_headless=False)
-    try:
-        driver.get(job_url)
-        time.sleep(3)
+    async def _run():
+        async with async_playwright() as pw:
+            context, page = await _create_context(pw, force_headless=False)
+            try:
+                await page.goto(job_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
 
-        if site == "indeed":
-            from src.automation.pages.indeed_jobs_page import IndeedJobsPage
-            from src.core.use_cases.indeed_application_handler import IndeedApplicationHandler
-            page = IndeedJobsPage(driver, job_url)
-            btn = page.get_apply_btn()
-            if not btn:
-                print("No Apply button found on this Indeed job page.")
-                return
-            title = page.get_job_title() or "Test Job"
-            print(f"Applying to: {title}")
-            btn.click()
-            time.sleep(1.5)
-            handler = IndeedApplicationHandler(driver, resume=resume_text)
-            success = handler.submit(salary_expectation=None, no_submit=no_submit)
-        else:
-            from src.automation.pages.jobs_search_page import JobsSearchPage
-            from src.core.use_cases.job_application_handler import JobApplicationHandler
-            page = JobsSearchPage(driver, job_url)
-            btn = page.get_easy_apply_btn()
-            if not btn:
-                print("No Easy Apply button found on this job page.")
-                return
-            title = page.get_job_title() or "Test Job"
-            description = page.get_job_description() or ""
-            print(f"Applying to: {title}")
-            btn.click()
-            time.sleep(1.5)
-            handler = JobApplicationHandler(driver, resume=resume_text)
-            success = handler.submit_easy_apply(job_title=title, job_description=description, no_submit=no_submit)
+                if site == "indeed":
+                    from src.automation.pages.indeed_jobs_page import IndeedJobsPage
+                    from src.core.use_cases.indeed_application_handler import IndeedApplicationHandler
+                    page_obj = IndeedJobsPage(page, job_url)
+                    btn = await page_obj.get_apply_btn()
+                    if not btn:
+                        print("No Apply button found on this Indeed job page.")
+                        return
+                    title = await page_obj.get_job_title() or "Test Job"
+                    print(f"Applying to: {title}")
+                    await btn.click()
+                    await page.wait_for_timeout(1500)
+                    handler = IndeedApplicationHandler(page, resume=resume_text)
+                    success = await handler.submit(salary_expectation=None, no_submit=no_submit)
+                else:
+                    from src.automation.pages.jobs_search_page import JobsSearchPage
+                    from src.core.use_cases.job_application_handler import JobApplicationHandler
+                    page_obj = JobsSearchPage(page, job_url)
+                    btn = await page_obj.get_easy_apply_btn()
+                    if not btn:
+                        print("No Easy Apply button found on this job page.")
+                        return
+                    title = await page_obj.get_job_title() or "Test Job"
+                    description = await page_obj.get_job_description() or ""
+                    print(f"Applying to: {title}")
+                    await btn.click()
+                    await page.wait_for_timeout(1500)
+                    handler = JobApplicationHandler(page, resume=resume_text)
+                    success = await handler.submit_easy_apply(job_title=title, job_description=description, no_submit=no_submit)
 
-        if no_submit:
-            print("Dry run complete \u2014 form was filled but not submitted.")
-        else:
-            print(f"Result: {'SUCCESS' if success else 'FAILED'}")
-    finally:
-        try:
-            input("Press Enter to close browser...")
-        except EOFError:
-            pass
-        driver.quit()
+                if no_submit:
+                    print("Dry run complete \u2014 form was filled but not submitted.")
+                else:
+                    print(f"Result: {'SUCCESS' if success else 'FAILED'}")
+            finally:
+                try:
+                    await page.wait_for_timeout(3000)
+                except EOFError:
+                    pass
+                await context.close()
+
+    asyncio.run(_run())
 
 
 # ── bot ────────────────────────────────────────────────────────────────────────
@@ -1056,7 +1097,7 @@ def bot(
     """Start Telegram bot to control JobPilot remotely."""
     set_run_context("bot")
     from src.bot.telegram_bot import TelegramBot
-    TelegramBot(driver_factory=setup, resume_path=resume).run()
+    TelegramBot(driver_factory=lambda: _create_context_sync(), resume_path=resume).run()
 
 
 # ── report ─────────────────────────────────────────────────────────────────────

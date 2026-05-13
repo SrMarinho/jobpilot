@@ -1,87 +1,72 @@
-import time
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.remote.webelement import WebElement
+from playwright.async_api import Page
 from src.config.settings import logger
 
 
 class JobsSearchPage:
-    def __init__(self, driver: WebDriver, url: str):
-        self.driver = driver
+    def __init__(self, page: Page, url: str):
+        self.page = page
         self.url = url
 
-    def get_job_cards(self) -> list[WebElement]:
+    async def get_job_cards(self):
         try:
-            WebDriverWait(self.driver, 10).until(
-                lambda d: d.find_elements(By.CSS_SELECTOR, ".job-card-container")
-            )
-            return self.driver.find_elements(By.CSS_SELECTOR, ".job-card-container")
+            await self.page.wait_for_selector(".job-card-container", timeout=10000)
+            return await self.page.locator(".job-card-container").all()
         except Exception:
             logger.info("No job cards found on page")
             return []
 
-    def get_card_job_url(self, card: WebElement) -> str | None:
-        """Extract the job URL from the card element before clicking it."""
+    async def get_card_job_url(self, card) -> str | None:
         try:
-            # Try data-job-id attribute first (most reliable)
-            job_id = card.get_attribute("data-job-id")
+            job_id = await card.get_attribute("data-job-id")
             if job_id:
                 return f"https://www.linkedin.com/jobs/view/{job_id}/"
-            # Fallback: href from first anchor inside the card
-            anchor = card.find_element(By.CSS_SELECTOR, "a[href*='/jobs/view/']")
-            href = anchor.get_attribute("href") or ""
-            # Strip query params to keep the URL stable
+            anchor = card.locator("a[href*='/jobs/view/']")
+            href = await anchor.get_attribute("href") or ""
             return href.split("?")[0] if href else None
         except Exception:
             return None
 
-    def get_job_title(self) -> str:
+    async def get_job_title(self) -> str:
         try:
-            el = WebDriverWait(self.driver, 10).until(
-                lambda d: d.find_element(
-                    By.CSS_SELECTOR,
-                    ".job-details-jobs-unified-top-card__job-title h1, "
-                    ".jobs-unified-top-card__job-title h1, "
-                    "h1.t-24",
-                )
+            el = self.page.locator(
+                ".job-details-jobs-unified-top-card__job-title h1, "
+                ".jobs-unified-top-card__job-title h1, "
+                "h1.t-24"
             )
-            return el.text.strip()
+            await el.wait_for(timeout=10000)
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
-    def get_company_name(self) -> str:
+    async def get_company_name(self) -> str:
         try:
-            el = self.driver.find_element(
-                By.CSS_SELECTOR,
+            el = self.page.locator(
                 ".job-details-jobs-unified-top-card__company-name a, "
                 ".jobs-unified-top-card__company-name a, "
                 ".jobs-unified-top-card__subtitle-primary-grouping a, "
-                ".job-details-jobs-unified-top-card__primary-description a",
+                ".job-details-jobs-unified-top-card__primary-description a"
             )
-            return el.text.strip()
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
-    def get_job_description(self) -> str:
+    async def get_job_description(self) -> str:
         try:
-            el = WebDriverWait(self.driver, 5).until(
-                lambda d: d.find_element(By.ID, "job-details")
-            )
-            return el.text.strip()
+            el = self.page.locator("#job-details")
+            await el.wait_for(timeout=5000)
+            return (await el.inner_text()).strip()
         except Exception:
             return ""
 
-    def get_easy_apply_btn(self) -> WebElement | None:
+    async def get_easy_apply_btn(self):
         try:
-            btn = self.driver.find_element(
-                By.XPATH,
-                "//button["
+            btn = self.page.locator(
+                "xpath=//button["
                 "contains(@aria-label,'Easy Apply to') or "
                 "(contains(@aria-label,'Candidatura simplificada') and not(contains(@aria-label,'Filtro')))"
-                "]",
+                "]"
             )
-            if btn.is_displayed() and btn.is_enabled():
+            if await btn.is_visible() and await btn.is_enabled():
                 return btn
         except Exception:
             pass

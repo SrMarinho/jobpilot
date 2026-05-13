@@ -1,6 +1,4 @@
-import time
 import threading
-from selenium.common.exceptions import ElementClickInterceptedException
 from src.automation.pages.people_search_page import PeopleSearchPage
 from src.config.settings import logger
 
@@ -12,34 +10,37 @@ class ConnectionHandler:
         self.limit_reached = False
         self.stop_event = stop_event or threading.Event()
 
-    def run(self):
+    async def run(self):
         skip_labels: set[str] = set()
-        while btn_connect := self.page.get_connect_btn(skip_labels=skip_labels):
+        while True:
+            btn_connect = await self.page.get_connect_btn(skip_labels=skip_labels)
+            if not btn_connect:
+                break
             if self.stop_event.is_set():
                 logger.info("Stop requested, halting connection handler")
                 return
-            label = btn_connect.get_attribute("aria-label") or btn_connect.text
+            label = await btn_connect.get_attribute("aria-label") or await btn_connect.inner_text()
             try:
-                btn_connect.click()
-            except ElementClickInterceptedException:
-                if self.page.is_invite_limit_reached():
+                await btn_connect.click()
+            except Exception:
+                if await self.page.is_invite_limit_reached():
                     logger.warning("LinkedIn invite limit reached. Stopping.")
                     self.limit_reached = True
                     return
-                self.page.close_modal()
+                await self.page.close_modal()
                 continue
 
-            btn_confirm = self.page.get_confirm_invitation_btn()
-            if not btn_confirm:
-                if self.page.is_invite_limit_reached():
-                    logger.warning("LinkedIn invite limit reached. Stopping.")
-                    self.limit_reached = True
-                    return
-                logger.info(f"Skipping person (disabled or requires message): '{label}'")
+            confirm_btn = await self.page.get_confirm_invitation_btn()
+            if confirm_btn:
+                if await self.page.requires_message():
+                    logger.info("Connection requires message, skipping")
+                    skip_labels.add(label)
+                    await self.page.close_modal()
+                    continue
+                await confirm_btn.click()
+                self.invite_sended += 1
+                logger.info(f"Invitation sent ({self.invite_sended})")
+            else:
+                logger.info("Could not confirm invitation, trying next")
                 skip_labels.add(label)
-                self.page.close_modal()
-                continue
-
-            btn_confirm.click()
-            self.invite_sended += 1
-            time.sleep(1)
+                await self.page.close_modal()
