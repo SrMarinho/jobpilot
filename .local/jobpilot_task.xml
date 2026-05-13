@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-WindowStyle Hidden -ExecutionPolicy Bypass -File "F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.ps1" -BatchPath "F:\Documentos\Projetos\Code\jobpilot\.local\startup_apply.bat"</Arguments>
+    </Exec>
+  </Actions>
+  <Settings>
+    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <Enabled>true</Enabled>
+  </Settings>
+  <RegistrationInfo>
+    <Description>JobPilot - Apply to LinkedIn jobs on startup (daily fresh search)</Description>
+  </RegistrationInfo>
+</Task>
