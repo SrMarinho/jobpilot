@@ -143,16 +143,12 @@ class BaseJobApplicationManager(ABC):
 
     async def _evaluate_all(self, eval_queue: asyncio.Queue, apply_queue: asyncio.Queue):
         sem = asyncio.Semaphore(self.eval_concurrency)
-        while True:
-            item = await eval_queue.get()
-            if item is None:
-                eval_queue.task_done()
-                apply_queue.put_nowait(None)
-                break
+        tasks: set[asyncio.Task] = set()
+
+        async def _eval_one(item: JobItem):
             async with sem:
                 if self.stop_event.is_set():
-                    eval_queue.task_done()
-                    continue
+                    return
                 item.state = "evaluating"
                 self.on_update(item)
                 try:
@@ -162,8 +158,7 @@ class BaseJobApplicationManager(ABC):
                     item.state = "failed"
                     item.note = f"eval error: {e}"
                     self.on_update(item)
-                    eval_queue.task_done()
-                    continue
+                    return
                 item.eval_result = result
                 is_match, salary, reason, missing, contract = result
                 if missing:
@@ -179,7 +174,19 @@ class BaseJobApplicationManager(ABC):
                     self.tracker.mark_rejected(item.job_url, item.title, reason=reason, site=self.site)
                     self.on_update(item)
                 self.evaluated_count += 1
-                eval_queue.task_done()
+
+        while True:
+            item = await eval_queue.get()
+            eval_queue.task_done()
+            if item is None:
+                break
+            t = asyncio.create_task(_eval_one(item))
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        apply_queue.put_nowait(None)
 
     async def _apply_all(self, apply_queue: asyncio.Queue):
         while True:

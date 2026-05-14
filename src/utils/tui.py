@@ -65,7 +65,7 @@ class JobPipelineApp(App):
     def on_mount(self):
         for tid, title in [("extract-table", "Extract"), ("eval-table", "Eval"), ("apply-table", "Apply")]:
             t = self.query_one(f"#{tid}", DataTable)
-            t.add_columns("#", "Title", "State", "Note")
+            t.add_columns(("#", "#"), ("Title", "Title"), ("State", "State"), ("Note", "Note"))
             t.border_title = title
         self._update_stats()
         self.run_worker(self._run_pipeline(), name="pipeline", exclusive=True)

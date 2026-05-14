@@ -17,4 +17,5 @@ dependencies = [
     "langchain-deepseek>=0.1.0",
     "typer>=0.15.0",
     "rich>=13.0",
+    "textual>=0.80.0",
 ]
