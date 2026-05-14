@@ -145,42 +145,50 @@ class BaseJobApplicationManager(ABC):
 
     async def _evaluate_all(self, eval_queue: asyncio.Queue, apply_queue: asyncio.Queue):
         batch_size = self.eval_batch_size
+        sem = asyncio.Semaphore(self.eval_concurrency)
+        tasks: set[asyncio.Task] = set()
 
         async def _process_batch(items: list[JobItem]) -> None:
-            if self.stop_event.is_set():
-                return
-            for item in items:
-                item.state = "evaluating"
-                self.on_update(item)
-            try:
-                if batch_size > 1:
-                    jobs = [(item.title, item.description) for item in items]
-                    results = await self.evaluator.evaluate_batch(jobs)
-                else:
-                    results = [await self.evaluator.evaluate_async(item.title, item.description) for item in items]
-            except Exception as e:
-                logger.error(f"Eval batch error: {e}")
+            async with sem:
+                if self.stop_event.is_set():
+                    return
                 for item in items:
-                    item.state = "failed"
-                    item.note = f"eval error: {str(e)[:50]}"
+                    item.state = "evaluating"
                     self.on_update(item)
-                return
-            for item, result in zip(items, results):
-                item.eval_result = result
-                is_match, salary, reason, missing, contract = result
-                if missing:
-                    await track_missing_skills_async(missing)
-                if is_match:
-                    item.state = "approved"
-                    item.note = reason
-                    self.on_update(item)
-                    await apply_queue.put(item)
-                else:
-                    item.state = "rejected"
-                    item.note = reason
-                    self.tracker.mark_rejected(item.job_url, item.title, reason=reason, site=self.site)
-                    self.on_update(item)
-                self.evaluated_count += 1
+                try:
+                    if batch_size > 1:
+                        jobs = [(item.title, item.description) for item in items]
+                        results = await self.evaluator.evaluate_batch(jobs)
+                    else:
+                        results = [await self.evaluator.evaluate_async(item.title, item.description) for item in items]
+                except Exception as e:
+                    logger.error(f"Eval batch error: {e}")
+                    for item in items:
+                        item.state = "failed"
+                        item.note = str(e)[:50]
+                        self.on_update(item)
+                    return
+                for item, result in zip(items, results):
+                    item.eval_result = result
+                    is_match, salary, reason, missing, contract = result
+                    if missing:
+                        await track_missing_skills_async(missing)
+                    if is_match:
+                        item.state = "approved"
+                        item.note = reason
+                        self.on_update(item)
+                        await apply_queue.put(item)
+                    else:
+                        item.state = "rejected"
+                        item.note = reason
+                        self.tracker.mark_rejected(item.job_url, item.title, reason=reason, site=self.site)
+                        self.on_update(item)
+                    self.evaluated_count += 1
+
+        def _dispatch(batch: list[JobItem]) -> None:
+            t = asyncio.create_task(_process_batch(batch))
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
 
         pending: list[JobItem] = []
         while True:
@@ -188,13 +196,15 @@ class BaseJobApplicationManager(ABC):
             eval_queue.task_done()
             if item is None:
                 if pending:
-                    await _process_batch(pending)
+                    _dispatch(pending)
                 break
             pending.append(item)
             if len(pending) >= batch_size:
-                await _process_batch(pending)
+                _dispatch(pending)
                 pending = []
 
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         apply_queue.put_nowait(None)
 
     async def _apply_all(self, apply_queue: asyncio.Queue):
