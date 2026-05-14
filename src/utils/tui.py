@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Callable
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
 from textual.widgets import DataTable, Footer, Header, Static
 
 from src.automation.tasks.base_application_manager import BaseJobApplicationManager, JobItem
@@ -21,21 +20,9 @@ _STATE_STYLE = {
 
 class JobPipelineApp(App):
     CSS = """
-    Horizontal {
-        height: 1fr;
-    }
     DataTable {
-        height: 100%;
+        height: 1fr;
         border: solid $primary;
-    }
-    DataTable#active-table {
-        border: solid cyan;
-    }
-    DataTable#approved-table {
-        border: solid green;
-    }
-    DataTable#rejected-table {
-        border: solid red;
     }
     #stats {
         height: 1;
@@ -49,24 +36,20 @@ class JobPipelineApp(App):
     def __init__(self, manager_factory: Callable[[Callable], BaseJobApplicationManager]):
         super().__init__()
         self._manager_factory = manager_factory
-        self._rows: dict[str, tuple[str, str]] = {}
+        self._rows: dict[str, str] = {}
         self._prev_state: dict[str, str] = {}
         self._counts: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal():
-            yield DataTable(id="active-table")
-            yield DataTable(id="approved-table")
-            yield DataTable(id="rejected-table")
+        yield DataTable(id="jobs-table")
         yield Static(id="stats")
         yield Footer()
 
     def on_mount(self):
-        for tid, title in [("active-table", "Active"), ("approved-table", "Approved"), ("rejected-table", "Rejected")]:
-            t = self.query_one(f"#{tid}", DataTable)
-            t.add_columns(("#", "#"), ("Title", "Title"), ("State", "State"), ("Note", "Note"))
-            t.border_title = title
+        t = self.query_one("#jobs-table", DataTable)
+        t.add_columns(("#", "#"), ("Title", "Title"), ("State", "State"), ("Note", "Note"))
+        t.border_title = "Jobs"
         self._update_stats()
         self.run_worker(self._run_pipeline(), name="pipeline", exclusive=True)
 
@@ -81,27 +64,18 @@ class JobPipelineApp(App):
 
     def _update_ui(self, item: JobItem):
         key = item.job_url or str(id(item))
-        new_tid = self._table_id(item.state)
-        tbl = self.query_one(f"#{new_tid}", DataTable)
+        tbl = self.query_one("#jobs-table", DataTable)
         style = _STATE_STYLE.get(item.state, "")
         styled_state = f"[{style}]{item.state}[/]"
-        row_data = (str(item.idx), item.title[:50], styled_state, item.note[:50])
 
         if key in self._rows:
-            old_rk, old_tid = self._rows[key]
-            if old_tid != new_tid:
-                try:
-                    self.query_one(f"#{old_tid}", DataTable).remove_row(old_rk)
-                except Exception:
-                    pass
-                self._rows[key] = (tbl.add_row(*row_data), new_tid)
-            else:
-                tbl.update_cell(old_rk, "#", str(item.idx))
-                tbl.update_cell(old_rk, "Title", item.title[:50])
-                tbl.update_cell(old_rk, "State", styled_state)
-                tbl.update_cell(old_rk, "Note", item.note[:50])
+            rk = self._rows[key]
+            tbl.update_cell(rk, "#", str(item.idx))
+            tbl.update_cell(rk, "Title", item.title[:60])
+            tbl.update_cell(rk, "State", styled_state)
+            tbl.update_cell(rk, "Note", item.note[:60])
         else:
-            self._rows[key] = (tbl.add_row(*row_data), new_tid)
+            self._rows[key] = tbl.add_row(str(item.idx), item.title[:60], styled_state, item.note[:60])
 
         old_state = self._prev_state.get(key)
         if old_state:
@@ -109,14 +83,6 @@ class JobPipelineApp(App):
         self._prev_state[key] = item.state
         self._counts[item.state] = self._counts.get(item.state, 0) + 1
         self._update_stats()
-
-    @staticmethod
-    def _table_id(state: str) -> str:
-        if state in ("extracted", "evaluating"):
-            return "active-table"
-        if state in ("approved", "applying", "applied"):
-            return "approved-table"
-        return "rejected-table"  # rejected, failed
 
     def _update_stats(self):
         c = self._counts
@@ -128,5 +94,4 @@ class JobPipelineApp(App):
             f"[red]rejected:[/] {c.get('rejected', 0)}  "
             f"[bold red]failed:[/] {c.get('failed', 0)}"
         )
-        stats = self.query_one("#stats", Static)
-        stats.update(content)
+        self.query_one("#stats", Static).update(content)
