@@ -43,6 +43,7 @@ def register_apply_command(app: typer.Typer) -> None:
         no_save: bool = typer.Option(False, "--no-save", help="Run without overwriting the saved URL/config for this site"),
         no_submit: bool = typer.Option(False, "--no-submit", help="Fill forms but do not submit (for testing)"),
         eval_concurrency: int = typer.Option(1, "--eval-concurrency", min=1, help="Concurrent eval calls (1=sequential, max=site PAGE_SIZE)"),
+        eval_batch_size: int = typer.Option(1, "--eval-batch-size", min=1, help="Jobs per LLM eval call — batch saves ~50% tokens (resume sent once per batch)"),
         tui: bool = typer.Option(False, "--tui", help="Show live Rich TUI panel of pipeline state"),
     ):
         """Apply to jobs via Easy Apply (LinkedIn, Glassdoor, Indeed)."""
@@ -173,7 +174,7 @@ def register_apply_command(app: typer.Typer) -> None:
                                 max_pages=max_pages, max_applications=max_applications,
                                 start_page=resolved_start_page if resume_from else (start_page or 1),
                                 on_page_change=on_page_change, no_submit=no_submit,
-                                eval_concurrency=eval_concurrency, on_update=on_update,
+                                eval_concurrency=eval_concurrency, eval_batch_size=eval_batch_size, on_update=on_update,
                             )
                         tui_app = JobPipelineApp(mf)
                         await tui_app.run_async()
@@ -184,7 +185,7 @@ def register_apply_command(app: typer.Typer) -> None:
                             max_pages=max_pages, max_applications=max_applications,
                             start_page=resolved_start_page if resume_from else (start_page or 1),
                             on_page_change=on_page_change, no_submit=no_submit,
-                            eval_concurrency=eval_concurrency,
+                            eval_concurrency=eval_concurrency, eval_batch_size=eval_batch_size,
                         )
                         await manager.run()
                     try:

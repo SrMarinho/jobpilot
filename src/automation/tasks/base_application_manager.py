@@ -49,6 +49,7 @@ class BaseJobApplicationManager(ABC):
         on_page_change=None,
         no_submit: bool = False,
         eval_concurrency: int = 1,
+        eval_batch_size: int = 1,
         on_update: Callable[[JobItem], None] | None = None,
     ):
         self.page = page
@@ -58,6 +59,7 @@ class BaseJobApplicationManager(ABC):
         self.on_page_change = on_page_change
         self.no_submit = no_submit
         self.eval_concurrency = max(1, min(eval_concurrency, self.PAGE_SIZE))
+        self.eval_batch_size = max(1, eval_batch_size)
         self.on_update = on_update or (lambda _item: None)
 
         self.page_obj = self._build_page(page, self.base_url)
@@ -142,23 +144,28 @@ class BaseJobApplicationManager(ABC):
         await eval_queue.put(None)
 
     async def _evaluate_all(self, eval_queue: asyncio.Queue, apply_queue: asyncio.Queue):
-        sem = asyncio.Semaphore(self.eval_concurrency)
-        tasks: set[asyncio.Task] = set()
+        batch_size = self.eval_batch_size
 
-        async def _eval_one(item: JobItem):
-            async with sem:
-                if self.stop_event.is_set():
-                    return
+        async def _process_batch(items: list[JobItem]) -> None:
+            if self.stop_event.is_set():
+                return
+            for item in items:
                 item.state = "evaluating"
                 self.on_update(item)
-                try:
-                    result = await self.evaluator.evaluate_async(item.title, item.description)
-                except Exception as e:
-                    logger.error(f"Eval error '{item.title}': {e}")
+            try:
+                if batch_size > 1:
+                    jobs = [(item.title, item.description) for item in items]
+                    results = await self.evaluator.evaluate_batch(jobs)
+                else:
+                    results = [await self.evaluator.evaluate_async(item.title, item.description) for item in items]
+            except Exception as e:
+                logger.error(f"Eval batch error: {e}")
+                for item in items:
                     item.state = "failed"
-                    item.note = f"eval error: {e}"
+                    item.note = f"eval error: {str(e)[:50]}"
                     self.on_update(item)
-                    return
+                return
+            for item, result in zip(items, results):
                 item.eval_result = result
                 is_match, salary, reason, missing, contract = result
                 if missing:
@@ -175,17 +182,19 @@ class BaseJobApplicationManager(ABC):
                     self.on_update(item)
                 self.evaluated_count += 1
 
+        pending: list[JobItem] = []
         while True:
             item = await eval_queue.get()
             eval_queue.task_done()
             if item is None:
+                if pending:
+                    await _process_batch(pending)
                 break
-            t = asyncio.create_task(_eval_one(item))
-            tasks.add(t)
-            t.add_done_callback(tasks.discard)
+            pending.append(item)
+            if len(pending) >= batch_size:
+                await _process_batch(pending)
+                pending = []
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
         apply_queue.put_nowait(None)
 
     async def _apply_all(self, apply_queue: asyncio.Queue):
