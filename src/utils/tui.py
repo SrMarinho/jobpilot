@@ -76,7 +76,7 @@ class JobPipelineApp(App):
         self.exit(0)
 
     def _on_job_update(self, item: JobItem):
-        self._update_ui(item)
+        self.call_later(self._update_ui, item)
 
     def _update_ui(self, item: JobItem):
         key = item.job_url or str(id(item))
