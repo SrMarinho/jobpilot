@@ -43,7 +43,7 @@ def register_apply_command(app: typer.Typer) -> None:
         no_save: bool = typer.Option(False, "--no-save", help="Run without overwriting the saved URL/config for this site"),
         no_submit: bool = typer.Option(False, "--no-submit", help="Fill forms but do not submit (for testing)"),
         eval_concurrency: int = typer.Option(1, "--eval-concurrency", min=1, help="Concurrent eval calls (1=sequential, max=site PAGE_SIZE)"),
-        eval_batch_size: int = typer.Option(5, "--eval-batch-size", min=1, help="Jobs per LLM eval call — batch saves ~50% tokens (resume sent once per batch)"),
+        eval_batch_size: int = typer.Option(1, "--eval-batch-size", min=1, help="Jobs per LLM eval call — batch saves ~50% tokens (resume sent once per batch)"),
         tui: bool = typer.Option(False, "--tui", help="Show live Rich TUI panel of pipeline state"),
     ):
         """Apply to jobs via Easy Apply (LinkedIn, Glassdoor, Indeed)."""
