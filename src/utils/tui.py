@@ -28,14 +28,14 @@ class JobPipelineApp(App):
         height: 100%;
         border: solid $primary;
     }
-    DataTable#extract-table {
+    DataTable#active-table {
         border: solid cyan;
     }
-    DataTable#eval-table {
-        border: solid blue;
+    DataTable#approved-table {
+        border: solid green;
     }
-    DataTable#apply-table {
-        border: solid magenta;
+    DataTable#rejected-table {
+        border: solid red;
     }
     #stats {
         height: 1;
@@ -56,14 +56,14 @@ class JobPipelineApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal():
-            yield DataTable(id="extract-table")
-            yield DataTable(id="eval-table")
-            yield DataTable(id="apply-table")
+            yield DataTable(id="active-table")
+            yield DataTable(id="approved-table")
+            yield DataTable(id="rejected-table")
         yield Static(id="stats")
         yield Footer()
 
     def on_mount(self):
-        for tid, title in [("extract-table", "Extract"), ("eval-table", "Eval"), ("apply-table", "Apply")]:
+        for tid, title in [("active-table", "Active"), ("approved-table", "Approved"), ("rejected-table", "Rejected")]:
             t = self.query_one(f"#{tid}", DataTable)
             t.add_columns(("#", "#"), ("Title", "Title"), ("State", "State"), ("Note", "Note"))
             t.border_title = title
@@ -111,11 +111,11 @@ class JobPipelineApp(App):
 
     @staticmethod
     def _table_id(state: str) -> str:
-        if state in ("extracted",):
-            return "extract-table"
-        if state in ("evaluating", "approved", "rejected"):
-            return "eval-table"
-        return "apply-table"
+        if state in ("extracted", "evaluating"):
+            return "active-table"
+        if state in ("approved", "applying", "applied"):
+            return "approved-table"
+        return "rejected-table"  # rejected, failed
 
     def _update_stats(self):
         c = self._counts
