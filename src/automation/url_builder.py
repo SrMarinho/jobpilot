@@ -25,13 +25,13 @@ def _indeed_date_posted_value(value: str) -> str | None:
 
 
 def build_linkedin_jobs_url(
-    keywords: str,
+    keywords: list[str],
     date_posted: str | None = None,
     workplace: str | None = None,
     location: str | None = None,
     experience: str | None = None,
 ) -> str:
-    params = {"keywords": keywords, "f_AL": "true"}
+    params = {"keywords": " ".join(keywords), "f_AL": "true"}
     dp = _linkedin_date_posted_value(date_posted) if date_posted else None
     if dp:
         params["f_TPR"] = dp
@@ -46,19 +46,19 @@ def build_linkedin_jobs_url(
     return f"https://www.linkedin.com/jobs/search/?{urlencode(params)}"
 
 
-def build_linkedin_people_url(keywords: str, network: str | None = None) -> str:
-    params = {"keywords": keywords}
+def build_linkedin_people_url(keywords: list[str], network: str | None = None) -> str:
+    params = {"keywords": " ".join(keywords)}
     if network:
         params["network"] = f'["{network}"]'
     return f"https://www.linkedin.com/search/results/people/?{urlencode(params)}"
 
 
 def build_indeed_url(
-    keywords: str,
+    keywords: list[str],
     date_posted: str | None = None,
     location: str | None = None,
 ) -> str:
-    params = {"q": keywords, "sc": "0kf:attr(DSK7o)jt(fc)"}
+    params = {"q": " ".join(keywords), "sc": "0kf:attr(DSK7o)jt(fc)"}
     if location:
         params["l"] = location
     dp = _indeed_date_posted_value(date_posted) if date_posted else None
