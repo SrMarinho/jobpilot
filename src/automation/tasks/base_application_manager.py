@@ -225,6 +225,22 @@ class BaseJobApplicationManager(ABC):
             await self._apply_one(item)
             apply_queue.task_done()
 
+    def _notify_apply_failed(self, item: JobItem, reason: str):
+        salary = item.eval_result[1] if item.eval_result else None
+        contract = item.eval_result[4] if item.eval_result else ""
+        salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
+        contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
+        salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
+        company_line = f"\n🏢 {item.company}" if item.company else ""
+        send_telegram(
+            f"⚠️ <b>Candidatura manual necessária</b>\n"
+            f"📋 {item.title}"
+            f"{company_line}"
+            f"\n❌ {reason}"
+            f"{salary_line}\n"
+            f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
+        )
+
     async def _apply_one(self, item: JobItem):
         apply_page = await self.page.context.new_page()
         item.state = "applying"
@@ -245,11 +261,6 @@ class BaseJobApplicationManager(ABC):
 
             if not btn:
                 skip_reason = getattr(self, "_last_skip_reason", None)
-                salary = item.eval_result[1] if item.eval_result else None
-                contract = item.eval_result[4] if item.eval_result else ""
-                salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
-                contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
-                salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
                 if skip_reason:
                     self.tracker.mark_rejected(item.job_url, item.title, reason=skip_reason, site=self.site)
                     item.state = "rejected"
@@ -257,14 +268,7 @@ class BaseJobApplicationManager(ABC):
                 else:
                     item.state = "failed"
                     item.note = "no apply button"
-                send_telegram(
-                    f"⚠️ <b>Candidatura manual necessária</b>\n"
-                    f"📋 {item.title}"
-                    f"{' 🏢 ' + item.company if item.company else ''}"
-                    f"\n❌ {item.note}"
-                    f"{salary_line}\n"
-                    f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
-                )
+                self._notify_apply_failed(item, item.note)
                 self.on_update(item)
                 return
 
@@ -289,35 +293,13 @@ class BaseJobApplicationManager(ABC):
             else:
                 item.state = "failed"
                 item.note = "submit failed"
-                salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
-                contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
-                salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
-                send_telegram(
-                    f"⚠️ <b>Candidatura manual necessária</b>\n"
-                    f"📋 {item.title}"
-                    f"{' 🏢 ' + item.company if item.company else ''}"
-                    f"\n❌ Falha no envio do formulário"
-                    f"{salary_line}\n"
-                    f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
-                )
+                self._notify_apply_failed(item, "Falha no envio do formulario")
                 self.on_update(item)
         except Exception as e:
             logger.error(f"Error applying '{item.title}': {e}")
             item.state = "failed"
             item.note = str(e)[:60]
-            _s = item.eval_result[1] if item.eval_result else None
-            _c = item.eval_result[4] if item.eval_result else ""
-            _ss = f"{_s:,.0f}".replace(",", ".") if _s else ""
-            _ct = f" ({_c})" if _c and _c != "unknown" else ""
-            _sl = f"\n💰 Pretensão: R$ {_ss}{_ct}" if _s else ""
-            send_telegram(
-                f"⚠️ <b>Candidatura manual necessária</b>\n"
-                f"📋 {item.title}"
-                f"{' 🏢 ' + item.company if item.company else ''}"
-                f"\n❌ {item.note}"
-                f"{_sl}\n"
-                f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
-            )
+            self._notify_apply_failed(item, item.note)
             self.on_update(item)
         finally:
             try:
