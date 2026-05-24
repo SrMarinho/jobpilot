@@ -7,6 +7,7 @@ from playwright.async_api import Page
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
 from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
+from src.utils.telegram import send_telegram
 from src.config.settings import logger
 
 
@@ -244,6 +245,11 @@ class BaseJobApplicationManager(ABC):
 
             if not btn:
                 skip_reason = getattr(self, "_last_skip_reason", None)
+                salary = item.eval_result[1] if item.eval_result else None
+                contract = item.eval_result[4] if item.eval_result else ""
+                salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
+                contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
+                salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
                 if skip_reason:
                     self.tracker.mark_rejected(item.job_url, item.title, reason=skip_reason, site=self.site)
                     item.state = "rejected"
@@ -251,6 +257,14 @@ class BaseJobApplicationManager(ABC):
                 else:
                     item.state = "failed"
                     item.note = "no apply button"
+                send_telegram(
+                    f"⚠️ <b>Candidatura manual necessária</b>\n"
+                    f"📋 {item.title}"
+                    f"{' 🏢 ' + item.company if item.company else ''}"
+                    f"\n❌ {item.note}"
+                    f"{salary_line}\n"
+                    f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
+                )
                 self.on_update(item)
                 return
 
@@ -275,11 +289,35 @@ class BaseJobApplicationManager(ABC):
             else:
                 item.state = "failed"
                 item.note = "submit failed"
+                salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
+                contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
+                salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
+                send_telegram(
+                    f"⚠️ <b>Candidatura manual necessária</b>\n"
+                    f"📋 {item.title}"
+                    f"{' 🏢 ' + item.company if item.company else ''}"
+                    f"\n❌ Falha no envio do formulário"
+                    f"{salary_line}\n"
+                    f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
+                )
                 self.on_update(item)
         except Exception as e:
             logger.error(f"Error applying '{item.title}': {e}")
             item.state = "failed"
             item.note = str(e)[:60]
+            _s = item.eval_result[1] if item.eval_result else None
+            _c = item.eval_result[4] if item.eval_result else ""
+            _ss = f"{_s:,.0f}".replace(",", ".") if _s else ""
+            _ct = f" ({_c})" if _c and _c != "unknown" else ""
+            _sl = f"\n💰 Pretensão: R$ {_ss}{_ct}" if _s else ""
+            send_telegram(
+                f"⚠️ <b>Candidatura manual necessária</b>\n"
+                f"📋 {item.title}"
+                f"{' 🏢 ' + item.company if item.company else ''}"
+                f"\n❌ {item.note}"
+                f"{_sl}\n"
+                f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
+            )
             self.on_update(item)
         finally:
             try:
