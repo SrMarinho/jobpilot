@@ -1,14 +1,18 @@
 import asyncio
+import json
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable
+from pathlib import Path
 from playwright.async_api import Page
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
 from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
 from src.utils.telegram import send_telegram
 from src.config.settings import logger
+
+_FILES_DIR = Path(".local") / "files"
 
 
 def detect_level(title: str, description: str = "") -> str:
@@ -226,6 +230,15 @@ class BaseJobApplicationManager(ABC):
             apply_queue.task_done()
 
     def _notify_apply_failed(self, item: JobItem, reason: str):
+        _manual_file = _FILES_DIR / "manual_apply.json"
+        _manual: dict = {}
+        if _manual_file.exists():
+            try:
+                _manual = json.loads(_manual_file.read_text(encoding="utf-8"))
+            except Exception:
+                _manual = {}
+        if item.job_url in _manual:
+            return
         salary = item.eval_result[1] if item.eval_result else None
         contract = item.eval_result[4] if item.eval_result else ""
         salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
@@ -240,6 +253,13 @@ class BaseJobApplicationManager(ABC):
             f"{salary_line}\n"
             f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
         )
+        _manual[item.job_url] = {
+            "title": item.title, "company": item.company,
+            "salary": salary, "contract": contract,
+            "reason": reason,
+        }
+        _manual_file.parent.mkdir(parents=True, exist_ok=True)
+        _manual_file.write_text(json.dumps(_manual, ensure_ascii=False, indent=2), encoding="utf-8")
 
     async def _apply_one(self, item: JobItem):
         apply_page = await self.page.context.new_page()
