@@ -9,7 +9,9 @@ class PeopleSearchPage:
 
     async def is_invite_limit_reached(self) -> bool:
         try:
-            await self.page.wait_for_selector("[data-test-modal-id='fuse-limit-alert']", timeout=3000)
+            await self.page.wait_for_selector(
+                "[data-test-modal-id='fuse-limit-alert']", timeout=3000
+            )
             return True
         except Exception:
             return False
@@ -28,7 +30,9 @@ class PeopleSearchPage:
     async def get_confirm_invitation_btn(self):
         logger.info("Waiting for invitation modal")
         try:
-            await self.page.wait_for_selector("[data-test-modal-container]", timeout=5000)
+            await self.page.wait_for_selector(
+                "[data-test-modal-container]", timeout=5000
+            )
         except Exception:
             logger.error("No modal appeared after clicking Connect")
             return None
@@ -70,7 +74,9 @@ class PeopleSearchPage:
 
     async def requires_message(self) -> bool:
         try:
-            await self.page.wait_for_selector("[data-test-modal-container] textarea", timeout=3000)
+            await self.page.wait_for_selector(
+                "[data-test-modal-container] textarea", timeout=3000
+            )
             return True
         except Exception:
             return False
@@ -90,7 +96,9 @@ class PeopleSearchPage:
                     btn = btns.nth(i)
                     if not await btn.is_visible() or not await btn.is_enabled():
                         continue
-                    label = await btn.get_attribute("aria-label") or await btn.inner_text()
+                    label = (
+                        await btn.get_attribute("aria-label") or await btn.inner_text()
+                    )
                     if label in skip_labels:
                         logger.info(f"Skipping already-tried button: '{label}'")
                         continue

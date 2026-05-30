@@ -5,16 +5,19 @@ from typing import Callable
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
-from src.automation.tasks.base_application_manager import BaseJobApplicationManager, JobItem
+from src.automation.tasks.base_application_manager import (
+    BaseJobApplicationManager,
+    JobItem,
+)
 
 _STATE_STYLE = {
-    "extracted":  "cyan",
+    "extracted": "cyan",
     "evaluating": "bold blue",
-    "approved":   "bold green",
-    "rejected":   "red",
-    "applying":   "bold magenta",
-    "applied":    "bold green on black",
-    "failed":     "bold red",
+    "approved": "bold green",
+    "rejected": "red",
+    "applying": "bold magenta",
+    "applied": "bold green on black",
+    "failed": "bold red",
 }
 
 
@@ -33,7 +36,9 @@ class JobPipelineApp(App):
     }
     """
 
-    def __init__(self, manager_factory: Callable[[Callable], BaseJobApplicationManager]):
+    def __init__(
+        self, manager_factory: Callable[[Callable], BaseJobApplicationManager]
+    ):
         super().__init__()
         self._manager_factory = manager_factory
         self._rows: dict[str, str] = {}
@@ -48,7 +53,9 @@ class JobPipelineApp(App):
 
     def on_mount(self):
         t = self.query_one("#jobs-table", DataTable)
-        t.add_columns(("#", "#"), ("Title", "Title"), ("State", "State"), ("Note", "Note"))
+        t.add_columns(
+            ("#", "#"), ("Title", "Title"), ("State", "State"), ("Note", "Note")
+        )
         t.border_title = "Jobs"
         self._update_stats()
         self.run_worker(self._run_pipeline(), name="pipeline", exclusive=True)
@@ -60,6 +67,7 @@ class JobPipelineApp(App):
 
     def _on_job_update(self, item: JobItem):
         from dataclasses import replace
+
         self.call_later(self._update_ui, replace(item))
 
     def _update_ui(self, item: JobItem):
@@ -75,7 +83,9 @@ class JobPipelineApp(App):
             tbl.update_cell(rk, "State", styled_state)
             tbl.update_cell(rk, "Note", item.note[:60])
         else:
-            self._rows[key] = tbl.add_row(str(item.idx), item.title[:60], styled_state, item.note[:60])
+            self._rows[key] = tbl.add_row(
+                str(item.idx), item.title[:60], styled_state, item.note[:60]
+            )
 
         old_state = self._prev_state.get(key)
         if old_state:

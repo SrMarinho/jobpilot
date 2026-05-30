@@ -1,27 +1,7 @@
-import json
-import unicodedata
-import asyncio
-import os
-from pathlib import Path
 from playwright.async_api import Page
 from src.core.ai.llm_provider import get_llm_provider
 from src.config.settings import logger
-
-SALARY_KEYWORDS = [
-    "salário", "salario", "salary", "remuneração", "remuneracao",
-    "pretensão", "pretensao", "compensation", "salarial", "expectativa",
-    "remuner", "wage", "pay ", "ctc",
-]
-
-_QA_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "qa.json"
-
-
-def _normalize(s: str) -> str:
-    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
-
-
-def _normalize_question(q: str) -> str:
-    return " ".join(_normalize(q).split())
+from src.core.use_cases.form_answer_cache import FormAnswerCache, SALARY_KEYWORDS
 
 
 # React-aware select setter
@@ -37,6 +17,7 @@ class JobApplicationHandler:
     def __init__(self, page: Page, resume: str = ""):
         self.page = page
         self.resume = resume
+        self._qa = FormAnswerCache()
 
     # ── select helpers ───────────────────────────────────────────────────────
 
@@ -68,7 +49,9 @@ class JobApplicationHandler:
 
     # ── LLM-driven answer ────────────────────────────────────────────────────
 
-    async def _ask_llm(self, question: str, job_title: str, job_description: str) -> str:
+    async def _ask_llm(
+        self, question: str, job_title: str, job_description: str
+    ) -> str:
         model = get_llm_provider()
         prompt = (
             f"You are applying for the job '{job_title}'. "
@@ -84,46 +67,26 @@ class JobApplicationHandler:
 
     # ── QA cache ─────────────────────────────────────────────────────────────
 
-    def _load_qa(self) -> dict:
-        if _QA_FILE.exists():
-            return json.loads(_QA_FILE.read_text(encoding="utf-8"))
-        return {}
-
-    def _save_qa(self, qa: dict):
-        _QA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _QA_FILE.write_text(json.dumps(qa, ensure_ascii=False, indent=2), encoding="utf-8")
-
     def _resolve_cached(self, question: str) -> str | None:
-        qa = self._load_qa()
-        key = _normalize_question(question)
-        entry = qa.get(key)
-        if entry is None:
-            return None
-        if isinstance(entry, dict):
-            return entry.get("answer") or None
-        return str(entry) if entry else None
+        return self._qa.resolve(question)
 
     def _save_cached(self, question: str, answer: str, options: list | None = None):
-        qa = self._load_qa()
-        key = _normalize_question(question)
-        if isinstance(qa.get(key), dict):
-            qa[key]["answer"] = answer
-        else:
-            qa[key] = {"original": question, "answer": answer, "options": options} if options else answer
-        self._save_qa(qa)
+        self._qa.store(question, answer, options=options)
 
     # ── salary ───────────────────────────────────────────────────────────────
 
     async def _fill_salary(self, salary_value: int | str) -> bool:
         """Fill salary-only inputs — no question text, just a number field."""
-        for sel in ["input[type='text'][aria-label*='salari']",
-                     "input[aria-label*='salari']",
-                     "input[type='text'][aria-label*='salary']",
-                     "input[aria-label*='salary']",
-                     "input[aria-label*='remuner']",
-                     "input[placeholder*='salari']",
-                     "input[placeholder*='salary']",
-                     "input[placeholder*='remuner']"]:
+        for sel in [
+            "input[type='text'][aria-label*='salari']",
+            "input[aria-label*='salari']",
+            "input[type='text'][aria-label*='salary']",
+            "input[aria-label*='salary']",
+            "input[aria-label*='remuner']",
+            "input[placeholder*='salari']",
+            "input[placeholder*='salary']",
+            "input[placeholder*='remuner']",
+        ]:
             try:
                 inp = self.page.locator(sel)
                 if await inp.is_visible(timeout=1000):
@@ -136,8 +99,12 @@ class JobApplicationHandler:
 
     async def _find_question_in_modal(self) -> str:
         try:
-            modal = self.page.locator("[data-test-modal-container], [class*=artdeco-modal], [role='dialog']")
-            spans = modal.locator("span, label, legend, p, div[class*=title], div[class*=heading]")
+            modal = self.page.locator(
+                "[data-test-modal-container], [class*=artdeco-modal], [role='dialog']"
+            )
+            spans = modal.locator(
+                "span, label, legend, p, div[class*=title], div[class*=heading]"
+            )
             count = await spans.count()
             texts = []
             for i in range(min(count, 20)):
@@ -150,8 +117,15 @@ class JobApplicationHandler:
 
     async def _extract_modal_options(self) -> list[str]:
         opts: list[str] = []
-        modal = self.page.locator("[data-test-modal-container], [class*=artdeco-modal], [role='dialog']")
-        for sel in ["select option", "input[type='radio']", "label", "span.radio-label"]:
+        modal = self.page.locator(
+            "[data-test-modal-container], [class*=artdeco-modal], [role='dialog']"
+        )
+        for sel in [
+            "select option",
+            "input[type='radio']",
+            "label",
+            "span.radio-label",
+        ]:
             try:
                 els = modal.locator(sel)
                 count = await els.count()
@@ -175,7 +149,14 @@ class JobApplicationHandler:
 
     # ── main fill logic ──────────────────────────────────────────────────────
 
-    async def _fill_field(self, el, question: str, job_title: str, job_description: str, salary_expectation: int | str):
+    async def _fill_field(
+        self,
+        el,
+        question: str,
+        job_title: str,
+        job_description: str,
+        salary_expectation: int | str,
+    ):
         tag = await el.evaluate("el => el.tagName.toLowerCase()")
         label_text = question.lower()
 
@@ -199,7 +180,9 @@ class JobApplicationHandler:
                 option_values.append(v)
             filtered = [v for v in option_values if v and v.strip()]
             if filtered:
-                answer = await self._ask_llm(f"{question} (options: {filtered})", job_title, job_description)
+                answer = await self._ask_llm(
+                    f"{question} (options: {filtered})", job_title, job_description
+                )
                 if answer and answer in option_values:
                     await el.select_option(value=answer)
                     self._save_cached(question, answer, options=filtered)
@@ -207,7 +190,9 @@ class JobApplicationHandler:
                     return
                 elif filtered[0]:
                     await el.select_option(value=filtered[0])
-                    logger.info(f"Selected default '{filtered[0]}' for '{question[:40]}'")
+                    logger.info(
+                        f"Selected default '{filtered[0]}' for '{question[:40]}'"
+                    )
                     return
         else:
             answer = await self._ask_llm(question, job_title, job_description)
@@ -217,9 +202,18 @@ class JobApplicationHandler:
                 logger.info(f"LLM filled '{question[:40]}' with '{answer[:40]}'")
                 return
 
-    async def _fill_scope(self, scope, job_title: str, job_description: str, salary_expectation: int | str, visited_select_ids: set):
+    async def _fill_scope(
+        self,
+        scope,
+        job_title: str,
+        job_description: str,
+        salary_expectation: int | str,
+        visited_select_ids: set,
+    ):
         # inputs
-        inputs = await scope.locator("xpath=.//input[not(@type='hidden') and not(@type='radio') and not(@type='checkbox') and not(@type='submit') and not(@type='button') and not(@type='file')]").all()
+        inputs = await scope.locator(
+            "xpath=.//input[not(@type='hidden') and not(@type='radio') and not(@type='checkbox') and not(@type='submit') and not(@type='button') and not(@type='file')]"
+        ).all()
         logger.info(f"Input elements found in scope: {len(inputs)}")
         for inp in inputs:
             if not await inp.is_visible():
@@ -240,7 +234,9 @@ class JobApplicationHandler:
                     label_text = aria or ph
                 if not label_text:
                     continue
-                await self._fill_field(inp, label_text, job_title, job_description, salary_expectation)
+                await self._fill_field(
+                    inp, label_text, job_title, job_description, salary_expectation
+                )
             except Exception as e:
                 logger.warning(f"Input error: {e}")
 
@@ -292,8 +288,15 @@ class JobApplicationHandler:
             try:
                 current_val = await sel.evaluate("el => el.value")
                 logger.debug(f"Select shows current value '{current_val}'")
-                if current_val and current_val != "" and current_val != "Select..." and current_val != "Selecione...":
-                    logger.info(f"Select already filled (val={current_val!r}), skipping")
+                if (
+                    current_val
+                    and current_val != ""
+                    and current_val != "Select..."
+                    and current_val != "Selecione..."
+                ):
+                    logger.info(
+                        f"Select already filled (val={current_val!r}), skipping"
+                    )
                     continue
                 label_text = ""
                 sid = sel_id
@@ -316,7 +319,9 @@ class JobApplicationHandler:
                 if not option_values:
                     logger.warning(f"Select has no options, skipping: id={sid!r}")
                     continue
-                await self._fill_field(sel, label_text, job_title, job_description, salary_expectation)
+                await self._fill_field(
+                    sel, label_text, job_title, job_description, salary_expectation
+                )
             except Exception as e:
                 logger.warning(f"Select error: {e}")
 
@@ -351,7 +356,9 @@ class JobApplicationHandler:
                 if not label:
                     continue
                 logger.info(f"Radio group: '{label}'")
-                els = self.page.locator(f"xpath=//input[@type='radio' and @name='{name}']")
+                els = self.page.locator(
+                    f"xpath=//input[@type='radio' and @name='{name}']"
+                )
                 count = await els.count()
                 if count == 0:
                     continue
@@ -373,11 +380,15 @@ class JobApplicationHandler:
                         }""")
                         if cached.lower() in [str(val or "").lower(), lbl.lower()]:
                             await els.nth(i).click()
-                            logger.info(f"Selected cached radio '{cached}' for '{label}'")
+                            logger.info(
+                                f"Selected cached radio '{cached}' for '{label}'"
+                            )
                             break
                     else:
                         await els.first.click()
-                        logger.info(f"Selected first radio for '{label}' (cache mismatch)")
+                        logger.info(
+                            f"Selected first radio for '{label}' (cache mismatch)"
+                        )
                 else:
                     labels = []
                     for i in range(count):
@@ -390,18 +401,27 @@ class JobApplicationHandler:
                             return el.getAttribute('aria-label') || el.value;
                         }""")
                         labels.append(lbl)
-                    answer = await self._ask_llm(f"{label} (options: {labels})", job_title, job_description)
+                    answer = await self._ask_llm(
+                        f"{label} (options: {labels})", job_title, job_description
+                    )
                     if answer:
                         for i in range(count):
                             lbl_text = labels[i] if i < len(labels) else ""
-                            if answer.lower() in lbl_text.lower() or lbl_text.lower() in answer.lower():
+                            if (
+                                answer.lower() in lbl_text.lower()
+                                or lbl_text.lower() in answer.lower()
+                            ):
                                 await els.nth(i).click()
                                 self._save_cached(label, lbl_text)
-                                logger.info(f"LLM selected radio '{lbl_text}' for '{label}'")
+                                logger.info(
+                                    f"LLM selected radio '{lbl_text}' for '{label}'"
+                                )
                                 break
                         else:
                             await els.first.click()
-                            logger.info(f"Selected first radio for '{label}' (LLM no match)")
+                            logger.info(
+                                f"Selected first radio for '{label}' (LLM no match)"
+                            )
                     else:
                         await els.first.click()
                         logger.info(f"Selected default radio for '{label}'")
@@ -424,8 +444,12 @@ class JobApplicationHandler:
 
     # ── remaining required fields ────────────────────────────────────────────
 
-    async def _fill_remaining_required(self, job_title: str, job_description: str, salary_expectation: int | str):
-        els = self.page.locator("xpath=//input[@required and @type!='hidden'] | //select[@required] | //textarea[@required]")
+    async def _fill_remaining_required(
+        self, job_title: str, job_description: str, salary_expectation: int | str
+    ):
+        els = self.page.locator(
+            "xpath=//input[@required and @type!='hidden'] | //select[@required] | //textarea[@required]"
+        )
         count = await els.count()
         for i in range(count):
             el = els.nth(i)
@@ -433,7 +457,7 @@ class JobApplicationHandler:
                 continue
             if not await self._is_unfilled(el):
                 continue
-            tag = await el.evaluate("el => el.tagName.toLowerCase()")
+            _tag = await el.evaluate("el => el.tagName.toLowerCase()")
             label_text = ""
             eid = await el.get_attribute("id")
             if eid:
@@ -468,7 +492,9 @@ class JobApplicationHandler:
                         pass
             if not label_text:
                 continue
-            await self._fill_field(el, label_text, job_title, job_description, salary_expectation)
+            await self._fill_field(
+                el, label_text, job_title, job_description, salary_expectation
+            )
 
     async def _handle_radio_in_scope(self, scope):
         try:
@@ -482,7 +508,9 @@ class JobApplicationHandler:
                 if await legend.count():
                     label_text = (await legend.first.inner_text()).strip()
             if label_text:
-                radio = self.page.locator(f"xpath=//input[@type='radio' and @id='{rid}']")
+                radio = self.page.locator(
+                    f"xpath=//input[@type='radio' and @id='{rid}']"
+                )
                 if await radio.count():
                     await radio.first.click()
                     logger.info(f"Selected radio '{label_text}'")
@@ -508,7 +536,14 @@ class JobApplicationHandler:
 
     # ── select handler (React-aware) ─────────────────────────────────────────
 
-    async def _handle_react_select(self, el, question: str, job_title: str, job_description: str, salary_expectation: int | str):
+    async def _handle_react_select(
+        self,
+        el,
+        question: str,
+        job_title: str,
+        job_description: str,
+        salary_expectation: int | str,
+    ):
         # Approach 1: Playwright native select_option
         options = await el.locator("option").all()
         target_val = None
@@ -534,7 +569,11 @@ class JobApplicationHandler:
                     logger.info(f"Selected '{t}' for '{question[:40]}' (cached)")
                     return
 
-        answer = await self._ask_llm(f"{question} (options: {[await o.inner_text() for o in options]})", job_title, job_description)
+        answer = await self._ask_llm(
+            f"{question} (options: {[await o.inner_text() for o in options]})",
+            job_title,
+            job_description,
+        )
         if answer:
             for opt in options:
                 t = (await opt.inner_text()).strip()
@@ -551,7 +590,9 @@ class JobApplicationHandler:
 
     async def _has_form_errors(self) -> bool:
         try:
-            err = self.page.locator("[aria-describedby*='error'], [class*=error], [class*=feedback], [role='alert']")
+            err = self.page.locator(
+                "[aria-describedby*='error'], [class*=error], [class*=feedback], [role='alert']"
+            )
             return await err.is_visible(timeout=1000)
         except Exception:
             return False
@@ -559,14 +600,22 @@ class JobApplicationHandler:
     # ── modal management ─────────────────────────────────────────────────────
 
     async def _get_modal(self):
-        for sel in ["[data-test-modal-container]", "[class*=artdeco-modal]", "[role='dialog']"]:
+        for sel in [
+            "[data-test-modal-container]",
+            "[class*=artdeco-modal]",
+            "[role='dialog']",
+        ]:
             modal = self.page.locator(sel)
             if await modal.is_visible(timeout=1000):
                 return modal
         return self.page.locator("body")
 
     async def _wait_for_modal(self, timeout: int = 15):
-        for sel in ["[data-test-modal-container]", "[class*=artdeco-modal]", "[role='dialog']"]:
+        for sel in [
+            "[data-test-modal-container]",
+            "[class*=artdeco-modal]",
+            "[role='dialog']",
+        ]:
             try:
                 await self.page.wait_for_selector(sel, timeout=timeout * 1000)
                 return
@@ -575,7 +624,9 @@ class JobApplicationHandler:
 
     async def _close_modal(self):
         try:
-            close_btn = self.page.locator("button[aria-label='Dismiss'], button[aria-label='Close'], button[data-test-modal-close-btn]")
+            close_btn = self.page.locator(
+                "button[aria-label='Dismiss'], button[aria-label='Close'], button[data-test-modal-close-btn]"
+            )
             if await close_btn.is_visible(timeout=2000):
                 await close_btn.click()
                 await self.page.wait_for_timeout(500)
@@ -589,9 +640,15 @@ class JobApplicationHandler:
             pass
 
     async def _wait_for_modal_close(self, timeout: int = 10):
-        for sel in ["[data-test-modal-container]", "[class*=artdeco-modal]", "[role='dialog']"]:
+        for sel in [
+            "[data-test-modal-container]",
+            "[class*=artdeco-modal]",
+            "[role='dialog']",
+        ]:
             try:
-                await self.page.locator(sel).wait_for(state="hidden", timeout=timeout * 1000)
+                await self.page.locator(sel).wait_for(
+                    state="hidden", timeout=timeout * 1000
+                )
                 return
             except Exception:
                 pass
@@ -601,7 +658,9 @@ class JobApplicationHandler:
     async def _check_required_after_close(self) -> list[dict]:
         """Check for required fields after closing a modal section."""
         errors = []
-        inputs = await self.page.locator("xpath=//input[@required and @type!='hidden'] | //select[@required] | //textarea[@required]").all()
+        inputs = await self.page.locator(
+            "xpath=//input[@required and @type!='hidden'] | //select[@required] | //textarea[@required]"
+        ).all()
         for inp in inputs:
             if not await inp.is_visible():
                 continue
@@ -627,7 +686,13 @@ class JobApplicationHandler:
             errors.append({"element": inp, "label": label or "unknown"})
         return errors
 
-    async def _fill_errors(self, errors: list[dict], job_title: str, job_description: str, salary_expectation: int | str):
+    async def _fill_errors(
+        self,
+        errors: list[dict],
+        job_title: str,
+        job_description: str,
+        salary_expectation: int | str,
+    ):
         for err in errors:
             el = err["element"]
             label = err["label"]
@@ -643,7 +708,9 @@ class JobApplicationHandler:
                             logger.info(f"Error-fix: selected '{t}' for '{label}'")
                             break
                 else:
-                    await self._fill_field(el, label, job_title, job_description, salary_expectation)
+                    await self._fill_field(
+                        el, label, job_title, job_description, salary_expectation
+                    )
             except Exception as e:
                 logger.warning(f"Error-fix failed for '{label}': {e}")
 
@@ -674,10 +741,18 @@ class JobApplicationHandler:
 
                 modal = await self._get_modal()
 
-                await self._fill_scope(modal, job_title, job_description, salary_expectation, visited_select_ids)
+                await self._fill_scope(
+                    modal,
+                    job_title,
+                    job_description,
+                    salary_expectation,
+                    visited_select_ids,
+                )
                 await self._fill_radio_groups(job_title, job_description)
                 await self._fill_checkboxes()
-                await self._fill_remaining_required(job_title, job_description, salary_expectation)
+                await self._fill_remaining_required(
+                    job_title, job_description, salary_expectation
+                )
 
                 # Try Submit / Next / Review
                 btn_selectors = [
@@ -692,9 +767,14 @@ class JobApplicationHandler:
                 clicked = False
                 for sel in btn_selectors:
                     try:
-                        btn_type = "css" if not sel.startswith("xpath=") else "xpath"
-                        loc = self.page.locator(sel[len("xpath="):] if sel.startswith("xpath=") else sel)
-                        if await loc.is_visible(timeout=1000) and await loc.is_enabled():
+                        _btn = "css" if not sel.startswith("xpath=") else "xpath"
+                        loc = self.page.locator(
+                            sel[len("xpath=") :] if sel.startswith("xpath=") else sel
+                        )
+                        if (
+                            await loc.is_visible(timeout=1000)
+                            and await loc.is_enabled()
+                        ):
                             btn_text = (await loc.inner_text()).strip().lower()
                             if "submit" in btn_text or "enviar" in btn_text:
                                 logger.info(f"Submit button clicked: '{btn_text}'")
@@ -718,7 +798,11 @@ class JobApplicationHandler:
                     loc = self.page.locator(sel)
                     if await loc.is_visible(timeout=1000) and await loc.is_enabled():
                         btn_text = (await loc.inner_text()).strip().lower()
-                        if "submit" in btn_text or "enviar" in btn_text or "send" in btn_text:
+                        if (
+                            "submit" in btn_text
+                            or "enviar" in btn_text
+                            or "send" in btn_text
+                        ):
                             await loc.click()
                             logger.info("Final submit clicked")
                             await self.page.wait_for_timeout(2000)

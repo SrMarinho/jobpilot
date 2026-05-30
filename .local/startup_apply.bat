@@ -7,7 +7,7 @@ echo === BACKEND ===
   --keywords "desenvolvedor" --keywords "backend" ^
   --site linkedin ^
   --date-posted 24h ^
-  --resume ".\\.local\\Matheus Marinho - Curriculo.pdf" ^
+  --resume ".\.local\\Matheus Marinho - Curriculo.pdf" ^
   --preferences "Python ou Node.js backend, obrigatoriamente remoto, apenas vagas em portugues, nivel junior ou pleno" ^
   --level junior --level pleno ^
   --max-pages 2 ^
@@ -20,7 +20,7 @@ echo === FULLSTACK ===
   --keywords "desenvolvedor" --keywords "fullstack" ^
   --site linkedin ^
   --date-posted 24h ^
-  --resume ".\\.local\\Matheus Marinho - Curriculo.pdf" ^
+  --resume ".\.local\\Matheus Marinho - Curriculo.pdf" ^
   --preferences "Python ou Node.js backend, obrigatoriamente remoto, apenas vagas em portugues, nivel junior ou pleno" ^
   --level junior --level pleno ^
   --max-pages 2 ^

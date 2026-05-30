@@ -14,8 +14,11 @@ def _ensure_ollama_running(base_url: str, timeout: int = 15):
         pass
 
     from src.config.settings import logger
+
     logger.info("Ollama not running — starting it...")
-    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(
+        ["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -66,7 +69,9 @@ class LangChainProvider(LLMProvider):
 
             api_key = os.getenv("DEEPSEEK_API_KEY")
             if not api_key:
-                raise RuntimeError("DEEPSEEK_API_KEY not set. Run: provider key set deepseek <key>")
+                raise RuntimeError(
+                    "DEEPSEEK_API_KEY not set. Run: provider key set deepseek <key>"
+                )
             self._llm = ChatDeepSeek(model=model, api_key=api_key, temperature=0)
         else:
             from langchain_ollama import OllamaLLM
@@ -84,16 +89,23 @@ class LangChainProvider(LLMProvider):
         return result
 
 
-def _build_provider(provider_key: str, model_key: str, base_url_key: str, backend_key: str) -> LLMProvider:
+def _build_provider(
+    provider_key: str, model_key: str, base_url_key: str, backend_key: str
+) -> LLMProvider:
     provider = os.getenv(provider_key, "").lower()
     if not provider:
         provider = os.getenv("LLM_PROVIDER", "claude").lower()
 
     if provider == "langchain":
-        backend = os.getenv(backend_key, "").lower() or os.getenv("LANGCHAIN_BACKEND", "ollama").lower()
+        backend = (
+            os.getenv(backend_key, "").lower()
+            or os.getenv("LANGCHAIN_BACKEND", "ollama").lower()
+        )
         default_model = "deepseek-v4-flash" if backend == "deepseek" else "llama3.2"
         model = os.getenv(model_key) or os.getenv("LANGCHAIN_MODEL", default_model)
-        base_url = os.getenv(base_url_key) or os.getenv("LANGCHAIN_BASE_URL", "http://localhost:11434")
+        base_url = os.getenv(base_url_key) or os.getenv(
+            "LANGCHAIN_BASE_URL", "http://localhost:11434"
+        )
         return LangChainProvider(model=model, base_url=base_url, backend=backend)
 
     model = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
@@ -102,10 +114,17 @@ def _build_provider(provider_key: str, model_key: str, base_url_key: str, backen
 
 def get_llm_provider() -> LLMProvider:
     """Provider for form Q&A (LLM_PROVIDER / LANGCHAIN_MODEL / LANGCHAIN_BACKEND)."""
-    return _build_provider("LLM_PROVIDER", "LANGCHAIN_MODEL", "LANGCHAIN_BASE_URL", "LANGCHAIN_BACKEND")
+    return _build_provider(
+        "LLM_PROVIDER", "LANGCHAIN_MODEL", "LANGCHAIN_BASE_URL", "LANGCHAIN_BACKEND"
+    )
 
 
 def get_eval_provider() -> LLMProvider:
     """Provider for job evaluation (LLM_PROVIDER_EVAL / LANGCHAIN_MODEL_EVAL / LANGCHAIN_BACKEND_EVAL).
     Falls back to get_llm_provider() settings if not configured."""
-    return _build_provider("LLM_PROVIDER_EVAL", "LANGCHAIN_MODEL_EVAL", "LANGCHAIN_BASE_URL", "LANGCHAIN_BACKEND_EVAL")
+    return _build_provider(
+        "LLM_PROVIDER_EVAL",
+        "LANGCHAIN_MODEL_EVAL",
+        "LANGCHAIN_BASE_URL",
+        "LANGCHAIN_BACKEND_EVAL",
+    )

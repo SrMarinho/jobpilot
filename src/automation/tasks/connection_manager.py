@@ -1,4 +1,3 @@
-import time
 import random
 import threading
 from playwright.async_api import Page
@@ -8,7 +7,15 @@ from src.config.settings import logger
 
 
 class ConnectionManager:
-    def __init__(self, page: Page, url: str, max_pages: int = 100, start_page: int = 1, stop_event: threading.Event | None = None, on_page_change=None):
+    def __init__(
+        self,
+        page: Page,
+        url: str,
+        max_pages: int = 100,
+        start_page: int = 1,
+        stop_event: threading.Event | None = None,
+        on_page_change=None,
+    ):
         self.page = page
         self.base_url = url
         self.max_pages = max_pages
@@ -16,7 +23,9 @@ class ConnectionManager:
         self.stop_event = stop_event or threading.Event()
         self.on_page_change = on_page_change
         self.searched_page = PeopleSearchPage(self.page, url=self.base_url)
-        self.connect_people = ConnectionHandler(self.searched_page, stop_event=self.stop_event)
+        self.connect_people = ConnectionHandler(
+            self.searched_page, stop_event=self.stop_event
+        )
 
     async def run(self):
         for page_num in range(self.start_page, self.max_pages + 1):
@@ -43,13 +52,19 @@ class ConnectionManager:
     async def _wait_for_page_load(self, page_num: int):
         await self.page.wait_for_timeout(1500)
         try:
-            await self.page.wait_for_function("document.readyState === 'complete'", timeout=5000)
+            await self.page.wait_for_function(
+                "document.readyState === 'complete'", timeout=5000
+            )
         except Exception:
             pass
 
         loading_selectors = [
-            "div.loader", "div.artdeco-loader", "[class*=loader]",
-            "[class*=spinner]", "[class*=skeleton]", "[class*=ghost]",
+            "div.loader",
+            "div.artdeco-loader",
+            "[class*=loader]",
+            "[class*=spinner]",
+            "[class*=skeleton]",
+            "[class*=ghost]",
         ]
         try:
             for sel in loading_selectors:

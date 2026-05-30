@@ -4,7 +4,9 @@ from src.config.settings import logger
 
 
 class ConnectionHandler:
-    def __init__(self, page: PeopleSearchPage, stop_event: threading.Event | None = None):
+    def __init__(
+        self, page: PeopleSearchPage, stop_event: threading.Event | None = None
+    ):
         self.page = page
         self.invite_sended = 0
         self.limit_reached = False
@@ -19,7 +21,10 @@ class ConnectionHandler:
             if self.stop_event.is_set():
                 logger.info("Stop requested, halting connection handler")
                 return
-            label = await btn_connect.get_attribute("aria-label") or await btn_connect.inner_text()
+            label = (
+                await btn_connect.get_attribute("aria-label")
+                or await btn_connect.inner_text()
+            )
             try:
                 await btn_connect.click()
             except Exception:

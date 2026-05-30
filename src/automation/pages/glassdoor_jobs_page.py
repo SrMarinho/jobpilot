@@ -1,18 +1,14 @@
 import re
-from playwright.async_api import Page
 from src.config.settings import logger
+from src.automation.pages.base import BaseJobsPage
 
 
-class GlassdoorJobsPage:
-    def __init__(self, page: Page, url: str):
-        self.page = page
-        self.url = url
-
+class GlassdoorJobsPage(BaseJobsPage):
     async def close_modal(self) -> None:
         try:
             btn = self.page.locator(
-                '[class*=modal_Modal] button[class*=close], '
-                '[class*=modal_Modal] button[class*=Close], '
+                "[class*=modal_Modal] button[class*=close], "
+                "[class*=modal_Modal] button[class*=Close], "
                 '[class*=modal_Modal] button[aria-label="Close"], '
                 'button[data-test="modal-close-btn"]'
             )
@@ -25,7 +21,9 @@ class GlassdoorJobsPage:
     async def get_job_cards(self):
         await self.close_modal()
         try:
-            await self.page.wait_for_selector('li[data-test="jobListing"]', timeout=10000)
+            await self.page.wait_for_selector(
+                'li[data-test="jobListing"]', timeout=10000
+            )
             return await self.page.locator('li[data-test="jobListing"]').all()
         except Exception:
             logger.info("No job cards found on page")
@@ -59,7 +57,7 @@ class GlassdoorJobsPage:
 
     async def get_job_description(self) -> str:
         try:
-            el = self.page.locator('[class*=JobDetails_jobDescription]')
+            el = self.page.locator("[class*=JobDetails_jobDescription]")
             await el.wait_for(timeout=5000)
             return (await el.inner_text()).strip()
         except Exception:
@@ -67,9 +65,14 @@ class GlassdoorJobsPage:
 
     async def get_apply_btn(self):
         skip_phrases = ["site da empresa", "company site", "empresa parceira"]
-        for sel in ['[data-test="easyApply"]', '[data-test="applyButton"]',
-                    'button[class*=apply]', 'button[class*=Apply]',
-                    '[class*=EasyApply]', '[class*=easyApply]']:
+        for sel in [
+            '[data-test="easyApply"]',
+            '[data-test="applyButton"]',
+            "button[class*=apply]",
+            "button[class*=Apply]",
+            "[class*=EasyApply]",
+            "[class*=easyApply]",
+        ]:
             try:
                 btns = self.page.locator(sel)
                 count = await btns.count()
@@ -106,14 +109,18 @@ class GlassdoorJobsPage:
 
     async def get_card_title(self, card) -> str:
         try:
-            el = card.locator('[class*=JobCard_jobTitle], a[data-test="job-title"], [class*=jobTitle]')
+            el = card.locator(
+                '[class*=JobCard_jobTitle], a[data-test="job-title"], [class*=jobTitle]'
+            )
             return (await el.inner_text()).strip()
         except Exception:
             return ""
 
     async def get_card_company(self, card) -> str:
         try:
-            el = card.locator('[class*=EmployerProfile_employerName], [data-test="employer-name"], [class*=employerName]')
+            el = card.locator(
+                '[class*=EmployerProfile_employerName], [data-test="employer-name"], [class*=employerName]'
+            )
             return (await el.inner_text()).strip()
         except Exception:
             return ""
@@ -121,6 +128,6 @@ class GlassdoorJobsPage:
     def next_page_url(self, base_url: str, page_num: int) -> str:
         if page_num == 1:
             return base_url
-        if re.search(r'_IP\d+\.htm', base_url):
-            return re.sub(r'_IP\d+\.htm', f'_IP{page_num}.htm', base_url)
-        return re.sub(r'\.htm', f'_IP{page_num}.htm', base_url)
+        if re.search(r"_IP\d+\.htm", base_url):
+            return re.sub(r"_IP\d+\.htm", f"_IP{page_num}.htm", base_url)
+        return re.sub(r"\.htm", f"_IP{page_num}.htm", base_url)

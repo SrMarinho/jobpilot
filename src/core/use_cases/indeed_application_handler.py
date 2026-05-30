@@ -1,35 +1,22 @@
-import json
-import unicodedata
-import asyncio
 from playwright.async_api import Page
 from src.core.ai.llm_provider import get_llm_provider
 from src.config.settings import logger
-
-_QA_FILE = None  # will use same path as job_application_handler
-
-SALARY_KEYWORDS = [
-    "salário", "salario", "salary", "remuneração", "remuneracao",
-    "pretensão", "pretensao", "compensation", "salarial", "expectativa",
-    "remuner", "wage", "pay ", "ctc",
-]
-
-
-def _normalize(s: str) -> str:
-    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
-
-
-def _normalize_question(q: str) -> str:
-    return " ".join(_normalize(q).split())
+from src.core.use_cases.form_answer_cache import FormAnswerCache
 
 
 class IndeedApplicationHandler:
     def __init__(self, page: Page, resume: str = ""):
         self.page = page
         self.resume = resume
+        self._qa = FormAnswerCache()
 
     async def _get_iframe(self):
         """Find Indeed apply iframe."""
-        for sel in ["iframe[src*='apply.indeed.com']", "iframe[class*='indeed-apply']", "iframe#indeed-apply-frame"]:
+        for sel in [
+            "iframe[src*='apply.indeed.com']",
+            "iframe[class*='indeed-apply']",
+            "iframe#indeed-apply-frame",
+        ]:
             iframe = self.page.frame_locator(sel)
             try:
                 body = iframe.locator("body")
@@ -41,7 +28,11 @@ class IndeedApplicationHandler:
         return None
 
     async def _wait_for_iframe(self, timeout: int = 15) -> bool:
-        for sel in ["iframe[src*='apply.indeed.com']", "iframe[class*='indeed-apply']", "iframe#indeed-apply-frame"]:
+        for sel in [
+            "iframe[src*='apply.indeed.com']",
+            "iframe[class*='indeed-apply']",
+            "iframe#indeed-apply-frame",
+        ]:
             try:
                 await self.page.wait_for_selector(sel, timeout=timeout * 1000)
                 return True
@@ -57,7 +48,9 @@ class IndeedApplicationHandler:
         elif not readonly:
             await el.fill(value)
 
-    async def _ask_llm(self, question: str, job_title: str, job_description: str) -> str:
+    async def _ask_llm(
+        self, question: str, job_title: str, job_description: str
+    ) -> str:
         model = get_llm_provider()
         prompt = (
             f"You are applying for the job '{job_title}'. "
@@ -71,7 +64,9 @@ class IndeedApplicationHandler:
             logger.error(f"LLM error on '{question[:50]}': {e}")
             return ""
 
-    async def submit(self, salary_expectation: int | str = "", no_submit: bool = False) -> bool:
+    async def submit(
+        self, salary_expectation: int | str = "", no_submit: bool = False
+    ) -> bool:
         if not await self._wait_for_iframe():
             logger.warning("Indeed apply iframe not found")
             return False
@@ -90,26 +85,40 @@ class IndeedApplicationHandler:
 
                 # Fill salary if present
                 if salary_expectation:
-                    for sel in ["input[aria-label*='salari']", "input[aria-label*='salary']", "input[aria-label*='remuner']", "input[placeholder*='salari']", "input[placeholder*='salary']"]:
+                    for sel in [
+                        "input[aria-label*='salari']",
+                        "input[aria-label*='salary']",
+                        "input[aria-label*='remuner']",
+                        "input[placeholder*='salari']",
+                        "input[placeholder*='salary']",
+                    ]:
                         try:
                             inp = iframe.locator(sel)
                             if await inp.is_visible(timeout=500):
                                 await inp.fill(str(salary_expectation))
-                                logger.info(f"Filled salary input: {salary_expectation}")
+                                logger.info(
+                                    f"Filled salary input: {salary_expectation}"
+                                )
                         except Exception:
                             pass
 
                 # Fill required fields in iframe
                 for scope in [iframe, self.page]:
                     # inputs
-                    inputs = await scope.locator("xpath=.//input[not(@type='hidden') and not(@type='radio') and not(@type='checkbox') and not(@type='submit') and not(@type='button') and @required]").all()
+                    inputs = await scope.locator(
+                        "xpath=.//input[not(@type='hidden') and not(@type='radio') and not(@type='checkbox') and not(@type='submit') and not(@type='button') and @required]"
+                    ).all()
                     for inp in inputs:
                         if not await inp.is_visible():
                             continue
                         readonly = await inp.get_attribute("readonly")
                         if readonly:
                             continue
-                        label = await inp.get_attribute("aria-label") or await inp.get_attribute("placeholder") or ""
+                        label = (
+                            await inp.get_attribute("aria-label")
+                            or await inp.get_attribute("placeholder")
+                            or ""
+                        )
                         if not label:
                             continue
                         cached = self._resolve_cached(label)
@@ -157,7 +166,9 @@ class IndeedApplicationHandler:
 
                 # Handle radios
                 try:
-                    radio_groups = await (iframe if step == 0 else self.page).evaluate("""
+                    radio_groups = await (
+                        iframe if step == 0 else self.page
+                    ).evaluate("""
                         () => {
                             const inputs = document.querySelectorAll('input[type="radio"]');
                             const seen = new Set();
@@ -183,7 +194,9 @@ class IndeedApplicationHandler:
                         label = group["label"]
                         if not label:
                             continue
-                        radios = (iframe if step == 0 else self.page).locator(f"xpath=.//input[@type='radio' and @name='{name}']")
+                        radios = (iframe if step == 0 else self.page).locator(
+                            f"xpath=.//input[@type='radio' and @name='{name}']"
+                        )
                         rcount = await radios.count()
                         if rcount > 0:
                             await radios.first.click()
@@ -193,7 +206,9 @@ class IndeedApplicationHandler:
 
                 # Handle checkboxes
                 try:
-                    cbs = (iframe if step == 0 else self.page).locator("xpath=.//input[@type='checkbox' and @required]")
+                    cbs = (iframe if step == 0 else self.page).locator(
+                        "xpath=.//input[@type='checkbox' and @required]"
+                    )
                     cb_count = await cbs.count()
                     for c in range(cb_count):
                         cb = cbs.nth(c)
@@ -213,8 +228,15 @@ class IndeedApplicationHandler:
                 clicked = False
                 for btn_sel in btn_selectors:
                     try:
-                        btn = iframe.locator(btn_sel[len("xpath=."):] if btn_sel.startswith("xpath=.") else btn_sel)
-                        if await btn.is_visible(timeout=1000) and await btn.is_enabled():
+                        btn = iframe.locator(
+                            btn_sel[len("xpath=.") :]
+                            if btn_sel.startswith("xpath=.")
+                            else btn_sel
+                        )
+                        if (
+                            await btn.is_visible(timeout=1000)
+                            and await btn.is_enabled()
+                        ):
                             await btn.click()
                             clicked = True
                             logger.info(f"Indeed form button clicked (step {step + 1})")
@@ -233,33 +255,7 @@ class IndeedApplicationHandler:
             return False
 
     def _resolve_cached(self, question: str) -> str | None:
-        from src.core.use_cases.job_application_handler import _normalize_question
-        qa = self._load_qa()
-        key = _normalize_question(question)
-        entry = qa.get(key)
-        if entry is None:
-            return None
-        if isinstance(entry, dict):
-            return entry.get("answer") or None
-        return str(entry) if entry else None
+        return self._qa.resolve(question)
 
     def _save_cached(self, question: str, answer: str, options: list | None = None):
-        from src.core.use_cases.job_application_handler import _normalize_question
-        qa = self._load_qa()
-        key = _normalize_question(question)
-        if isinstance(qa.get(key), dict):
-            qa[key]["answer"] = answer
-        else:
-            qa[key] = {"original": question, "answer": answer, "options": options} if options else answer
-        self._save_qa(qa)
-
-    def _load_qa(self) -> dict:
-        from src.core.use_cases.job_application_handler import _QA_FILE
-        if _QA_FILE.exists():
-            return json.loads(_QA_FILE.read_text(encoding="utf-8"))
-        return {}
-
-    def _save_qa(self, qa: dict):
-        from src.core.use_cases.job_application_handler import _QA_FILE
-        _QA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _QA_FILE.write_text(json.dumps(qa, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._qa.store(question, answer, options=options)

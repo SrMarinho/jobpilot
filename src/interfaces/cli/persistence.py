@@ -3,7 +3,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 LOCAL_DIR = str(_PROJECT_ROOT / ".local")
 BOT_PROFILE_DIR = str(_PROJECT_ROOT / ".local" / "bot_profile")
@@ -20,7 +20,9 @@ def _find_resume(hint: str = "") -> str:
         if os.path.exists(p):
             return p
     for f in os.listdir(LOCAL_DIR):
-        if f.lower().endswith((".pdf", ".txt")) and ("curriculo" in f.lower() or "resume" in f.lower() or "cv" in f.lower()):
+        if f.lower().endswith((".pdf", ".txt")) and (
+            "curriculo" in f.lower() or "resume" in f.lower() or "cv" in f.lower()
+        ):
             return os.path.join(LOCAL_DIR, f)
     for ext in (".pdf", ".txt"):
         for f in os.listdir(LOCAL_DIR):

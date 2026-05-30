@@ -1,13 +1,9 @@
 import re
-from playwright.async_api import Page
 from src.config.settings import logger
+from src.automation.pages.base import BaseJobsPage
 
 
-class IndeedJobsPage:
-    def __init__(self, page: Page, url: str):
-        self.page = page
-        self.url = url
-
+class IndeedJobsPage(BaseJobsPage):
     async def get_job_cards(self):
         try:
             await self.page.wait_for_selector(".job_seen_beacon", timeout=10000)
@@ -57,7 +53,12 @@ class IndeedJobsPage:
             )
             await el.wait_for(timeout=10000)
             text = (await el.inner_text()).strip()
-            for suffix in (" - job post", "- job post", " - oferta de emprego", "- oferta de emprego"):
+            for suffix in (
+                " - job post",
+                "- job post",
+                " - oferta de emprego",
+                "- oferta de emprego",
+            ):
                 if text.endswith(suffix):
                     text = text[: -len(suffix)].strip()
                     break
@@ -101,7 +102,9 @@ class IndeedJobsPage:
         except Exception:
             pass
         if await self._has_external_apply():
-            logger.info("External apply detected (company site) — skipping (not Indeed Apply)")
+            logger.info(
+                "External apply detected (company site) — skipping (not Indeed Apply)"
+            )
         else:
             logger.info("No Indeed Apply button found")
         return None
@@ -117,10 +120,17 @@ class IndeedJobsPage:
                 txt = (await el.inner_text() or "").lower()
                 aria = (await el.get_attribute("aria-label") or "").lower()
                 joined = f"{txt} {aria}"
-                if any(k in joined for k in (
-                    "site da empresa", "company site", "company website",
-                    "external", "candidate-se no site", "aplicar no site",
-                )):
+                if any(
+                    k in joined
+                    for k in (
+                        "site da empresa",
+                        "company site",
+                        "company website",
+                        "external",
+                        "candidate-se no site",
+                        "aplicar no site",
+                    )
+                ):
                     return True
         except Exception:
             pass

@@ -31,7 +31,11 @@ class GlassdoorJobApplicationManager(BaseJobApplicationManager):
         except Exception:
             pass
         try:
-            return await card.get_attribute("data-job-id") or await card.get_attribute("data-id") or (await card.inner_text())[:80]
+            return (
+                await card.get_attribute("data-job-id")
+                or await card.get_attribute("data-id")
+                or (await card.inner_text())[:80]
+            )
         except Exception:
             return ""
 

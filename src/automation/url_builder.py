@@ -13,8 +13,12 @@ def _linkedin_workplace_value(value: str) -> str | None:
 
 def _linkedin_experience_value(value: str) -> str | None:
     mapping = {
-        "internship": "1", "entry": "2", "associate": "3",
-        "mid-senior": "4", "director": "5", "executive": "6",
+        "internship": "1",
+        "entry": "2",
+        "associate": "3",
+        "mid-senior": "4",
+        "director": "5",
+        "executive": "6",
     }
     return mapping.get(value)
 
@@ -30,8 +34,11 @@ def build_linkedin_jobs_url(
     workplace: str | None = None,
     location: str | None = None,
     experience: str | None = None,
+    easy_apply_only: bool = False,
 ) -> str:
-    params = {"keywords": " ".join(keywords), "f_AL": "true"}
+    params = {"keywords": " ".join(keywords)}
+    if easy_apply_only:
+        params["f_AL"] = "true"
     dp = _linkedin_date_posted_value(date_posted) if date_posted else None
     if dp:
         params["f_TPR"] = dp

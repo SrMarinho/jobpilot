@@ -38,7 +38,8 @@ def _month_key(year: int, month: int) -> str:
 def _count_entries_in_month(data: dict, date_field: str, year: int, month: int) -> int:
     prefix = _month_key(year, month)
     return sum(
-        1 for v in data.values()
+        1
+        for v in data.values()
         if isinstance(v, dict) and (v.get(date_field) or "").startswith(prefix)
     )
 
@@ -53,16 +54,26 @@ def _rejection_breakdown(rejected: dict, year: int, month: int) -> dict:
     prefix = _month_key(year, month)
     breakdown: dict[str, int] = {}
     for v in rejected.values():
-        if not isinstance(v, dict) or not (v.get("rejected_at") or "").startswith(prefix):
+        if not isinstance(v, dict) or not (v.get("rejected_at") or "").startswith(
+            prefix
+        ):
             continue
         reason = v.get("reason", "")
         if "Portuguese" in reason or "language" in reason.lower():
             key = "idioma"
         elif "tech" in reason.lower() or "stack" in reason.lower():
             key = "stack"
-        elif "remote" in reason.lower() or "remoto" in reason.lower() or "hybrid" in reason.lower():
+        elif (
+            "remote" in reason.lower()
+            or "remoto" in reason.lower()
+            or "hybrid" in reason.lower()
+        ):
             key = "não remoto"
-        elif "seniority" in reason.lower() or "level" in reason.lower() or "nível" in reason.lower():
+        elif (
+            "seniority" in reason.lower()
+            or "level" in reason.lower()
+            or "nível" in reason.lower()
+        ):
             key = "nível"
         else:
             key = "outros"
@@ -73,7 +84,8 @@ def _rejection_breakdown(rejected: dict, year: int, month: int) -> dict:
 def _avg_salary(applied: dict, year: int, month: int) -> int | None:
     prefix = _month_key(year, month)
     salaries = [
-        v["salary_offered"] for v in applied.values()
+        v["salary_offered"]
+        for v in applied.values()
         if isinstance(v, dict)
         and (v.get("applied_at") or "").startswith(prefix)
         and v.get("salary_offered")
@@ -85,7 +97,9 @@ def _level_breakdown(applied: dict, year: int, month: int) -> dict:
     prefix = _month_key(year, month)
     breakdown: dict[str, int] = {}
     for v in applied.values():
-        if not isinstance(v, dict) or not (v.get("applied_at") or "").startswith(prefix):
+        if not isinstance(v, dict) or not (v.get("applied_at") or "").startswith(
+            prefix
+        ):
             continue
         level = v.get("level", "unknown")
         breakdown[level] = breakdown.get(level, 0) + 1
@@ -120,7 +134,9 @@ def _site_avg_salary(applied: dict, year: int, month: int) -> dict:
     prefix = _month_key(year, month)
     buckets: dict[str, list[int]] = {}
     for v in applied.values():
-        if not isinstance(v, dict) or not (v.get("applied_at") or "").startswith(prefix):
+        if not isinstance(v, dict) or not (v.get("applied_at") or "").startswith(
+            prefix
+        ):
             continue
         salary = v.get("salary_offered")
         if not salary:
@@ -132,7 +148,9 @@ def _site_avg_salary(applied: dict, year: int, month: int) -> dict:
 
 def _top_skills_global(n: int = 3) -> list[tuple[str, int]]:
     skills = _load_json(_SKILLS_FILE)
-    sorted_skills = sorted(skills.items(), key=lambda x: x[1].get("count", 0), reverse=True)
+    sorted_skills = sorted(
+        skills.items(), key=lambda x: x[1].get("count", 0), reverse=True
+    )
     return [(name, data.get("count", 0)) for name, data in sorted_skills[:n]]
 
 
@@ -210,7 +228,8 @@ def generate_report(year: int, month: int) -> dict:
         "top_skills_month": [{"skill": s, "count": c} for s, c in top_skills_month],
         "prev_applications": prev.get("applications") if prev else None,
         "prev_connections": prev.get("connections") if prev else None,
-        "prev_site_applications": (prev.get("site_applications") if prev else None) or {},
+        "prev_site_applications": (prev.get("site_applications") if prev else None)
+        or {},
     }
 
 
@@ -219,9 +238,13 @@ def generate_year_report(year: int) -> dict:
     rejected = _load_json(_REJECTED_FILE)
     prefix = str(year)
 
-    applications = sum(_count_entries_in_month(applied, "applied_at", year, m) for m in range(1, 13))
+    applications = sum(
+        _count_entries_in_month(applied, "applied_at", year, m) for m in range(1, 13)
+    )
     connections = _count_connections_in_month(year, 0)  # handled below
-    rejections = sum(_count_entries_in_month(rejected, "rejected_at", year, m) for m in range(1, 13))
+    rejections = sum(
+        _count_entries_in_month(rejected, "rejected_at", year, m) for m in range(1, 13)
+    )
 
     # Connections: sum all months of the year
     conn_log = _load_json(_CONNECTIONS_FILE)
@@ -245,7 +268,8 @@ def generate_year_report(year: int) -> dict:
     # Avg salary across year
     mk_prefix = str(year)
     salaries = [
-        v["salary_offered"] for v in applied.values()
+        v["salary_offered"]
+        for v in applied.values()
         if isinstance(v, dict)
         and (v.get("applied_at") or "").startswith(mk_prefix)
         and v.get("salary_offered")
@@ -288,12 +312,15 @@ def _format_year_report(report: dict) -> str:
         if (v := level_breakdown.get(k, 0)) > 0
     )
     skills_lines = "".join(
-        f"\n    {i+1}. {s['skill']} ({s['count']}x)"
+        f"\n    {i + 1}. {s['skill']} ({s['count']}x)"
         for i, s in enumerate(report.get("top_skills", []))
     )
     salary_line = (
-        f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(",", ".")
-        if report.get("avg_salary_offered") else ""
+        f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(
+            ",", "."
+        )
+        if report.get("avg_salary_offered")
+        else ""
     )
     site_apps = report.get("site_applications", {})
     site_rejs = report.get("site_rejections", {})
@@ -331,7 +358,9 @@ def _save_report(report: dict) -> None:
 
 
 def _format_report(report: dict) -> str:
-    month_label = datetime.strptime(report["month"], "%Y-%m").strftime("%B %Y").capitalize()
+    month_label = (
+        datetime.strptime(report["month"], "%Y-%m").strftime("%B %Y").capitalize()
+    )
     breakdown = report.get("rejection_breakdown", {})
 
     apps = report["applications"]
@@ -344,17 +373,20 @@ def _format_report(report: dict) -> str:
     )
     skills_month = report.get("top_skills_month", [])
     skills_month_lines = "".join(
-        f"\n    {i+1}. {s['skill']} ({s['count']}x)"
+        f"\n    {i + 1}. {s['skill']} ({s['count']}x)"
         for i, s in enumerate(skills_month)
     )
     skills_global = report.get("top_skills", [])
     skills_global_lines = "".join(
-        f"\n    {i+1}. {s['skill']} ({s['count']}x)"
+        f"\n    {i + 1}. {s['skill']} ({s['count']}x)"
         for i, s in enumerate(skills_global)
     )
     salary_line = (
-        f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(",", ".")
-        if report.get("avg_salary_offered") else ""
+        f"\n💰 Salário médio estimado: R$ {report['avg_salary_offered']:,.0f}".replace(
+            ",", "."
+        )
+        if report.get("avg_salary_offered")
+        else ""
     )
 
     level_breakdown = report.get("level_breakdown", {})
@@ -381,7 +413,9 @@ def _format_report(report: dict) -> str:
         delta = _delta(a, prev_site_apps.get(s) if prev_site_apps else None)
         sal = site_avg.get(s)
         sal_str = f", R$ {f'{sal:,.0f}'.replace(',', '.')}" if sal else ""
-        site_lines_parts.append(f"\n    • {s}: {a} aplic{delta} / {r} rej ({rate}%{sal_str})")
+        site_lines_parts.append(
+            f"\n    • {s}: {a} aplic{delta} / {r} rej ({rate}%{sal_str})"
+        )
     site_lines = "".join(site_lines_parts)
 
     qa_pending = report.get("qa_pending", 0)
@@ -426,7 +460,9 @@ def run_monthly_report_scheduled() -> None:
     year, month = _prev_month(today)
     report_path = _REPORTS_DIR / f"{_month_key(year, month)}.json"
     if report_path.exists():
-        logger.info(f"Monthly report for {_month_key(year, month)} already sent, skipping")
+        logger.info(
+            f"Monthly report for {_month_key(year, month)} already sent, skipping"
+        )
         return
     logger.info(f"Generating monthly report for {_month_key(year, month)}...")
     report = generate_report(year, month)

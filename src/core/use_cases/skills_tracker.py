@@ -6,7 +6,9 @@ from pathlib import Path
 from src.core.ai.llm_provider import get_eval_provider
 from src.config.settings import logger
 
-_SKILLS_FILE = Path(__file__).parent.parent.parent.parent / ".local" / "files" / "skills_gap.json"
+_SKILLS_FILE = (
+    Path(__file__).parent.parent.parent.parent / ".local" / "files" / "skills_gap.json"
+)
 
 CATEGORIES = ["python", "node", "frontend", "devops", "data", "general"]
 
@@ -92,8 +94,8 @@ _SKILL_CANONICAL: dict[str, str] = {
 
 def _canonical_skill(skill: str) -> str:
     s = skill.lower().strip()
-    s = re.sub(r"\s*\(.*?\)", "", s)     # remove parentheses: "aws (s3/...)" → "aws"
-    s = re.sub(r"[-_/]", " ", s)         # hyphens/slashes to spaces
+    s = re.sub(r"\s*\(.*?\)", "", s)  # remove parentheses: "aws (s3/...)" → "aws"
+    s = re.sub(r"[-_/]", " ", s)  # hyphens/slashes to spaces
     s = re.sub(r"\s+", " ", s).strip()
     for suffix in _SKILL_SUFFIXES:
         if s.endswith(suffix):
@@ -125,10 +127,19 @@ async def track_missing_skills_async(missing: list[str]) -> None:
     month = today[:7]  # YYYY-MM
 
     if new_skills:
-        assessments = await asyncio.gather(*[_assess_skill_async(s) for s in new_skills])
+        assessments = await asyncio.gather(
+            *[_assess_skill_async(s) for s in new_skills]
+        )
         for skill, assessment in zip(new_skills, assessments):
-            skills[skill] = {**assessment, "count": 1, "last_seen": today, "month_counts": {month: 1}}
-            logger.info(f"New skill tracked: '{skill}' — {assessment['category']} level={assessment['level']} ({assessment['estimate']})")
+            skills[skill] = {
+                **assessment,
+                "count": 1,
+                "last_seen": today,
+                "month_counts": {month: 1},
+            }
+            logger.info(
+                f"New skill tracked: '{skill}' — {assessment['category']} level={assessment['level']} ({assessment['estimate']})"
+            )
 
     for skill in cleaned:
         if skill in skills and skill not in new_skills:
@@ -139,8 +150,3 @@ async def track_missing_skills_async(missing: list[str]) -> None:
             mc[month] = mc.get(month, 0) + 1
 
     save_skills(skills)
-
-
-def track_missing_skills(missing: list[str]) -> None:
-    if missing:
-        asyncio.run(track_missing_skills_async(missing))

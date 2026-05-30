@@ -19,3 +19,8 @@ dependencies = [
     "rich>=13.0",
     "textual>=0.80.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+]

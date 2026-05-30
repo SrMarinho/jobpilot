@@ -1,12 +1,8 @@
-from playwright.async_api import Page
 from src.config.settings import logger
+from src.automation.pages.base import BaseJobsPage
 
 
-class JobsSearchPage:
-    def __init__(self, page: Page, url: str):
-        self.page = page
-        self.url = url
-
+class JobsSearchPage(BaseJobsPage):
     async def get_job_cards(self):
         try:
             await self.page.wait_for_selector(".job-card-container", timeout=10000)

@@ -1,10 +1,10 @@
 import os
-import asyncio
-
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
-from src.cli.persistence import BOT_PROFILE_DIR
+from src.config.settings import logger
+import src.config.settings as setting
+from src.interfaces.cli.persistence import BOT_PROFILE_DIR
 
 _stealth = Stealth()
 
@@ -15,9 +15,9 @@ LOGIN_URLS = {
 }
 
 SITE_DOMAINS = {
-    "linkedin":  [".linkedin.com"],
+    "linkedin": [".linkedin.com"],
     "glassdoor": [".glassdoor.com"],
-    "indeed":    [".indeed.com", ".secure.indeed.com"],
+    "indeed": [".indeed.com", ".secure.indeed.com"],
 }
 
 
@@ -48,6 +48,7 @@ async def _create_context(pw, force_headless: bool = False):
 def _create_context_sync(force_headless: bool = False):
     """Synchronous factory for TelegramBot (runs in threads)."""
     from playwright.sync_api import sync_playwright
+
     pw = sync_playwright().start()
     config = get_config(force_headless)
     context = pw.chromium.launch_persistent_context(
@@ -105,3 +106,31 @@ async def run_logout(site: str):
             print(f"Session removed. Run 'login {site}' to log in again.")
         finally:
             await context.close()
+
+
+async def run_browser(work, *, headless: bool = False):
+    """Run ``work(page)`` inside a Playwright context with screenshot + cleanup.
+
+    ``work`` is an async callable that receives the page object.
+    Screenshot is taken on both success and error; context is always closed.
+    """
+    async with async_playwright() as pw:
+        context, page = await _create_context(pw, force_headless=headless)
+        try:
+            await work(page)
+            try:
+                await page.screenshot(path=f"{setting.screenshots_path}.png")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.critical(f"{str(e)}")
+            try:
+                await page.screenshot(path=f"{setting.screenshots_path}.png")
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                await context.close()
+            except Exception:
+                pass

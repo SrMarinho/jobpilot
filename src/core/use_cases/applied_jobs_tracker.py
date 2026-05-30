@@ -61,7 +61,16 @@ class AppliedJobsTracker:
     def already_rejected(self, job_url: str) -> bool:
         return self._job_id(job_url) in self._rejected
 
-    def mark_applied(self, job_url: str, title: str, salary: int | None = None, company: str = "", level: str = "", site: str = "", contract: str = ""):
+    def mark_applied(
+        self,
+        job_url: str,
+        title: str,
+        salary: int | None = None,
+        company: str = "",
+        level: str = "",
+        site: str = "",
+        contract: str = "",
+    ):
         job_id = self._job_id(job_url)
         self._applied[job_id] = {
             "title": title,

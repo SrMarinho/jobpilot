@@ -2,7 +2,10 @@ import os
 import json
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+import typer
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
 QA_FILE = str(_PROJECT_ROOT / ".local" / "files" / "form_answers.json")
 _LEGACY_QA_FILE = str(_PROJECT_ROOT / ".local" / "files" / "qa.json")
 
@@ -29,12 +32,12 @@ def _save_qa_cli(qa: dict):
 def _qa_display(key: str, entry) -> tuple[str, str, str | None]:
     if isinstance(entry, dict):
         original = entry.get("original") or key
-        answer   = entry.get("answer") or ""
-        options  = entry.get("options")
+        answer = entry.get("answer") or ""
+        options = entry.get("options")
         opts_str = ", ".join(options) if options else None
     else:
         original = key
-        answer   = str(entry) if entry is not None else ""
+        answer = str(entry) if entry is not None else ""
         opts_str = None
     return original, answer, opts_str
 
@@ -71,8 +74,10 @@ def run_answers_show():
         print("No cached answers found.")
         return
     entries = _qa_all_entries(qa)
-    answered   = [(i + 1, k, v) for i, (k, v) in enumerate(entries) if     _is_answered(v)]
-    unanswered = [(i + 1, k, v) for i, (k, v) in enumerate(entries) if not _is_answered(v)]
+    answered = [(i + 1, k, v) for i, (k, v) in enumerate(entries) if _is_answered(v)]
+    unanswered = [
+        (i + 1, k, v) for i, (k, v) in enumerate(entries) if not _is_answered(v)
+    ]
     if answered:
         print(f"Answered ({len(answered)}):\n")
         for num, key, entry in answered:
@@ -142,3 +147,35 @@ def run_answers_fill():
 def run_answers_clear():
     _save_qa_cli({})
     print("All cached answers cleared.")
+
+
+def register_answers_commands(answers_app: typer.Typer) -> None:
+    @answers_app.command("list")
+    def answers_list():
+        """Show questions with missing answers (numbered)."""
+        run_answers_list()
+
+    @answers_app.command("show")
+    def answers_show():
+        """Show all cached answers (numbered)."""
+        run_answers_show()
+
+    @answers_app.command("fill")
+    def answers_fill():
+        """Interactively answer all missing questions one by one."""
+        run_answers_fill()
+
+    @answers_app.command("set")
+    def answers_set(
+        number: int = typer.Argument(
+            ..., help="Question number shown in 'answers list' or 'answers show'"
+        ),
+        answer: str = typer.Argument(..., help="Answer to save"),
+    ):
+        """Set an answer by question number (from list/show)."""
+        run_answers_set(number, answer)
+
+    @answers_app.command("clear")
+    def answers_clear():
+        """Remove all cached answers."""
+        run_answers_clear()

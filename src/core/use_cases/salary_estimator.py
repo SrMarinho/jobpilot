@@ -1,4 +1,3 @@
-import asyncio
 from src.core.ai.llm_provider import get_llm_provider
 from src.config.settings import logger
 
@@ -8,9 +7,6 @@ class SalaryEstimator:
 
     def __init__(self, resume: str = ""):
         self.resume = resume
-
-    def estimate(self, title: str, description: str) -> int | None:
-        return asyncio.run(self._estimate_async(title, description))
 
     async def _estimate_async(self, title: str, description: str) -> int | None:
         prompt = f"""You are a Brazilian tech salary expert. Based on the candidate's resume and the job posting, suggest an appropriate salary expectation to put on their application.
@@ -43,6 +39,7 @@ Example: 5000"""
         try:
             # Extract first number found in the response
             import re
+
             match = re.search(r"\d[\d.]*", result.replace(",", ""))
             if match:
                 value = int(match.group().replace(".", ""))

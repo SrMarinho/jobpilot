@@ -1,9 +1,8 @@
 import re
-import unicodedata
-import asyncio
 from pathlib import Path
 from src.core.ai.llm_provider import get_eval_provider
 from src.config.settings import logger
+from src.utils.text import normalize as _normalize
 
 MAX_DESCRIPTION_CHARS = 3000
 MAX_DESCRIPTION_CHARS_BATCH = 1500
@@ -12,32 +11,52 @@ MAX_DESCRIPTION_CHARS_BATCH = 1500
 # Tech stacks and their aliases — used for deterministic filtering
 # Each entry: (canonical_name, [keywords_that_identify_it])
 _TECH_ALIASES: list[tuple[str, list[str]]] = [
-    ("python",     ["python", "django", "fastapi", "flask", "sqlalchemy"]),
-    ("node",       ["node.js", "nodejs", "node js", "express", "nestjs", "nest.js"]),
-    ("react",      ["react", "next.js", "nextjs"]),
-    ("vue",        ["vue", "nuxt"]),
-    ("angular",    ["angular"]),
-    ("java",       ["java ", "spring boot", "springboot", "quarkus", " java,"]),
-    ("dotnet",     [".net", "asp.net", "c#", "csharp"]),
-    ("php",        ["php", "laravel", "symfony", "wordpress"]),
-    ("ruby",       ["ruby", "rails"]),
-    ("go",         ["golang", " go ", "go lang"]),
-    ("kotlin",     ["kotlin"]),
-    ("swift",      ["swift", "ios developer"]),
+    ("python", ["python", "django", "fastapi", "flask", "sqlalchemy"]),
+    ("node", ["node.js", "nodejs", "node js", "express", "nestjs", "nest.js"]),
+    ("react", ["react", "next.js", "nextjs"]),
+    ("vue", ["vue", "nuxt"]),
+    ("angular", ["angular"]),
+    ("java", ["java ", "spring boot", "springboot", "quarkus", " java,"]),
+    ("dotnet", [".net", "asp.net", "c#", "csharp"]),
+    ("php", ["php", "laravel", "symfony", "wordpress"]),
+    ("ruby", ["ruby", "rails"]),
+    ("go", ["golang", " go ", "go lang"]),
+    ("kotlin", ["kotlin"]),
+    ("swift", ["swift", "ios developer"]),
     ("powerbuilder", ["powerbuilder", "power builder"]),
 ]
 
 # Keywords in job titles that indicate each seniority level
 _LEVEL_KEYWORDS: dict[str, list[str]] = {
-    "senior":    ["senior", "sênior", "sr.", " sr ", " sr", "specialist", "especialista",
-                  "lead", "principal", "staff", "head", "arquiteto", "architect"],
-    "pleno":     ["pleno", "pl.", "mid", "mid-level", "intermediario", "intermediário"],
-    "junior":    ["junior", "júnior", "jr.", "jr ", "trainee", "estagiario",
-                  "estagiário", "estágio", "estagio", "intern"],
+    "senior": [
+        "senior",
+        "sênior",
+        "sr.",
+        " sr ",
+        " sr",
+        "specialist",
+        "especialista",
+        "lead",
+        "principal",
+        "staff",
+        "head",
+        "arquiteto",
+        "architect",
+    ],
+    "pleno": ["pleno", "pl.", "mid", "mid-level", "intermediario", "intermediário"],
+    "junior": [
+        "junior",
+        "júnior",
+        "jr.",
+        "jr ",
+        "trainee",
+        "estagiario",
+        "estagiário",
+        "estágio",
+        "estagio",
+        "intern",
+    ],
 }
-
-def _normalize(s: str) -> str:
-    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
 
 
 def _parse_eval_line(line: str) -> tuple[bool, int | None, str, list[str], str]:
@@ -65,7 +84,11 @@ def _parse_eval_line(line: str) -> tuple[bool, int | None, str, list[str], str]:
                 except Exception:
                     salary = None
             if is_match:
-                reason = parts[2].strip() if len(parts) >= 3 else (parts[-1].strip() if parts else raw)
+                reason = (
+                    parts[2].strip()
+                    if len(parts) >= 3
+                    else (parts[-1].strip() if parts else raw)
+                )
                 skills_raw = parts[3].strip() if len(parts) >= 4 else ""
                 if len(parts) >= 5:
                     ct_raw = parts[4].strip().upper()
@@ -74,17 +97,22 @@ def _parse_eval_line(line: str) -> tuple[bool, int | None, str, list[str], str]:
             else:
                 reason = parts[1].strip() if len(parts) >= 2 else raw
                 skills_raw = parts[2].strip() if len(parts) >= 3 else ""
-            missing_skills = [s.strip().lower() for s in skills_raw.split(",") if s.strip()]
+            missing_skills = [
+                s.strip().lower() for s in skills_raw.split(",") if s.strip()
+            ]
             break
 
     return is_match, salary, reason, missing_skills, contract_type
 
 
 class JobEvaluator:
-    def __init__(self, resume_path: str, preferences: str = "", level: str | list[str] = ""):
+    def __init__(
+        self, resume_path: str, preferences: str = "", level: str | list[str] = ""
+    ):
         path = Path(resume_path)
         if path.suffix.lower() == ".pdf":
             from pypdf import PdfReader
+
             reader = PdfReader(resume_path)
             self.resume = "\n".join(page.extract_text() or "" for page in reader.pages)
         else:
@@ -94,12 +122,13 @@ class JobEvaluator:
         if isinstance(level, str):
             self.levels = [level] if level else []
         else:
-            self.levels = [l for l in level if l]
+            self.levels = [lv for lv in level if lv]
 
         # Detect which tech stacks are required from preferences text
         prefs_n = _normalize(preferences)
         self._required_techs: list[str] = [
-            name for name, keywords in _TECH_ALIASES
+            name
+            for name, keywords in _TECH_ALIASES
             if any(kw in prefs_n for kw in keywords)
         ]
 
@@ -113,7 +142,7 @@ class JobEvaluator:
             return False
 
         title_n = _normalize(title)
-        accepted = {_normalize(l) for l in self.levels}
+        accepted = {_normalize(lv) for lv in self.levels}
 
         # Detect which level the title is advertising
         detected = None
@@ -126,23 +155,11 @@ class JobEvaluator:
             return False  # can't tell from title alone — let AI decide
 
         if detected not in accepted:
-            logger.info(f"Quick reject (title seniority '{detected}' not in {list(accepted)}): '{title}'")
+            logger.info(
+                f"Quick reject (title seniority '{detected}' not in {list(accepted)}): '{title}'"
+            )
             return True
 
-        return False
-
-    def language_reject(self, description: str) -> bool:
-        """Returns True if the description is not in Portuguese (AI-based detection)."""
-        snippet = description[:400].strip()
-        if not snippet:
-            return False
-        try:
-            lang = asyncio.run(self._detect_language(snippet))
-            if "portuguese" not in lang.lower():
-                logger.info(f"Quick reject (language: '{lang.strip()}')")
-                return True
-        except Exception as e:
-            logger.warning(f"Language detection failed: {e}")
         return False
 
     async def _detect_language(self, text: str) -> str:
@@ -175,28 +192,26 @@ class JobEvaluator:
             if name in self._required_techs:
                 continue
             if any(kw in text_n for kw in keywords):
-                logger.info(f"Quick reject (tech mismatch — '{name}' not in required {self._required_techs}): '{title}'")
+                logger.info(
+                    f"Quick reject (tech mismatch — '{name}' not in required {self._required_techs}): '{title}'"
+                )
                 return True
 
         return False
 
-    def evaluate(self, title: str, description: str) -> tuple[bool, int | None, str, list[str], str]:
-        """Returns (is_match, salary_estimate, reason, missing_skills, contract_type).
-
-        contract_type: 'CLT' | 'PJ' | 'unknown'. Salary is tuned to whichever was detected.
-        """
-        return asyncio.run(self.evaluate_async(title, description))
-
-    async def evaluate_async(self, title: str, description: str) -> tuple[bool, int | None, str, list[str], str]:
+    async def evaluate_async(
+        self, title: str, description: str
+    ) -> tuple[bool, int | None, str, list[str], str]:
         description = description[:MAX_DESCRIPTION_CHARS]
 
         preferences_section = (
             f"\nCANDIDATE PREFERENCES (prioritize these):\n{self.preferences}\n"
-            if self.preferences else ""
+            if self.preferences
+            else ""
         )
 
         if self.levels:
-            accepted = " or ".join(f"'{l}'" for l in self.levels)
+            accepted = " or ".join(f"'{lv}'" for lv in self.levels)
             level_rule = (
                 f"2. Seniority: only accept jobs targeting {accepted} level(s). "
                 f"If the job is clearly for a different level, answer NO.\n"
@@ -246,8 +261,10 @@ NO|Go required|golang"""
         result = await get_eval_provider().complete(prompt)
         parsed = _parse_eval_line(result)
         is_match, salary, reason, missing_skills, contract_type = parsed
-        logger.info(f"Evaluation: {'YES' if is_match else 'NO'} | salary={salary} | contract={contract_type} | {reason}" +
-                    (f" | missing: {missing_skills}" if missing_skills else ""))
+        logger.info(
+            f"Evaluation: {'YES' if is_match else 'NO'} | salary={salary} | contract={contract_type} | {reason}"
+            + (f" | missing: {missing_skills}" if missing_skills else "")
+        )
         return parsed
 
     async def evaluate_batch(
@@ -258,11 +275,12 @@ NO|Go required|golang"""
 
         preferences_section = (
             f"\nCANDIDATE PREFERENCES (prioritize these):\n{self.preferences}\n"
-            if self.preferences else ""
+            if self.preferences
+            else ""
         )
 
         if self.levels:
-            accepted = " or ".join(f"'{l}'" for l in self.levels)
+            accepted = " or ".join(f"'{lv}'" for lv in self.levels)
             level_rule = (
                 f"2. Seniority: only accept jobs targeting {accepted} level(s). "
                 f"If the job is clearly for a different level, answer NO.\n"
@@ -311,7 +329,13 @@ JOB_3|YES|9000|Node fullstack PJ||PJ"""
 
         result = await get_eval_provider().complete(prompt)
 
-        default: tuple[bool, int | None, str, list[str], str] = (False, None, "parse error", [], "unknown")
+        default: tuple[bool, int | None, str, list[str], str] = (
+            False,
+            None,
+            "parse error",
+            [],
+            "unknown",
+        )
         results: list[tuple[bool, int | None, str, list[str], str]] = [default] * n
 
         for line in result.splitlines():
@@ -326,8 +350,12 @@ JOB_3|YES|9000|Node fullstack PJ||PJ"""
                         results[idx] = parsed
                         is_match, salary, reason, missing_skills, contract_type = parsed
                         logger.info(
-                            f"Batch JOB_{idx+1}: {'YES' if is_match else 'NO'} | salary={salary} | {reason}" +
-                            (f" | missing: {missing_skills}" if missing_skills else "")
+                            f"Batch JOB_{idx + 1}: {'YES' if is_match else 'NO'} | salary={salary} | {reason}"
+                            + (
+                                f" | missing: {missing_skills}"
+                                if missing_skills
+                                else ""
+                            )
                         )
                 except Exception:
                     pass

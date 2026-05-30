@@ -14,7 +14,9 @@ class IndeedJobApplicationManager(BaseJobApplicationManager):
         return IndeedApplicationHandler(page, resume=resume)
 
     def _next_page_url(self, page_num: int) -> str:
-        return self.page_obj.next_page_url(self.base_url, page_num, page_size=self.PAGE_SIZE)
+        return self.page_obj.next_page_url(
+            self.base_url, page_num, page_size=self.PAGE_SIZE
+        )
 
     async def _get_card_id(self, card) -> str:
         try:
@@ -24,7 +26,11 @@ class IndeedJobApplicationManager(BaseJobApplicationManager):
         except Exception:
             pass
         try:
-            return await card.get_attribute("data-job-id") or await card.get_attribute("data-id") or (await card.inner_text())[:80]
+            return (
+                await card.get_attribute("data-job-id")
+                or await card.get_attribute("data-id")
+                or (await card.inner_text())[:80]
+            )
         except Exception:
             return ""
 
@@ -37,10 +43,14 @@ class IndeedJobApplicationManager(BaseJobApplicationManager):
     async def _get_apply_btn(self):
         btn = await self.page_obj.get_apply_btn()
         if btn is None and await self.page_obj._has_external_apply():
-            self._last_skip_reason = "Quick reject: external apply (não é candidatura rápida)"
+            self._last_skip_reason = (
+                "Quick reject: external apply (não é candidatura rápida)"
+            )
         else:
             self._last_skip_reason = None
         return btn
 
     async def _submit_application(self, salary, title: str, description: str) -> bool:
-        return await self.handler.submit(salary_expectation=salary, no_submit=self.no_submit)
+        return await self.handler.submit(
+            salary_expectation=salary, no_submit=self.no_submit
+        )

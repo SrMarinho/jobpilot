@@ -58,7 +58,9 @@ class CustomLogger:
 
         console = logging.StreamHandler()
         console.setLevel(logging.DEBUG)
-        console.setFormatter(SingleLineFormatter("[%(run_id)s] [%(run_type)s] %(message)s"))
+        console.setFormatter(
+            SingleLineFormatter("[%(run_id)s] [%(run_type)s] %(message)s")
+        )
         console.addFilter(run_filter)
         logger.addHandler(console)
 
@@ -66,7 +68,9 @@ class CustomLogger:
         file_handler = logging.FileHandler(file_path, mode="a", encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - [%(run_id)s] - [%(run_type)s] - %(levelname)s - %(message)s")
+            logging.Formatter(
+                "%(asctime)s - [%(run_id)s] - [%(run_type)s] - %(levelname)s - %(message)s"
+            )
         )
         file_handler.addFilter(run_filter)
         logger.addHandler(file_handler)

@@ -5,25 +5,19 @@ import time
 from pathlib import Path
 import requests
 from src.config.settings import logger
-
-
-def _find_resume(hint: str = "resume.txt") -> str:
-    """Return hint if it exists, otherwise find first .pdf or .txt in files/ or cwd."""
-    if Path(hint).exists():
-        return hint
-    for directory in (Path(".local") / "files", Path(".")):
-        for ext in ("*.pdf", "*.txt"):
-            found = list(directory.glob(ext))
-            if found:
-                return str(found[0])
-    return hint  # fallback, will raise at read time with a clear error
+from src.interfaces.cli.persistence import _find_resume
+from src.utils.async_utils import run_async
+from src.automation.tasks.connection_manager import ConnectionManager
+from src.automation.tasks.job_application_manager import create_application_manager
 
 
 class TelegramBot:
     def __init__(self, driver_factory, resume_path: str = "resume.txt"):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
-        self.admin_id = str(os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID")))
+        self.admin_id = str(
+            os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID"))
+        )
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset = 0
         self.driver_factory = driver_factory
@@ -183,7 +177,7 @@ class TelegramBot:
     # ── Inline button callbacks ───────────────────────────────────────────────
 
     def _handle_callback(self, data: str) -> None:
-        if data.startswith("sp:"):        # start_page escolhido
+        if data.startswith("sp:"):  # start_page escolhido
             value = data[3:]
             if value == "custom":
                 self._step = "connect_start_page_custom"
@@ -192,7 +186,7 @@ class TelegramBot:
             self._form["start_page"] = int(value)
             self._ask_max_pages()
 
-        elif data.startswith("mp:"):      # max_pages escolhido
+        elif data.startswith("mp:"):  # max_pages escolhido
             value = data[3:]
             if value == "custom":
                 self._step = "connect_max_pages_custom"
@@ -208,7 +202,7 @@ class TelegramBot:
             "A partir de qual página?",
             buttons=[
                 [
-                    {"text": "1",  "data": "sp:1"},
+                    {"text": "1", "data": "sp:1"},
                     {"text": "10", "data": "sp:10"},
                     {"text": "25", "data": "sp:25"},
                     {"text": "50", "data": "sp:50"},
@@ -223,8 +217,8 @@ class TelegramBot:
             "Máximo de páginas?",
             buttons=[
                 [
-                    {"text": "25",  "data": "mp:25"},
-                    {"text": "50",  "data": "mp:50"},
+                    {"text": "25", "data": "mp:25"},
+                    {"text": "50", "data": "mp:50"},
                     {"text": "100", "data": "mp:100"},
                 ],
                 [{"text": "✏️ Digitar", "data": "mp:custom"}],
@@ -272,7 +266,9 @@ class TelegramBot:
         max_pages = self._form.get("max_pages", 100)
         self._form = {}
         self.stop_event.clear()
-        self.send(f"🔗 Iniciando conexões a partir da página {start_page} (máx: {max_pages})...")
+        self.send(
+            f"🔗 Iniciando conexões a partir da página {start_page} (máx: {max_pages})..."
+        )
         self.current_task = threading.Thread(
             target=self._run_connect, args=(url, start_page, max_pages), daemon=True
         )
@@ -284,7 +280,9 @@ class TelegramBot:
             return
         self.stop_event.clear()
         self.send("📋 Iniciando candidaturas...")
-        self.current_task = threading.Thread(target=self._run_apply, args=(url,), daemon=True)
+        self.current_task = threading.Thread(
+            target=self._run_apply, args=(url,), daemon=True
+        )
         self.current_task.start()
 
     # ── Task runners ──────────────────────────────────────────────────────────
@@ -293,8 +291,14 @@ class TelegramBot:
         pw, context, page = self.driver_factory()
         manager = None
         try:
-            manager = ConnectionManager(page, url=url, start_page=start_page, max_pages=max_pages, stop_event=self.stop_event)
-            asyncio.run(manager.run())
+            manager = ConnectionManager(
+                page,
+                url=url,
+                start_page=start_page,
+                max_pages=max_pages,
+                stop_event=self.stop_event,
+            )
+            run_async(manager.run())
         except Exception as e:
             self.send("❌ Erro ao executar conexões.")
             logger.error(f"connect task error: {e}")
@@ -313,8 +317,10 @@ class TelegramBot:
     def _run_apply(self, url: str) -> None:
         pw, context, page = self.driver_factory()
         try:
-            manager = JobApplicationManager(page, url=url, resume_path=self.resume_path, stop_event=self.stop_event)
-            asyncio.run(manager.run())
+            manager = create_application_manager(
+                page, url=url, resume_path=self.resume_path, stop_event=self.stop_event
+            )
+            run_async(manager.run())
             self.send(
                 f"✅ Candidaturas concluídas!\n"
                 f"Avaliadas: {manager.evaluated_count} | Aplicadas: {manager.applied_count}"
@@ -338,16 +344,27 @@ class TelegramBot:
         try:
             requests.post(
                 f"{self.base_url}/setMyCommands",
-                json={"commands": [
-                    {"command": "connect",   "description": "Enviar conexões"},
-                    {"command": "apply",     "description": "Aplicar vagas — /apply <url>"},
-                    {"command": "resume",    "description": "Atualizar currículo"},
-                    {"command": "status",    "description": "Ver se tem tarefa rodando"},
-                    {"command": "stop",      "description": "Parar tarefa atual"},
-                    {"command": "ping",      "description": "Verificar se o bot está vivo"},
-                    {"command": "reiniciar", "description": "Reiniciar o bot"},
-                    {"command": "help",      "description": "Ver todos os comandos"},
-                ]},
+                json={
+                    "commands": [
+                        {"command": "connect", "description": "Enviar conexões"},
+                        {
+                            "command": "apply",
+                            "description": "Aplicar vagas — /apply <url>",
+                        },
+                        {"command": "resume", "description": "Atualizar currículo"},
+                        {
+                            "command": "status",
+                            "description": "Ver se tem tarefa rodando",
+                        },
+                        {"command": "stop", "description": "Parar tarefa atual"},
+                        {
+                            "command": "ping",
+                            "description": "Verificar se o bot está vivo",
+                        },
+                        {"command": "reiniciar", "description": "Reiniciar o bot"},
+                        {"command": "help", "description": "Ver todos os comandos"},
+                    ]
+                },
                 timeout=10,
             )
         except Exception as e:
@@ -356,11 +373,15 @@ class TelegramBot:
     def _flush_pending_updates(self) -> None:
         """Discard all updates that arrived before this startup."""
         try:
-            resp = requests.get(
-                f"{self.base_url}/getUpdates",
-                params={"offset": -1, "timeout": 0},
-                timeout=10,
-            ).json().get("result", [])
+            resp = (
+                requests.get(
+                    f"{self.base_url}/getUpdates",
+                    params={"offset": -1, "timeout": 0},
+                    timeout=10,
+                )
+                .json()
+                .get("result", [])
+            )
             if resp:
                 self.offset = resp[-1]["update_id"] + 1
         except Exception:

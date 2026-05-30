@@ -56,6 +56,8 @@ class BaseJobApplicationManager(ABC):
         eval_concurrency: int = 1,
         eval_batch_size: int = 1,
         on_update: Callable[[JobItem], None] | None = None,
+        evaluator: JobEvaluator | None = None,
+        tracker: AppliedJobsTracker | None = None,
     ):
         self.page = page
         self.base_url = self._normalize_url(url)
@@ -68,8 +70,10 @@ class BaseJobApplicationManager(ABC):
         self.on_update = on_update or (lambda _item: None)
 
         self.page_obj = self._build_page(page, self.base_url)
-        self.evaluator = JobEvaluator(resume_path, preferences=preferences, level=level)
-        self.tracker = AppliedJobsTracker()
+        self.evaluator = evaluator or JobEvaluator(
+            resume_path, preferences=preferences, level=level
+        )
+        self.tracker = tracker or AppliedJobsTracker()
         self.stop_event = stop_event or threading.Event()
         self.max_applications = max_applications
         self.applied_count = 0
@@ -100,13 +104,17 @@ class BaseJobApplicationManager(ABC):
     async def _get_apply_btn(self): ...
 
     @abstractmethod
-    async def _submit_application(self, salary, title: str, description: str) -> bool: ...
+    async def _submit_application(
+        self, salary, title: str, description: str
+    ) -> bool: ...
 
     # ── overlap pipeline ──────────────────────────────────────────────────────
 
     async def run(self):
         logger.info(f"Site detected: {self.site}")
-        logger.info(f"Eval concurrency: {self.eval_concurrency} (max page = {self.PAGE_SIZE})")
+        logger.info(
+            f"Eval concurrency: {self.eval_concurrency} (max page = {self.PAGE_SIZE})"
+        )
 
         eval_queue: asyncio.Queue[JobItem | None] = asyncio.Queue()
         apply_queue: asyncio.Queue[JobItem | None] = asyncio.Queue()
@@ -117,7 +125,9 @@ class BaseJobApplicationManager(ABC):
 
         await asyncio.gather(extract_task, eval_task, apply_task)
 
-        logger.info(f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}")
+        logger.info(
+            f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}"
+        )
 
     async def _extract_all(self, eval_queue: asyncio.Queue):
         seen_page_ids: list[frozenset] = []
@@ -135,9 +145,13 @@ class BaseJobApplicationManager(ABC):
                 logger.info("No more jobs found, stopping")
                 break
 
-            current_ids = frozenset(await asyncio.gather(*[self._get_card_id(c) for c in job_cards]))
+            current_ids = frozenset(
+                await asyncio.gather(*[self._get_card_id(c) for c in job_cards])
+            )
             if seen_page_ids and current_ids and current_ids == seen_page_ids[-1]:
-                logger.info("Page identical to previous — no more unique jobs, stopping")
+                logger.info(
+                    "Page identical to previous — no more unique jobs, stopping"
+                )
                 break
             seen_page_ids = seen_page_ids[-1:] + [current_ids]
 
@@ -148,7 +162,9 @@ class BaseJobApplicationManager(ABC):
 
         await eval_queue.put(None)
 
-    async def _evaluate_all(self, eval_queue: asyncio.Queue, apply_queue: asyncio.Queue):
+    async def _evaluate_all(
+        self, eval_queue: asyncio.Queue, apply_queue: asyncio.Queue
+    ):
         batch_size = self.eval_batch_size
         sem = asyncio.Semaphore(self.eval_concurrency)
         tasks: set[asyncio.Task] = set()
@@ -165,7 +181,12 @@ class BaseJobApplicationManager(ABC):
                         jobs = [(item.title, item.description) for item in items]
                         results = await self.evaluator.evaluate_batch(jobs)
                     else:
-                        results = [await self.evaluator.evaluate_async(item.title, item.description) for item in items]
+                        results = [
+                            await self.evaluator.evaluate_async(
+                                item.title, item.description
+                            )
+                            for item in items
+                        ]
                 except Exception as e:
                     logger.error(f"Eval batch error: {e}")
                     for item in items:
@@ -186,7 +207,9 @@ class BaseJobApplicationManager(ABC):
                     else:
                         item.state = "rejected"
                         item.note = reason
-                        self.tracker.mark_rejected(item.job_url, item.title, reason=reason, site=self.site)
+                        self.tracker.mark_rejected(
+                            item.job_url, item.title, reason=reason, site=self.site
+                        )
                         self.on_update(item)
                     self.evaluated_count += 1
 
@@ -222,7 +245,9 @@ class BaseJobApplicationManager(ABC):
                 apply_queue.task_done()
                 continue
             if self.max_applications and self.applied_count >= self.max_applications:
-                logger.info(f"Reached max applications limit ({self.max_applications}), stopping")
+                logger.info(
+                    f"Reached max applications limit ({self.max_applications}), stopping"
+                )
                 self.stop_event.set()
                 apply_queue.task_done()
                 continue
@@ -254,12 +279,16 @@ class BaseJobApplicationManager(ABC):
             f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
         )
         _manual[item.job_url] = {
-            "title": item.title, "company": item.company,
-            "salary": salary, "contract": contract,
+            "title": item.title,
+            "company": item.company,
+            "salary": salary,
+            "contract": contract,
             "reason": reason,
         }
         _manual_file.parent.mkdir(parents=True, exist_ok=True)
-        _manual_file.write_text(json.dumps(_manual, ensure_ascii=False, indent=2), encoding="utf-8")
+        _manual_file.write_text(
+            json.dumps(_manual, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     async def _apply_one(self, item: JobItem):
         apply_page = await self.page.context.new_page()
@@ -272,9 +301,9 @@ class BaseJobApplicationManager(ABC):
             temp_page_obj = self._build_page(apply_page, item.job_url)
             temp_handler = self._build_handler(apply_page, resume=self.evaluator.resume)
 
-            if hasattr(temp_page_obj, 'get_easy_apply_btn'):
+            if hasattr(temp_page_obj, "get_easy_apply_btn"):
                 btn = await temp_page_obj.get_easy_apply_btn()
-            elif hasattr(temp_page_obj, 'get_apply_btn'):
+            elif hasattr(temp_page_obj, "get_apply_btn"):
                 btn = await temp_page_obj.get_apply_btn()
             else:
                 btn = None
@@ -282,13 +311,24 @@ class BaseJobApplicationManager(ABC):
             if not btn:
                 skip_reason = getattr(self, "_last_skip_reason", None)
                 if skip_reason:
-                    self.tracker.mark_rejected(item.job_url, item.title, reason=skip_reason, site=self.site)
+                    self.tracker.mark_rejected(
+                        item.job_url, item.title, reason=skip_reason, site=self.site
+                    )
                     item.state = "rejected"
                     item.note = skip_reason
                 else:
-                    item.state = "failed"
-                    item.note = "no apply button"
-                self._notify_apply_failed(item, item.note)
+                    # No Easy Apply button — job passed evaluation, notify user for manual application
+                    item.state = "manual"
+                    item.note = "sem Easy Apply — notificado via Telegram"
+                    self.tracker.mark_rejected(
+                        item.job_url,
+                        item.title,
+                        reason="Candidatura manual — notificado via Telegram",
+                        site=self.site,
+                    )
+                    self._notify_apply_failed(
+                        item, "Sem candidatura simplificada — candidate-se manualmente"
+                    )
                 self.on_update(item)
                 return
 
@@ -296,17 +336,29 @@ class BaseJobApplicationManager(ABC):
             await apply_page.wait_for_timeout(1500)
 
             _, salary, _, _, contract = item.eval_result
-            if hasattr(temp_handler, 'submit_easy_apply'):
-                success = await temp_handler.submit_easy_apply(salary, item.title, item.description, no_submit=self.no_submit)
-            elif hasattr(temp_handler, 'submit'):
-                success = await temp_handler.submit(salary_expectation=salary, no_submit=self.no_submit)
+            if hasattr(temp_handler, "submit_easy_apply"):
+                success = await temp_handler.submit_easy_apply(
+                    salary, item.title, item.description, no_submit=self.no_submit
+                )
+            elif hasattr(temp_handler, "submit"):
+                success = await temp_handler.submit(
+                    salary_expectation=salary, no_submit=self.no_submit
+                )
             else:
                 success = False
 
             if success:
                 self.applied_count += 1
                 lvl = detect_level(item.title, item.description)
-                self.tracker.mark_applied(item.job_url, item.title, salary, company=item.company, level=lvl, site=self.site, contract=contract)
+                self.tracker.mark_applied(
+                    item.job_url,
+                    item.title,
+                    salary,
+                    company=item.company,
+                    level=lvl,
+                    site=self.site,
+                    contract=contract,
+                )
                 item.state = "applied"
                 self.on_update(item)
                 logger.info(f"Applied ({self.applied_count} total)")
@@ -332,13 +384,19 @@ class BaseJobApplicationManager(ABC):
     async def _wait_for_job_cards(self, page_num: int) -> list:
         await self.page.wait_for_timeout(1500)
         try:
-            await self.page.wait_for_function("document.readyState === 'complete'", timeout=5000)
+            await self.page.wait_for_function(
+                "document.readyState === 'complete'", timeout=5000
+            )
         except Exception:
             pass
 
         loading_selectors = [
-            "div.loader", "div.artdeco-loader", "[class*=loader]",
-            "[class*=spinner]", "[class*=skeleton]", "[class*=ghost]",
+            "div.loader",
+            "div.artdeco-loader",
+            "[class*=loader]",
+            "[class*=spinner]",
+            "[class*=skeleton]",
+            "[class*=ghost]",
         ]
         try:
             for sel in loading_selectors:
@@ -354,7 +412,9 @@ class BaseJobApplicationManager(ABC):
             if cards:
                 return cards
             if attempt < max_attempts - 1:
-                logger.debug(f"No job cards yet on page {page_num}, retrying ({attempt + 1}/{max_attempts})...")
+                logger.debug(
+                    f"No job cards yet on page {page_num}, retrying ({attempt + 1}/{max_attempts})..."
+                )
                 await self.page.wait_for_timeout(2000)
         return []
 
@@ -385,7 +445,11 @@ class BaseJobApplicationManager(ABC):
 
                 title = await self.page_obj.get_job_title() or ""
                 description = await self.page_obj.get_job_description()
-                company = await self.page_obj.get_company_name() if hasattr(self.page_obj, "get_company_name") else ""
+                company = (
+                    await self.page_obj.get_company_name()
+                    if hasattr(self.page_obj, "get_company_name")
+                    else ""
+                )
 
                 if not title or not description:
                     logger.info(f"Job {i + 1}: Could not extract details, skipping")
@@ -394,7 +458,15 @@ class BaseJobApplicationManager(ABC):
                 if not job_url:
                     job_url = self.page.url
 
-                item = JobItem(idx=i + 1, title=title, description=description, company=company, job_url=job_url, card_id=card_id, state="extracted")
+                item = JobItem(
+                    idx=i + 1,
+                    title=title,
+                    description=description,
+                    company=company,
+                    job_url=job_url,
+                    card_id=card_id,
+                    state="extracted",
+                )
                 self.on_update(item)
 
                 if self.tracker.already_applied(job_url):
@@ -411,7 +483,12 @@ class BaseJobApplicationManager(ABC):
                     continue
 
                 if self.evaluator.tech_reject(title, description):
-                    self.tracker.mark_rejected(job_url, title, reason="Quick reject: tech stack mismatch", site=self.site)
+                    self.tracker.mark_rejected(
+                        job_url,
+                        title,
+                        reason="Quick reject: tech stack mismatch",
+                        site=self.site,
+                    )
                     item.state = "rejected"
                     item.note = "tech mismatch"
                     self.on_update(item)
