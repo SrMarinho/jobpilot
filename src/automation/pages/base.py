@@ -17,9 +17,9 @@ class BaseJobsPage(ABC):
     async def get_card_job_url(self, card) -> str | None:
         """Extract job URL from a card element."""
 
-    @abstractmethod
     async def get_card_job_id(self, card) -> str:
         """Extract a unique job identifier from a card element."""
+        return ""
 
     @abstractmethod
     async def get_job_title(self) -> str:
