@@ -44,7 +44,9 @@ class ConnectionHandler:
                     continue
                 await confirm_btn.click()
                 self.invite_sended += 1
+                skip_labels.add(label)
                 logger.info(f"Invitation sent ({self.invite_sended})")
+                await self.page.page.wait_for_timeout(800)
             else:
                 logger.info("Could not confirm invitation, trying next")
                 skip_labels.add(label)

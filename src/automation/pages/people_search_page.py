@@ -83,10 +83,12 @@ class PeopleSearchPage:
 
     async def get_connect_btn(self, skip_labels: set[str] | None = None):
         skip_labels = skip_labels or set()
+        # LinkedIn renders Connect as <a>, Invite confirm modal as <button>.
+        # Match both via self::button | self::a in xpath.
         xpaths = [
-            "//button[contains(@aria-label,'Convidar') and contains(@aria-label,'conectar')]",
-            "//button[contains(@aria-label,'Connect with') or contains(@aria-label,'Invite') and contains(@aria-label,'connect')]",
-            "//button[normalize-space()='Conectar' or normalize-space()='Connect']",
+            "//*[(self::button or self::a) and contains(@aria-label,'Convidar') and contains(@aria-label,'conectar')]",
+            "//*[(self::button or self::a) and (contains(@aria-label,'Connect with') or (contains(@aria-label,'Invite') and contains(@aria-label,'connect')))]",
+            "//*[(self::button or self::a) and (normalize-space()='Conectar' or normalize-space()='Connect')]",
         ]
         for xpath in xpaths:
             try:
