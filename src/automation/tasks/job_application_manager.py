@@ -11,7 +11,7 @@ from src.automation.tasks.glassdoor_application_manager import (
 )
 
 
-def _detect_site(url: str) -> str:
+def detect_site(url: str) -> str:
     if "indeed.com" in url:
         return "indeed"
     if "glassdoor.com" in url:
@@ -30,7 +30,7 @@ def create_application_manager(
     page, url: str, *args, **kwargs
 ) -> BaseJobApplicationManager:
     """Factory — picks subclass by URL host."""
-    cls = _MANAGERS[_detect_site(url)]
+    cls = _MANAGERS[detect_site(url)]
     return cls(page, url, *args, **kwargs)
 
 
@@ -40,6 +40,6 @@ __all__ = [
     "LinkedInJobApplicationManager",
     "IndeedJobApplicationManager",
     "GlassdoorJobApplicationManager",
-    "_detect_site",
+    "detect_site",
     "_detect_level",
 ]

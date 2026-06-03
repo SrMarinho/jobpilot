@@ -4,15 +4,17 @@ import sys
 import time
 from pathlib import Path
 import requests
+from playwright.async_api import async_playwright
 from src.config.settings import logger
 from src.interfaces.cli.persistence import _find_resume
+from src.interfaces.cli.browser import create_context
 from src.utils.async_utils import run_async
 from src.automation.tasks.connection_manager import ConnectionManager
 from src.automation.tasks.job_application_manager import create_application_manager
 
 
 class TelegramBot:
-    def __init__(self, driver_factory, resume_path: str = "resume.txt"):
+    def __init__(self, resume_path: str = "resume.txt"):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
         self.admin_id = str(
@@ -20,7 +22,6 @@ class TelegramBot:
         )
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset = 0
-        self.driver_factory = driver_factory
         self.resume_path = _find_resume(resume_path)
         logger.info(f"Resume: {self.resume_path}")
         self.stop_event = threading.Event()
@@ -288,55 +289,60 @@ class TelegramBot:
     # ── Task runners ──────────────────────────────────────────────────────────
 
     def _run_connect(self, url: str, start_page: int = 1, max_pages: int = 100) -> None:
-        pw, context, page = self.driver_factory()
-        manager = None
-        try:
-            manager = ConnectionManager(
-                page,
-                url=url,
-                start_page=start_page,
-                max_pages=max_pages,
-                stop_event=self.stop_event,
-            )
-            run_async(manager.run())
-        except Exception as e:
-            self.send("❌ Erro ao executar conexões.")
-            logger.error(f"connect task error: {e}")
-        finally:
-            sent = manager.connect_people.invite_sended if manager else 0
-            self.send(f"🔗 Conexões finalizadas! Total enviado: {sent}")
-            try:
-                context.close()
-            except Exception:
-                pass
-            try:
-                pw.stop()
-            except Exception:
-                pass
+        run_async(self._run_connect_async(url, start_page, max_pages))
 
     def _run_apply(self, url: str) -> None:
-        pw, context, page = self.driver_factory()
-        try:
-            manager = create_application_manager(
-                page, url=url, resume_path=self.resume_path, stop_event=self.stop_event
-            )
-            run_async(manager.run())
-            self.send(
-                f"✅ Candidaturas concluídas!\n"
-                f"Avaliadas: {manager.evaluated_count} | Aplicadas: {manager.applied_count}"
-            )
-        except Exception as e:
-            self.send(f"❌ Erro: {e}")
-            logger.error(f"apply task error: {e}")
-        finally:
+        run_async(self._run_apply_async(url))
+
+    async def _run_connect_async(
+        self, url: str, start_page: int = 1, max_pages: int = 100
+    ) -> None:
+        async with async_playwright() as pw:
+            context, page = await create_context(pw, force_headless=False)
+            manager = None
             try:
-                context.close()
-            except Exception:
-                pass
+                manager = ConnectionManager(
+                    page,
+                    url=url,
+                    start_page=start_page,
+                    max_pages=max_pages,
+                    stop_event=self.stop_event,
+                )
+                await manager.run()
+            except Exception as e:
+                self.send("❌ Erro ao executar conexões.")
+                logger.error(f"connect task error: {e}")
+            finally:
+                sent = manager.connect_people.invite_sended if manager else 0
+                self.send(f"🔗 Conexões finalizadas! Total enviado: {sent}")
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+
+    async def _run_apply_async(self, url: str) -> None:
+        async with async_playwright() as pw:
+            context, page = await create_context(pw, force_headless=False)
             try:
-                pw.stop()
-            except Exception:
-                pass
+                manager = create_application_manager(
+                    page,
+                    url=url,
+                    resume_path=self.resume_path,
+                    stop_event=self.stop_event,
+                )
+                await manager.run()
+                self.send(
+                    f"✅ Candidaturas concluídas!\n"
+                    f"Avaliadas: {manager.evaluated_count} | Aplicadas: {manager.applied_count}"
+                )
+            except Exception as e:
+                self.send(f"❌ Erro: {e}")
+                logger.error(f"apply task error: {e}")
+            finally:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
 
     # ── Polling loop ──────────────────────────────────────────────────────────
 

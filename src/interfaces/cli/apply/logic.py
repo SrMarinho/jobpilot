@@ -1,6 +1,6 @@
 import typer
 
-from src.automation.tasks.job_application_manager import _detect_site
+from src.automation.tasks.job_application_manager import detect_site
 from src.automation import url_builder as _url_builder
 from src.interfaces.cli.persistence import load_last_urls, save_last_url, _find_resume
 
@@ -12,7 +12,7 @@ def _determine_site_key(
 ) -> str:
     last_urls = load_last_urls()
     if url:
-        return f"apply_{_detect_site(url)}"
+        return f"apply_{detect_site(url)}"
     if site_name:
         return f"apply_{site_name}"
     return f"apply_{last_urls.get('apply_last_site', 'linkedin')}"
@@ -175,6 +175,29 @@ def _search_params_dict(
     }
 
 
+def _build_save_extra(
+    final_level: list[str],
+    final_preferences: str,
+    resolved_resume: str,
+    final_llm_prov: str | None,
+    final_llm_mod: str | None,
+    final_eval_prov: str | None,
+    final_eval_mod: str | None,
+    final_search: dict,
+) -> dict:
+    extra = {
+        "level": final_level,
+        "preferences": final_preferences,
+        "resume": resolved_resume,
+        "llm_provider": final_llm_prov,
+        "llm_model": final_llm_mod,
+        "eval_provider": final_eval_prov,
+        "eval_model": final_eval_mod,
+    }
+    extra.update(final_search)
+    return extra
+
+
 def prepare_apply_config(
     url: str | None,
     keywords: list[str] | None,
@@ -265,43 +288,42 @@ def prepare_apply_config(
     warmup_llm_providers()
 
     # ── save config ──
-    if not no_save:
-        extra = {
-            "level": final_level,
-            "preferences": final_preferences,
-            "resume": resolved_resume,
-            "llm_provider": final_llm_prov,
-            "llm_model": final_llm_mod,
-            "eval_provider": final_eval_prov,
-            "eval_model": final_eval_mod,
-        }
-        extra.update(final_search)
-        if keywords or url:
-            save_last_url(site_key, resolved_url, page=1, extra=extra)
-            data = load_last_urls()
-            if url:
-                data["apply_last_site"] = _detect_site(url)
-            else:
-                data["apply_last_site"] = site_key.replace("apply_", "")
-            if resume:
-                data["default_resume"] = resume
-            with open(LAST_URLS_FILE, "w") as f:
-                json.dump(data, f, indent=2)
+    if not no_save and (keywords or url):
+        extra = _build_save_extra(
+            final_level,
+            final_preferences,
+            resolved_resume,
+            final_llm_prov,
+            final_llm_mod,
+            final_eval_prov,
+            final_eval_mod,
+            final_search,
+        )
+        save_last_url(site_key, resolved_url, page=1, extra=extra)
+        data = load_last_urls()
+        if url:
+            data["apply_last_site"] = detect_site(url)
+        else:
+            data["apply_last_site"] = site_key.replace("apply_", "")
+        if resume:
+            data["default_resume"] = resume
+        with open(LAST_URLS_FILE, "w") as f:
+            json.dump(data, f, indent=2)
 
     # ── on_page_change callback ──
     def on_page_change(page: int):
         if no_save:
             return
-        extra = {
-            "level": final_level,
-            "preferences": final_preferences,
-            "resume": resolved_resume,
-            "llm_provider": final_llm_prov,
-            "llm_model": final_llm_mod,
-            "eval_provider": final_eval_prov,
-            "eval_model": final_eval_mod,
-        }
-        extra.update(final_search)
+        extra = _build_save_extra(
+            final_level,
+            final_preferences,
+            resolved_resume,
+            final_llm_prov,
+            final_llm_mod,
+            final_eval_prov,
+            final_eval_mod,
+            final_search,
+        )
         save_last_url(site_key, resolved_url, page=page, extra=extra)
 
     return {
