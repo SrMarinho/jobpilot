@@ -71,6 +71,9 @@ temp/
 .playwright-mcp/
 .temp/
 
+# Debug dumps de scripts (saida local, nao versionar)
+scripts/_*
+
 # Arquivos do projeto
 drivers/**/*
 !drivers/
