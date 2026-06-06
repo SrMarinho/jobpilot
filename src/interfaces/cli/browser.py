@@ -1,4 +1,5 @@
 import os
+import time
 import asyncio
 from pathlib import Path
 from playwright.async_api import async_playwright
@@ -14,13 +15,36 @@ _LAUNCH_TIMEOUT_MS = 90_000
 _LAUNCH_RETRIES = 2
 _RETRY_WAIT_S = 5
 _LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
+_LOCK_FRESH_THRESHOLD_S = 60  # locks newer than this likely belong to a live Chrome
+
+
+def _lock_is_fresh(lock_path: Path) -> bool:
+    """True if the lock was touched recently — assume another live Chrome owns it."""
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+        return age < _LOCK_FRESH_THRESHOLD_S
+    except Exception:
+        return False
+
+
+def _another_instance_active() -> bool:
+    """Detect if another JobPilot instance is currently using the bot_profile."""
+    profile = Path(BOT_PROFILE_DIR)
+    if not profile.exists():
+        return False
+    for name in _LOCK_FILES:
+        lock = profile / name
+        if (lock.exists() or lock.is_symlink()) and _lock_is_fresh(lock):
+            return True
+    return False
 
 
 def _clear_chrome_locks() -> None:
-    """Remove orphan Chrome singleton lock files from a previous crashed run.
+    """Remove ORPHAN Chrome singleton lock files from a previous crashed run.
 
-    Without this, launching on a fresh boot after a hard shutdown can hang
-    indefinitely while Chrome waits for a process that no longer exists.
+    Skips fresh locks (< 60s old) to avoid stealing the lock from a parallel
+    JobPilot instance (e.g. connect running while apply is also active).
+    Without this guard, the second instance would silently kill the first.
     """
     profile = Path(BOT_PROFILE_DIR)
     if not profile.exists():
@@ -28,9 +52,15 @@ def _clear_chrome_locks() -> None:
     for name in _LOCK_FILES:
         lock = profile / name
         try:
-            if lock.exists() or lock.is_symlink():
-                lock.unlink()
-                logger.info(f"Removed stale Chrome lock: {name}")
+            if not (lock.exists() or lock.is_symlink()):
+                continue
+            if _lock_is_fresh(lock):
+                logger.info(
+                    f"Skipping fresh Chrome lock ({name}) — another instance likely active"
+                )
+                continue
+            lock.unlink()
+            logger.info(f"Removed stale Chrome lock: {name}")
         except Exception as e:
             logger.warning(f"Could not remove {name}: {e}")
 
@@ -60,6 +90,14 @@ def get_config(force_headless: bool = False) -> dict:
 
 async def create_context(pw, force_headless: bool = False):
     config = get_config(force_headless)
+    if _another_instance_active():
+        msg = (
+            "Outra instancia do JobPilot esta usando bot_profile (lock fresco detectado). "
+            "Rodar apply e connect ao mesmo tempo com o mesmo perfil causa crash do Chrome. "
+            "Espere a outra terminar ou stagger os agendamentos."
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
     logger.info(f"Launching Chrome (headless={config['headless']})")
     _clear_chrome_locks()
 
