@@ -20,10 +20,12 @@ class FeedPage:
         await self.page.goto(self.url, wait_until="domcontentloaded")
         try:
             await self.page.wait_for_selector(
-                "div[data-urn], div.feed-shared-update-v2", timeout=15000
+                "[data-urn*='activity'], [data-id*='activity'], div.feed-shared-update-v2",
+                timeout=20000,
             )
         except Exception:
             logger.warning("Feed posts did not load in time")
+        await self.page.wait_for_timeout(2000)
 
     async def scroll_feed(self, n: int = 5, pause_ms: int = 1500) -> None:
         for i in range(n):
@@ -32,19 +34,29 @@ class FeedPage:
             logger.debug(f"Scrolled feed {i + 1}/{n}")
 
     async def get_posts(self) -> list[ElementHandle]:
-        posts = await self.page.query_selector_all(
-            "div.feed-shared-update-v2[data-urn], div[data-urn^='urn:li:activity']"
-        )
-        logger.info(f"Found {len(posts)} posts on feed")
-        return posts
+        selectors = [
+            "div.feed-shared-update-v2[data-urn]",
+            "div[data-urn^='urn:li:activity']",
+            "div[data-id^='urn:li:activity']",
+            "[data-urn*='activity']",
+            "div.feed-shared-update-v2",
+        ]
+        for sel in selectors:
+            posts = await self.page.query_selector_all(sel)
+            if posts:
+                logger.info(f"Found {len(posts)} posts on feed (sel={sel!r})")
+                return posts
+        logger.info("Found 0 posts on feed")
+        return []
 
     async def get_post_urn(self, post: ElementHandle) -> Optional[str]:
-        try:
-            urn = await post.get_attribute("data-urn")
-            if urn:
-                return urn
-        except Exception:
-            pass
+        for attr in ("data-urn", "data-id"):
+            try:
+                val = await post.get_attribute(attr)
+                if val and "activity" in val:
+                    return val
+            except Exception:
+                continue
         return None
 
     async def get_post_author(self, post: ElementHandle) -> str:
