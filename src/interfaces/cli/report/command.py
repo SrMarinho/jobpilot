@@ -7,32 +7,37 @@ from src.utils.logger import set_run_context
 
 
 def run_report(
-    month: Optional[str],
+    week: Optional[str],
     prev: bool,
     year: Optional[int],
     telegram: bool,
     scheduled: bool,
 ) -> None:
     from datetime import date as _date
-    from src.core.use_cases.monthly_report import (
+    from src.core.use_cases.weekly_report import (
         generate_report,
         generate_year_report,
         _save_report,
         _format_report,
         _format_year_report,
-        _prev_month,
-        run_monthly_report_scheduled,
+        _prev_week,
+        _current_week,
+        run_weekly_report_scheduled,
     )
 
     def _print(text: str):
         sys.stdout.buffer.write(
-            (text.replace("<b>", "").replace("</b>", "") + "\n").encode(
-                "utf-8", "replace"
-            )
+            (
+                text.replace("<b>", "")
+                .replace("</b>", "")
+                .replace("<i>", "")
+                .replace("</i>", "")
+                + "\n"
+            ).encode("utf-8", "replace")
         )
 
     if scheduled:
-        run_monthly_report_scheduled()
+        run_weekly_report_scheduled()
     elif year:
         rep = generate_year_report(year)
         _save_report(rep)
@@ -44,16 +49,17 @@ def run_report(
     else:
         today = _date.today()
         if prev:
-            yr, mo = _prev_month(today)
-        elif month:
+            yr, wk = _prev_week(today)
+        elif week:
             try:
-                yr, mo = map(int, month.split("-"))
-            except ValueError:
-                print("Invalid --month format. Use YYYY-MM")
+                parts = week.upper().replace("W", "").split("-")
+                yr, wk = int(parts[0]), int(parts[1])
+            except (ValueError, IndexError):
+                print("Invalid --week format. Use YYYY-Www (e.g. 2026-W25)")
                 return
         else:
-            yr, mo = today.year, today.month
-        rep = generate_report(yr, mo)
+            yr, wk = _current_week(today)
+        rep = generate_report(yr, wk)
         _save_report(rep)
         if telegram:
             from src.utils.telegram import send_telegram
@@ -65,12 +71,13 @@ def run_report(
 def register_report_command(app: typer.Typer) -> None:
     @app.command()
     def report(
-        month: Optional[str] = typer.Option(
-            None, "--month", metavar="YYYY-MM", help="Specific month (e.g. 2025-03)"
+        week: Optional[str] = typer.Option(
+            None,
+            "--week",
+            metavar="YYYY-Www",
+            help="Specific week (e.g. 2026-W25)",
         ),
-        prev: bool = typer.Option(
-            False, "--prev", help="Report for the previous month"
-        ),
+        prev: bool = typer.Option(False, "--prev", help="Report for the previous week"),
         year: Optional[int] = typer.Option(
             None,
             "--year",
@@ -83,9 +90,9 @@ def register_report_command(app: typer.Typer) -> None:
         scheduled: bool = typer.Option(
             False,
             "--scheduled",
-            help="Scheduled mode: send via Telegram only once per month",
+            help="Scheduled mode: send via Telegram only once per week",
         ),
     ):
-        """Generate and print monthly report (default: current month)."""
+        """Generate and print weekly report (default: current week)."""
         set_run_context("report")
-        run_report(month, prev, year, telegram, scheduled)
+        run_report(week, prev, year, telegram, scheduled)

@@ -3,12 +3,13 @@
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <Delay>PT5M</Delay>
     </LogonTrigger>
   </Triggers>
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_report.bat"</Arguments>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_engage.bat"</Arguments>
     </Exec>
   </Actions>
   <Settings>
@@ -19,6 +20,6 @@
     <Enabled>true</Enabled>
   </Settings>
   <RegistrationInfo>
-    <Description>JobPilot - Send weekly report via Telegram on startup (once per week)</Description>
+    <Description>JobPilot - Engage with LinkedIn feed posts (like + comment + share) on logon, once per day</Description>
   </RegistrationInfo>
 </Task>

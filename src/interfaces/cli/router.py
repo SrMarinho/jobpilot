@@ -2,6 +2,7 @@ import typer
 
 from src.interfaces.cli.apply.command import register_apply_command
 from src.interfaces.cli.connect.command import register_connect_command
+from src.interfaces.cli.engage.command import register_engage_command
 from src.interfaces.cli.report.command import register_report_command
 from src.interfaces.cli.misc.command import register_misc_commands
 from src.interfaces.cli.skills.command import register_skills_commands
@@ -36,6 +37,7 @@ def register(app: typer.Typer) -> None:
 
     register_apply_command(app)
     register_connect_command(app)
+    register_engage_command(app)
     register_report_command(app)
     register_misc_commands(app)
 

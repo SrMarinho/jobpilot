@@ -64,25 +64,25 @@ def today_str() -> str:
     return date.today().isoformat()
 
 
-def is_already_ran_today() -> bool:
+def is_already_ran_today(task: str = "connect") -> bool:
     data = load_last_urls()
-    return data.get("connect_last_run_date") == today_str()
+    return data.get(f"{task}_last_run_date") == today_str()
 
 
-def save_ran_today():
+def save_ran_today(task: str = "connect"):
     data = load_last_urls()
-    data["connect_last_run_date"] = today_str()
+    data[f"{task}_last_run_date"] = today_str()
     with open(LAST_URLS_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def is_weekly_limit_reached() -> bool:
+def is_weekly_limit_reached(task: str = "connect") -> bool:
     data = load_last_urls()
-    return data.get("connect_weekly_limit_week") == current_week()
+    return data.get(f"{task}_weekly_limit_week") == current_week()
 
 
-def save_weekly_limit_reached():
+def save_weekly_limit_reached(task: str = "connect"):
     data = load_last_urls()
-    data["connect_weekly_limit_week"] = current_week()
+    data[f"{task}_weekly_limit_week"] = current_week()
     with open(LAST_URLS_FILE, "w") as f:
         json.dump(data, f, indent=2)

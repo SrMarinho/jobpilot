@@ -57,15 +57,19 @@ temp/
 .env
 
 # Infraestrutura de tarefas agendadas (versionados como templates)
-.local/
+.local/*
 !.local/startup_apply.bat
 !.local/startup_connect.bat
+!.local/startup_connect.ps1
 !.local/startup_report.bat
+!.local/startup_engage.bat
+!.local/startup_engage.ps1
 !.local/run_hidden.vbs
 !.local/run_hidden.ps1
 !.local/jobpilot_task.xml
 !.local/jobpilot_connect_task.xml
 !.local/jobpilot_report_task.xml
+!.local/jobpilot_engage_task.xml
 
 # Dados e caches locais (runtime, nao versionar)
 .playwright-mcp/

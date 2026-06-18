@@ -110,7 +110,7 @@ def resolve_connect_config(
 async def run_connect_browser(
     page, url: str, max_pages: int, start_page: int, on_page_change
 ) -> None:
-    from src.core.use_cases.monthly_report import save_connections
+    from src.core.use_cases.weekly_report import save_connections
 
     manager = ConnectionManager(
         page,
