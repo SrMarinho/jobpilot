@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import random
 from typing import Optional
 
@@ -8,6 +9,47 @@ from src.config.settings import logger
 
 
 FEED_URL = "https://www.linkedin.com/feed/"
+
+_COMMENT_SELECTOR = "button[aria-label='Comentar'], button[aria-label='Comment']"
+_SHARE_SELECTOR = "button[aria-label='Compartilhar'], button[aria-label='Share']"
+
+_WALK_UP_JS = """
+(el, shareSelector) => {
+    let cur = el;
+    for (let i = 0; i < 15; i++) {
+        cur = cur.parentElement;
+        if (!cur) return null;
+        const hasShare = cur.querySelector(shareSelector);
+        const txtLen = (cur.innerText || '').length;
+        if (hasShare && txtLen > 200) return cur;
+    }
+    return null;
+}
+"""
+
+_LIKE_BTN_JS = """
+(el) => {
+    const excluded = /coment|compart|salvar|save|send|enviar|mais|repost|seguir|follow|conectar|connect/i;
+    const btns = el.querySelectorAll('button');
+    for (const b of btns) {
+        const al = b.getAttribute('aria-label') || '';
+        if (excluded.test(al)) continue;
+        if (!b.hasAttribute('aria-pressed')) continue;
+        const rect = b.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        return b;
+    }
+    for (const b of btns) {
+        const al = ((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '')).toLowerCase();
+        if (/curtir|^like$|reagir/.test(al)) {
+            const rect = b.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            return b;
+        }
+    }
+    return null;
+}
+"""
 
 
 class FeedPage:
@@ -19,12 +61,9 @@ class FeedPage:
         logger.info(f"Opening feed: {self.url}")
         await self.page.goto(self.url, wait_until="domcontentloaded")
         try:
-            await self.page.wait_for_selector(
-                "[data-urn*='activity'], [data-id*='activity'], div.feed-shared-update-v2",
-                timeout=20000,
-            )
+            await self.page.wait_for_selector(_COMMENT_SELECTOR, timeout=20000)
         except Exception:
-            logger.warning("Feed posts did not load in time")
+            logger.warning("No comment buttons found on feed within timeout")
         await self.page.wait_for_timeout(2000)
 
     async def scroll_feed(self, n: int = 5, pause_ms: int = 1500) -> None:
@@ -34,63 +73,62 @@ class FeedPage:
             logger.debug(f"Scrolled feed {i + 1}/{n}")
 
     async def get_posts(self) -> list[ElementHandle]:
-        selectors = [
-            "div.feed-shared-update-v2[data-urn]",
-            "div[data-urn^='urn:li:activity']",
-            "div[data-id^='urn:li:activity']",
-            "[data-urn*='activity']",
-            "div.feed-shared-update-v2",
-        ]
-        for sel in selectors:
-            posts = await self.page.query_selector_all(sel)
-            if posts:
-                logger.info(f"Found {len(posts)} posts on feed (sel={sel!r})")
-                return posts
-        logger.info("Found 0 posts on feed")
-        return []
+        comment_btns = await self.page.query_selector_all(_COMMENT_SELECTOR)
+        posts: list[ElementHandle] = []
+        seen_keys: set[str] = set()
+        for btn in comment_btns:
+            try:
+                container_handle = await btn.evaluate_handle(
+                    _WALK_UP_JS, _SHARE_SELECTOR
+                )
+            except Exception as e:
+                logger.debug(f"Walk-up failed: {e}")
+                continue
+            elem = container_handle.as_element()
+            if not elem:
+                continue
+            try:
+                key = await elem.evaluate("el => (el.innerText || '').slice(0, 80)")
+            except Exception:
+                continue
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            posts.append(elem)
+        logger.info(f"Found {len(posts)} posts via walk-up")
+        return posts
 
     async def get_post_urn(self, post: ElementHandle) -> Optional[str]:
-        for attr in ("data-urn", "data-id"):
-            try:
-                val = await post.get_attribute(attr)
-                if val and "activity" in val:
-                    return val
-            except Exception:
-                continue
-        return None
+        try:
+            text = await post.evaluate("el => (el.innerText || '').slice(0, 500)")
+        except Exception:
+            return None
+        if not text:
+            return None
+        digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+        return f"feed:{digest}"
 
     async def get_post_author(self, post: ElementHandle) -> str:
-        for sel in [
-            ".update-components-actor__title span[aria-hidden='true']",
-            ".update-components-actor__title",
-            ".update-components-actor__name",
-            "span.feed-shared-actor__name",
-        ]:
-            try:
-                el = await post.query_selector(sel)
-                if el:
-                    text = (await el.inner_text()).strip()
-                    if text:
-                        return text.split("\n")[0]
-            except Exception:
-                continue
+        try:
+            raw = await post.evaluate("el => el.innerText || ''")
+        except Exception:
+            return "unknown"
+        for line in raw.split("\n"):
+            line = line.strip()
+            if len(line) >= 3 and not line.isdigit():
+                return line.split("•")[0].strip()
         return "unknown"
 
     async def get_post_text(self, post: ElementHandle) -> str:
-        for sel in [
-            ".update-components-text",
-            ".feed-shared-text",
-            ".update-components-update-v2__commentary",
-        ]:
-            try:
-                el = await post.query_selector(sel)
-                if el:
-                    text = (await el.inner_text()).strip()
-                    if text:
-                        return text
-            except Exception:
-                continue
-        return ""
+        try:
+            raw = await post.evaluate("el => el.innerText || ''")
+        except Exception:
+            return ""
+        lines = [line.strip() for line in raw.split("\n")]
+        while lines and (not lines[-1] or lines[-1].isdigit() or len(lines[-1]) < 3):
+            lines.pop()
+        body = "\n".join(lines[2:]) if len(lines) > 2 else "\n".join(lines)
+        return body.strip()
 
     async def _scroll_into_view(self, post: ElementHandle) -> None:
         try:
@@ -101,120 +139,108 @@ class FeedPage:
 
     async def like_post(self, post: ElementHandle) -> bool:
         await self._scroll_into_view(post)
-        for sel in [
-            "button[aria-label*='Reagir como'][aria-pressed='false']",
-            "button[aria-label*='Reagir'][aria-pressed='false']",
-            "button[aria-label*='React Like'][aria-pressed='false']",
-            "button[aria-label*='Like'][aria-pressed='false']",
-            "button.react-button__trigger[aria-pressed='false']",
-        ]:
+        try:
+            btn_handle = await post.evaluate_handle(_LIKE_BTN_JS)
+        except Exception as e:
+            logger.warning(f"Like discovery failed: {e}")
+            return False
+        elem = btn_handle.as_element()
+        if not elem:
+            logger.warning("Like button not found in post container")
+            return False
+        try:
+            pressed = await elem.get_attribute("aria-pressed")
+        except Exception:
+            pressed = None
+        if pressed == "true":
+            logger.info("Already liked, skipping")
+            return False
+        try:
+            await elem.click()
+            logger.info("Liked post")
+            await self.page.wait_for_timeout(800)
+            return True
+        except Exception as e:
+            logger.warning(f"Like click failed: {e}")
+            return False
+
+    async def _find_visible_editor(self) -> Optional[ElementHandle]:
+        editors = await self.page.query_selector_all(
+            "[contenteditable='true'][role='textbox']"
+        )
+        for ed in reversed(editors):
             try:
-                btn = await post.query_selector(sel)
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    logger.info("Liked post")
-                    await self.page.wait_for_timeout(800)
-                    return True
+                if await ed.is_visible():
+                    return ed
             except Exception:
                 continue
-        logger.warning("Like button not found or already pressed")
+        return None
+
+    async def _click_submit_comment(self) -> bool:
+        labels = [
+            "Publicar comentário",
+            "Post comment",
+            "Publicar",
+            "Comentar comentário",
+            "Comment",
+        ]
+        for label in labels:
+            for sel in (
+                f"button[aria-label='{label}']",
+                f"button:has-text('{label}')",
+            ):
+                try:
+                    btn = await self.page.query_selector(sel)
+                    if btn and await btn.is_visible() and await btn.is_enabled():
+                        await btn.click()
+                        logger.info(f"Clicked submit comment ({label!r})")
+                        return True
+                except Exception:
+                    continue
         return False
 
     async def submit_comment(self, post: ElementHandle, text: str) -> bool:
         await self._scroll_into_view(post)
-
-        comment_btn = None
-        for sel in [
-            "button[aria-label*='Comentar']",
-            "button[aria-label*='Comment']",
-        ]:
-            try:
-                comment_btn = await post.query_selector(sel)
-                if comment_btn and await comment_btn.is_visible():
-                    break
-            except Exception:
-                continue
+        comment_btn = await post.query_selector(_COMMENT_SELECTOR)
         if not comment_btn:
-            logger.warning("Comment button not found")
+            logger.warning("Comment button not found in container")
             return False
-
         try:
             await comment_btn.click()
         except Exception as e:
             logger.warning(f"Comment button click failed: {e}")
             return False
-        await self.page.wait_for_timeout(1200)
+        await self.page.wait_for_timeout(1500)
 
-        editor = None
-        for sel in [
-            ".comments-comment-box__form [contenteditable='true']",
-            ".comments-comment-box [role='textbox']",
-            "[contenteditable='true'][role='textbox']",
-        ]:
-            try:
-                ed = await post.query_selector(sel)
-                if ed and await ed.is_visible():
-                    editor = ed
-                    break
-            except Exception:
-                continue
+        editor = await self._find_visible_editor()
         if not editor:
-            try:
-                editor = await self.page.query_selector(
-                    "[contenteditable='true'][role='textbox']"
-                )
-            except Exception:
-                editor = None
-        if not editor:
-            logger.warning("Comment editor not found")
+            logger.warning("Comment editor not visible after opening box")
             return False
-
         try:
             await editor.click()
             await self.page.wait_for_timeout(300)
             await editor.type(text, delay=random.randint(20, 60))
-            await self.page.wait_for_timeout(600)
+            await self.page.wait_for_timeout(700)
         except Exception as e:
             logger.warning(f"Typing comment failed: {e}")
             return False
 
-        for sel in [
-            "button.comments-comment-box__submit-button",
-            "button[aria-label*='Publicar comentário']",
-            "button[aria-label*='Post comment']",
-            "button:has-text('Publicar')",
-            "button:has-text('Post')",
-        ]:
+        if not await self._click_submit_comment():
+            logger.warning("Could not find submit button for comment")
             try:
-                submit = await post.query_selector(sel)
-                if not submit:
-                    submit = await self.page.query_selector(sel)
-                if submit and await submit.is_visible() and await submit.is_enabled():
-                    await submit.click()
-                    logger.info(f"Submitted comment: {text!r}")
-                    await self.page.wait_for_timeout(2000)
-                    return True
+                await self.page.keyboard.press("Escape")
             except Exception:
-                continue
-        logger.warning("Comment submit button not found")
-        return False
+                pass
+            return False
+        logger.info(f"Submitted comment: {text!r}")
+        await self.page.wait_for_timeout(2000)
+        return True
 
     async def share_post(self, post: ElementHandle) -> bool:
         await self._scroll_into_view(post)
-        share_btn = None
-        for sel in [
-            "button[aria-label*='Compartilhar']",
-            "button[aria-label*='Share']",
-            "button.social-share-button",
-        ]:
-            try:
-                share_btn = await post.query_selector(sel)
-                if share_btn and await share_btn.is_visible():
-                    break
-            except Exception:
-                continue
+        share_btn = await post.query_selector(_SHARE_SELECTOR)
         if not share_btn:
-            logger.warning("Share button not found")
+            logger.warning("Share button not found in container")
             return False
         try:
             await share_btn.click()
@@ -223,23 +249,29 @@ class FeedPage:
             return False
         await self.page.wait_for_timeout(1200)
 
-        for sel in [
-            "div[role='menuitem']:has-text('Repostar agora')",
-            "div[role='button']:has-text('Repostar agora')",
-            "button:has-text('Repostar agora')",
-            "div[role='menuitem']:has-text('Repost')",
-            "button:has-text('Repost now')",
-            "button[aria-label*='Repostar']",
-        ]:
-            try:
-                opt = await self.page.query_selector(sel)
-                if opt and await opt.is_visible():
-                    await opt.click()
-                    logger.info("Shared (reposted) post")
-                    await self.page.wait_for_timeout(1500)
-                    return True
-            except Exception:
-                continue
+        option_labels = [
+            "Repostar agora",
+            "Repost agora",
+            "Repost",
+            "Compartilhar como repostagem",
+            "Repost now",
+        ]
+        for label in option_labels:
+            for sel in (
+                f"div[role='menuitem']:has-text('{label}')",
+                f"div[role='button']:has-text('{label}')",
+                f"button:has-text('{label}')",
+                f"button[aria-label='{label}']",
+            ):
+                try:
+                    opt = await self.page.query_selector(sel)
+                    if opt and await opt.is_visible():
+                        await opt.click()
+                        logger.info(f"Reposted ({label!r})")
+                        await self.page.wait_for_timeout(1500)
+                        return True
+                except Exception:
+                    continue
         try:
             await self.page.keyboard.press("Escape")
         except Exception:
