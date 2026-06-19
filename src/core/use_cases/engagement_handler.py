@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 
@@ -108,20 +109,29 @@ class EngagementHandler:
         if is_blacklisted(post_text):
             logger.debug("Post blacklisted by keyword filter")
             return False
+        if os.getenv("ENGAGE_SKIP_RELEVANCE") == "1":
+            logger.info("ENGAGE_SKIP_RELEVANCE=1, assuming relevant")
+            return True
         prompt = (
-            f"Você avalia se um post do LinkedIn é tecnicamente relevante para o perfil abaixo.\n\n"
-            f"Perfil: {self.user_headline}\n"
-            f"Currículo (resumo):\n{self.resume[:500]}\n\n"
+            f"Voce avalia se um post do LinkedIn fala sobre tecnologia/desenvolvimento de software.\n\n"
             f'Post:\n"""\n{post_text[:600]}\n"""\n\n'
-            f"O post é tecnicamente relevante e apropriado para engajamento profissional? "
-            f"Responda APENAS 'sim' ou 'nao'."
+            f"O post menciona tecnologia, programacao, desenvolvimento, devops, cloud, dados, IA, "
+            f"engenharia de software, ferramentas tech, carreira em TI, ou conteudo similar?\n"
+            f"Em duvida, responda 'sim'. So responda 'nao' se for claramente nao-tecnico "
+            f"(politica, religiao, fofoca, motivacional generico sem tech).\n"
+            f"Responda APENAS uma palavra: sim OU nao."
         )
         try:
             resp = (await self.llm.complete(prompt)).strip().lower()
         except Exception as e:
             logger.warning(f"is_relevant LLM call failed: {e}")
             return False
-        return resp.startswith("sim") or resp.startswith("yes")
+        result = resp.startswith("sim") or resp.startswith("yes")
+        logger.info(
+            f"is_relevant verdict: {result} (resp={resp[:60]!r}, "
+            f"text_len={len(post_text)})"
+        )
+        return result
 
     async def generate_comment(self, post_text: str, author: str) -> str | None:
         prompt = (

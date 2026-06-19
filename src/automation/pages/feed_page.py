@@ -29,23 +29,22 @@ _WALK_UP_JS = """
 
 _LIKE_BTN_JS = """
 (el) => {
-    const excluded = /coment|compart|salvar|save|send|enviar|mais|repost|seguir|follow|conectar|connect/i;
+    const isVisible = (b) => {
+        const r = b.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    };
     const btns = el.querySelectorAll('button');
+    // Primary: aria-label contains "reação" / "react" (LinkedIn 2026 pattern)
+    for (const b of btns) {
+        const al = (b.getAttribute('aria-label') || '').toLowerCase();
+        if (/reação|reacao|react|curti|like/.test(al) && isVisible(b)) return b;
+    }
+    // Fallback: aria-pressed toggle excluding action bar peers
+    const excluded = /coment|compart|salvar|save|send|enviar|mais|repost|seguir|follow|conectar|connect|ocultar|publicação|publicacao|abrir menu/i;
     for (const b of btns) {
         const al = b.getAttribute('aria-label') || '';
         if (excluded.test(al)) continue;
-        if (!b.hasAttribute('aria-pressed')) continue;
-        const rect = b.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) continue;
-        return b;
-    }
-    for (const b of btns) {
-        const al = ((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '')).toLowerCase();
-        if (/curtir|^like$|reagir/.test(al)) {
-            const rect = b.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) continue;
-            return b;
-        }
+        if (b.hasAttribute('aria-pressed') && isVisible(b)) return b;
     }
     return null;
 }
@@ -108,27 +107,125 @@ class FeedPage:
         digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
         return f"feed:{digest}"
 
-    async def get_post_author(self, post: ElementHandle) -> str:
+    @staticmethod
+    def _is_skip_line(line: str) -> bool:
+        if not line or len(line) < 3:
+            return True
+        low = line.lower()
+        skip_exact = {
+            "publicação no feed",
+            "publicacao no feed",
+            "sugestões",
+            "sugestoes",
+            "suggested",
+            "recentes",
+            "recent",
+            "promovido",
+            "promoted",
+            "seguir",
+            "follow",
+            "follow back",
+            "conectar",
+            "connect",
+            "curtir",
+            "like",
+            "comentar",
+            "comment",
+            "compartilhar",
+            "share",
+            "salvar",
+            "save",
+            "enviar",
+            "send",
+            "mais",
+            "more",
+            "ver tradução",
+            "see translation",
+            "ver mais",
+            "see more",
+            "carregar mais",
+            "load more",
+            "mensagem",
+            "message",
+        }
+        if low in skip_exact:
+            return True
+        if line.strip(" •·∙") == "":
+            return True
+        # Connection degree / timestamp lines
+        if "•" in line and len(line) < 25:
+            return True
+        # Pure number (counter)
+        compact = line.replace(".", "").replace(",", "").replace(" ", "")
+        if compact.isdigit():
+            return True
+        # Passive engagement headers: "X gostou disso", "X liked", "X comentou", "X compartilhou"
+        suffixes = (
+            " gostou",
+            " gostou disso",
+            " curtiu",
+            " curtiu isso",
+            " comentou",
+            " comentou isso",
+            " compartilhou",
+            " compartilhou isso",
+            " liked",
+            " liked this",
+            " commented",
+            " commented on this",
+            " shared",
+            " shared this",
+            " reposted",
+            " reposted this",
+            " seguiu",
+            " segue",
+            " follows",
+            " followed",
+        )
+        for sfx in suffixes:
+            if low.endswith(sfx):
+                return True
+        return False
+
+    async def _post_lines(self, post: ElementHandle) -> list[str]:
         try:
             raw = await post.evaluate("el => el.innerText || ''")
         except Exception:
-            return "unknown"
-        for line in raw.split("\n"):
-            line = line.strip()
-            if len(line) >= 3 and not line.isdigit():
-                return line.split("•")[0].strip()
+            return []
+        return [line.strip() for line in raw.split("\n")]
+
+    async def get_post_author(self, post: ElementHandle) -> str:
+        for line in await self._post_lines(post):
+            if self._is_skip_line(line):
+                continue
+            # Author rarely has pipes/bullets (those = headline)
+            if "|" in line or "•" in line:
+                continue
+            return line
         return "unknown"
 
     async def get_post_text(self, post: ElementHandle) -> str:
-        try:
-            raw = await post.evaluate("el => el.innerText || ''")
-        except Exception:
-            return ""
-        lines = [line.strip() for line in raw.split("\n")]
+        lines = await self._post_lines(post)
+        # Trim trailing counter/short noise
         while lines and (not lines[-1] or lines[-1].isdigit() or len(lines[-1]) < 3):
             lines.pop()
-        body = "\n".join(lines[2:]) if len(lines) > 2 else "\n".join(lines)
-        return body.strip()
+        # Skip header lines: label, section, author, headline, timestamp, follow button
+        body_lines: list[str] = []
+        seen_body = False
+        for line in lines:
+            if not seen_body:
+                if self._is_skip_line(line):
+                    continue
+                # Headlines tend to have | or be very long noun-phrase
+                if "|" in line and len(line) > 40:
+                    continue
+                # Author detected → next non-skip is body
+                seen_body = True
+                continue
+            if self._is_skip_line(line):
+                continue
+            body_lines.append(line)
+        return "\n".join(body_lines).strip()
 
     async def _scroll_into_view(self, post: ElementHandle) -> None:
         try:
@@ -149,15 +246,27 @@ class FeedPage:
             logger.warning("Like button not found in post container")
             return False
         try:
-            pressed = await elem.get_attribute("aria-pressed")
+            label = (await elem.get_attribute("aria-label") or "").lower()
         except Exception:
-            pressed = None
-        if pressed == "true":
-            logger.info("Already liked, skipping")
+            label = ""
+        # Already liked patterns. "nenhuma reação" means NOT liked yet → safe to click.
+        already_liked_markers = (
+            "curtido",
+            "curti ",
+            "liked",
+            "gostei",
+            "aplaudido",
+            "comemorado",
+            "amado",
+            "achei interessante",
+            "achei engra",
+        )
+        if any(m in label for m in already_liked_markers) and "nenhuma" not in label:
+            logger.info(f"Already liked (label={label!r}), skipping")
             return False
         try:
             await elem.click()
-            logger.info("Liked post")
+            logger.info(f"Liked post (button label={label!r})")
             await self.page.wait_for_timeout(800)
             return True
         except Exception as e:
@@ -165,9 +274,28 @@ class FeedPage:
             return False
 
     async def _find_visible_editor(self) -> Optional[ElementHandle]:
-        editors = await self.page.query_selector_all(
-            "[contenteditable='true'][role='textbox']"
-        )
+        # LinkedIn 2026: editor div[role=textbox][contenteditable=true]
+        # aria-label contains "comentário" / "comment".
+        for _ in range(10):
+            editors = await self.page.query_selector_all(
+                "[contenteditable='true'][role='textbox']"
+            )
+            for ed in reversed(editors):
+                try:
+                    al = (await ed.get_attribute("aria-label") or "").lower()
+                    if "coment" not in al and "comment" not in al:
+                        continue
+                    if await ed.is_visible():
+                        try:
+                            await ed.scroll_into_view_if_needed(timeout=2000)
+                        except Exception:
+                            pass
+                        return ed
+                except Exception:
+                    continue
+            await self.page.wait_for_timeout(300)
+        # Last-resort: any visible contenteditable
+        editors = await self.page.query_selector_all("[contenteditable='true']")
         for ed in reversed(editors):
             try:
                 if await ed.is_visible():
@@ -177,27 +305,53 @@ class FeedPage:
         return None
 
     async def _click_submit_comment(self) -> bool:
-        labels = [
-            "Publicar comentário",
-            "Post comment",
-            "Publicar",
-            "Comentar comentário",
-            "Comment",
-        ]
-        for label in labels:
-            for sel in (
-                f"button[aria-label='{label}']",
-                f"button:has-text('{label}')",
-            ):
-                try:
-                    btn = await self.page.query_selector(sel)
-                    if btn and await btn.is_visible() and await btn.is_enabled():
-                        await btn.click()
-                        logger.info(f"Clicked submit comment ({label!r})")
-                        return True
-                except Exception:
-                    continue
-        return False
+        # Submit only enables after typing. Search via aria/text after a short delay.
+        await self.page.wait_for_timeout(500)
+        btn_handle = await self.page.evaluate_handle("""
+() => {
+    const isVisible = (b) => {
+        const r = b.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    };
+    const btns = document.querySelectorAll('button');
+    for (const b of btns) {
+        if (b.disabled) continue;
+        if (!isVisible(b)) continue;
+        const al = (b.getAttribute('aria-label') || '').toLowerCase();
+        const txt = (b.innerText || '').trim().toLowerCase();
+        if (/publicar comentário|publicar comentario|post comment|enviar comentário|enviar comentario/.test(al)) return b;
+        if (txt === 'comentar' && al !== 'comentar') return b;
+        if (txt === 'publicar' || txt === 'post' || txt === 'comment') return b;
+    }
+    // Generic fallback: enabled button with text "Comentar"/"Publicar" inside comment box
+    for (const b of btns) {
+        if (b.disabled || !isVisible(b)) continue;
+        const al = (b.getAttribute('aria-label') || '').toLowerCase();
+        if (al === 'comentar') {
+            // Only accept if NOT the open-comments-section button (has aria-label exact "Comentar" + count text)
+            const txt = (b.innerText || '').trim();
+            if (!/^\\d+$/.test(txt)) return b;
+        }
+    }
+    return null;
+}
+        """)
+        elem = btn_handle.as_element()
+        if elem:
+            try:
+                label = await elem.get_attribute("aria-label") or ""
+                await elem.click()
+                logger.info(f"Clicked submit comment (aria={label!r})")
+                return True
+            except Exception as e:
+                logger.debug(f"Submit click failed: {e}")
+        # Fallback: keyboard shortcut Ctrl+Enter
+        try:
+            await self.page.keyboard.press("Control+Enter")
+            logger.info("Submitted comment via Ctrl+Enter fallback")
+            return True
+        except Exception:
+            return False
 
     async def submit_comment(self, post: ElementHandle, text: str) -> bool:
         await self._scroll_into_view(post)
@@ -247,37 +401,54 @@ class FeedPage:
         except Exception as e:
             logger.warning(f"Share button click failed: {e}")
             return False
-        await self.page.wait_for_timeout(1200)
+        await self.page.wait_for_timeout(1500)
 
-        option_labels = [
-            "Repostar agora",
-            "Repost agora",
-            "Repost",
-            "Compartilhar como repostagem",
-            "Repost now",
-        ]
-        for label in option_labels:
-            for sel in (
-                f"div[role='menuitem']:has-text('{label}')",
-                f"div[role='button']:has-text('{label}')",
-                f"button:has-text('{label}')",
-                f"button[aria-label='{label}']",
-            ):
+        # LinkedIn 2026: share menu has 2 div[role=button] items.
+        # Item 1 = "Compartilhe com suas ideias" (quote-share, opens composer)
+        # Item 2 = "Compartilhar / Compartilhe a publicação ..." (direct repost)
+        # We want the direct repost: match by "Compartilhe a publicação" text.
+        repost_handle = await self.page.evaluate_handle("""
+() => {
+    const items = document.querySelectorAll("div[role='button'], div[role='menuitem'], button");
+    for (const el of items) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        const txt = (el.innerText || '').toLowerCase();
+        if (/compartilhe a publica|share .* post|repostar agora|repost now|repost$/.test(txt)) {
+            return el;
+        }
+    }
+    return null;
+}
+        """)
+        repost_elem = repost_handle.as_element()
+        if not repost_elem:
+            # Fallback: legacy labels
+            for label in ("Repostar agora", "Repost agora", "Repost now"):
                 try:
-                    opt = await self.page.query_selector(sel)
+                    opt = await self.page.query_selector(
+                        f"button:has-text('{label}'), div[role='button']:has-text('{label}')"
+                    )
                     if opt and await opt.is_visible():
-                        await opt.click()
-                        logger.info(f"Reposted ({label!r})")
-                        await self.page.wait_for_timeout(1500)
-                        return True
+                        repost_elem = opt
+                        break
                 except Exception:
                     continue
+        if not repost_elem:
+            try:
+                await self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+            logger.warning("Repost option not found in share menu")
+            return False
         try:
-            await self.page.keyboard.press("Escape")
-        except Exception:
-            pass
-        logger.warning("Repost option not found in share menu")
-        return False
+            await repost_elem.click()
+            logger.info("Reposted (compartilhar direto)")
+            await self.page.wait_for_timeout(2000)
+            return True
+        except Exception as e:
+            logger.warning(f"Repost click failed: {e}")
+            return False
 
     async def random_pause(self, lo: int = 5, hi: int = 15) -> None:
         await asyncio.sleep(random.randint(lo, hi))
