@@ -161,6 +161,54 @@ def is_cliche(comment: str) -> bool:
     return bool(_CLICHE_RE.match(comment.strip()))
 
 
+# Linguagens/frameworks nomeados. Se o comentário cita um que NÃO aparece no
+# post, o modelo alucinou o stack (ex: falar de Django num post sobre Spring).
+_NAMED_TECH = (
+    "python",
+    "django",
+    "flask",
+    "fastapi",
+    "java",
+    "spring",
+    "kotlin",
+    "scala",
+    "javascript",
+    "typescript",
+    "node",
+    "nodejs",
+    "react",
+    "vue",
+    "angular",
+    "svelte",
+    "golang",
+    "rust",
+    "c#",
+    ".net",
+    "php",
+    "laravel",
+    "symfony",
+    "ruby",
+    "rails",
+    "elixir",
+    "django rest",
+    "express",
+    "nestjs",
+    "c++",
+)
+
+
+def foreign_tech_in_comment(comment: str, post_text: str) -> str | None:
+    """Retorna o 1º termo de stack citado no comentário e ausente do post."""
+    c = comment.lower()
+    p = post_text.lower()
+    for tech in _NAMED_TECH:
+        # match por palavra p/ evitar substrings espúrias (ex: 'java' em 'javascript')
+        pat = rf"(?<![a-z0-9]){re.escape(tech)}(?![a-z0-9])"
+        if re.search(pat, c) and tech not in p:
+            return tech
+    return None
+
+
 def validate_comment(comment: str) -> tuple[bool, str]:
     comment = (comment or "").strip().strip('"').strip("'")
     if not comment:
@@ -247,31 +295,46 @@ class EngagementHandler:
         variant = variant or self._pick_variant()
         angle = self._VARIANTS.get(variant, self._VARIANTS["insight"])
         prompt = (
-            f"Você é {self.user_name}, {self.user_headline}.\n"
-            f"Você está engajando em um post do LinkedIn como peer profissional.\n\n"
-            f"Currículo (resumo):\n{self.resume[:500]}\n\n"
+            f"Leia o post do LinkedIn abaixo e escreva 1 comentário como peer profissional.\n\n"
             f'Post de {author}:\n"""\n{post_text[:800]}\n"""\n\n'
-            f"Escreva 1 comentário curto (5-15 palavras), profissional, no mesmo idioma do post.\n"
+            f"Tarefa: comentário curto (5-15 palavras), profissional, no mesmo idioma do post.\n"
             f"Ângulo desta vez: {angle}\n\n"
+            f"ANCORAGEM (essencial):\n"
+            f"- Comente APENAS sobre o que o post realmente diz. Use os termos, a "
+            f"tecnologia e o stack que o PRÓPRIO post menciona.\n"
+            f"- NUNCA introduza linguagens, frameworks ou ferramentas que o post não "
+            f"cita. Se o post fala de Java/Spring, não fale de Python/Django.\n"
+            f"- Não traga seu próprio stack pessoal para o comentário.\n\n"
             f"Regras estritas:\n"
             f"- NÃO use emojis\n"
             f"- NÃO mencione que está procurando emprego\n"
             f"- NÃO use clichês ('ótimo post!', 'concordo plenamente', 'muito bom!')\n"
             f"- NÃO seja sycophantic\n"
-            f"- Se não tiver algo de valor a dizer, retorne string vazia\n\n"
+            f"- Se não tiver algo de valor e ancorado a dizer, retorne string vazia\n\n"
             f"Retorne APENAS o comentário, sem aspas, sem preâmbulo.\n"
             f"Comentário:"
         )
-        try:
-            raw = await self.llm.complete(prompt)
-        except Exception as e:
-            logger.warning(f"generate_comment LLM call failed: {e}")
-            return None, variant
-        ok, payload = validate_comment(raw)
-        if not ok:
-            logger.info(f"Comment rejected ({payload}): {raw!r}")
-            return None, variant
-        if is_blacklisted(payload):
-            logger.info("Comment rejected (blacklisted content)")
-            return None, variant
-        return payload, variant
+        for attempt in range(2):  # 1 tentativa + 1 retry
+            try:
+                raw = await self.llm.complete(prompt)
+            except Exception as e:
+                logger.warning(f"generate_comment LLM call failed: {e}")
+                return None, variant
+            ok, payload = validate_comment(raw)
+            if not ok:
+                logger.info(
+                    f"Comment rejected ({payload}) tentativa {attempt + 1}: {raw!r}"
+                )
+                continue
+            if is_blacklisted(payload):
+                logger.info("Comment rejected (blacklisted content)")
+                continue
+            foreign = foreign_tech_in_comment(payload, post_text)
+            if foreign:
+                logger.info(
+                    f"Comment rejected (stack alucinado: {foreign!r} ausente do post) "
+                    f"tentativa {attempt + 1}: {payload!r}"
+                )
+                continue
+            return payload, variant
+        return None, variant
