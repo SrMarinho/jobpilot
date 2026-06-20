@@ -1,6 +1,6 @@
 import re
-from pathlib import Path
 from src.core.ai.llm_provider import get_eval_provider
+from src.core.use_cases.resume_loader import load_resume_text
 from src.config.settings import logger
 from src.utils.text import normalize as _normalize
 
@@ -109,15 +109,7 @@ class JobEvaluator:
     def __init__(
         self, resume_path: str, preferences: str = "", level: str | list[str] = ""
     ):
-        path = Path(resume_path)
-        if path.suffix.lower() == ".pdf":
-            from pypdf import PdfReader
-
-            reader = PdfReader(resume_path)
-            self.resume = "\n".join(page.extract_text() or "" for page in reader.pages)
-        else:
-            with open(resume_path, "r", encoding="utf-8") as f:
-                self.resume = f.read()
+        self.resume = load_resume_text(resume_path)
         self.preferences = preferences
         if isinstance(level, str):
             self.levels = [level] if level else []

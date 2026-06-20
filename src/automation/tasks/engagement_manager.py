@@ -5,11 +5,9 @@ from playwright.async_api import Page
 
 from src.automation.pages import FeedPage
 from src.core.ai.llm_provider import LLMProvider
-from src.core.use_cases.engagement_handler import (
-    EngagementHandler,
-    is_blacklisted,
-    load_resume_text,
-)
+from src.core.use_cases.engagement_handler import EngagementHandler
+from src.core.use_cases.content_filters import is_blacklisted
+from src.core.use_cases.resume_loader import load_resume_text
 from src.core.use_cases.engaged_posts_tracker import EngagedPostsTracker
 from src.config.settings import logger
 

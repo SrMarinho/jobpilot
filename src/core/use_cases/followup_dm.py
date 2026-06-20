@@ -9,7 +9,7 @@ import re
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
-from src.core.use_cases.engagement_handler import is_blacklisted
+from src.core.use_cases.content_filters import is_blacklisted
 
 _MIN_CHARS = 30
 _MAX_CHARS = 320

@@ -1,230 +1,16 @@
 import os
 import random
-import re
-from pathlib import Path
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
-
-
-_BLACKLIST_KEYWORDS = {
-    "politica",
-    "política",
-    "eleicao",
-    "eleição",
-    "religiao",
-    "religião",
-    "aborto",
-    "vacina",
-    "racismo",
-    "lgbt",
-    "bolsonaro",
-    "lula",
-    "trump",
-    "biden",
-    "abortion",
-    "gun control",
-    "vaccine",
-    "election",
-    "religion",
-    "racist",
-    "racism",
-    "transgender",
-    "vagas para",
-    "estamos contratando",
-    "we are hiring",
-    "we're hiring",
-    "estamos buscando",
-    "recruiter",
-    "recrutador",
-}
-
-_TECH_KEYWORDS = (
-    "python",
-    "node",
-    "nodejs",
-    "javascript",
-    "typescript",
-    "java",
-    "golang",
-    " go ",
-    "rust",
-    "react",
-    "vue",
-    "angular",
-    "django",
-    "flask",
-    "fastapi",
-    "spring",
-    "kubernetes",
-    "k8s",
-    "docker",
-    "devops",
-    "cloud",
-    "aws",
-    "azure",
-    "gcp",
-    "google cloud",
-    "terraform",
-    "ci/cd",
-    "cicd",
-    "pipeline",
-    "microservi",
-    "api",
-    "rest",
-    "graphql",
-    "sql",
-    "postgres",
-    "mysql",
-    "mongodb",
-    "redis",
-    "banco de dados",
-    "database",
-    "backend",
-    "frontend",
-    "full-stack",
-    "fullstack",
-    "machine learning",
-    "ml",
-    " ia ",
-    " ai ",
-    "inteligência artificial",
-    "inteligencia artificial",
-    "llm",
-    "data",
-    "dados",
-    "etl",
-    "engenharia de software",
-    "software",
-    "desenvolv",
-    "programa",
-    "código",
-    "codigo",
-    "git",
-    "linux",
-    "observability",
-    "monitoring",
-    "rpa",
-    "automacao",
-    "automação",
-    "agile",
-    "scrum",
-    "arquitetura",
-    "architecture",
-    "deploy",
-    "infraestrutura",
-    "infra",
-    "engineer",
-    "developer",
-    "tech",
-    "ti ",
-    "framework",
-    "biblioteca",
-    "library",
+from src.core.use_cases.content_filters import (
+    comment_is_grounded,
+    foreign_tech_in_comment,
+    has_tech_keyword,
+    is_blacklisted,
+    is_commentable_post,
+    validate_comment,
 )
-
-
-def has_tech_keyword(text: str) -> bool:
-    low = f" {text.lower()} "
-    return any(kw in low for kw in _TECH_KEYWORDS)
-
-
-_CLICHE_PATTERNS = (
-    r"^(ótimo|otimo|excelente|incrível|incrivel|amazing|great|awesome) post[!.]?\s*$",
-    r"^(concordo|i agree|agreed)[!.]?\s*$",
-    r"^muito bom[!.]?\s*$",
-    r"^perfect[oa]?[!.]?\s*$",
-    r"^\W*$",
-)
-_CLICHE_RE = re.compile("|".join(_CLICHE_PATTERNS), re.IGNORECASE)
-
-
-def load_resume_text(resume_path: str) -> str:
-    p = Path(resume_path)
-    if not p.exists():
-        logger.warning(f"Resume not found at {resume_path}, using empty context")
-        return ""
-    if p.suffix.lower() == ".pdf":
-        from pypdf import PdfReader
-
-        reader = PdfReader(resume_path)
-        return "\n".join((page.extract_text() or "") for page in reader.pages)
-    return p.read_text(encoding="utf-8", errors="ignore")
-
-
-def is_blacklisted(text: str) -> bool:
-    low = text.lower()
-    return any(kw in low for kw in _BLACKLIST_KEYWORDS)
-
-
-def is_cliche(comment: str) -> bool:
-    return bool(_CLICHE_RE.match(comment.strip()))
-
-
-# Linguagens/frameworks nomeados. Se o comentário cita um que NÃO aparece no
-# post, o modelo alucinou o stack (ex: falar de Django num post sobre Spring).
-_NAMED_TECH = (
-    "python",
-    "django",
-    "flask",
-    "fastapi",
-    "java",
-    "spring",
-    "kotlin",
-    "scala",
-    "javascript",
-    "typescript",
-    "node",
-    "nodejs",
-    "react",
-    "vue",
-    "angular",
-    "svelte",
-    "golang",
-    "rust",
-    "c#",
-    ".net",
-    "php",
-    "laravel",
-    "symfony",
-    "ruby",
-    "rails",
-    "elixir",
-    "django rest",
-    "express",
-    "nestjs",
-    "c++",
-)
-
-
-def foreign_tech_in_comment(comment: str, post_text: str) -> str | None:
-    """Retorna o 1º termo de stack citado no comentário e ausente do post."""
-    c = comment.lower()
-    p = post_text.lower()
-    for tech in _NAMED_TECH:
-        # match por palavra p/ evitar substrings espúrias (ex: 'java' em 'javascript')
-        pat = rf"(?<![a-z0-9]){re.escape(tech)}(?![a-z0-9])"
-        if re.search(pat, c) and tech not in p:
-            return tech
-    return None
-
-
-def validate_comment(comment: str) -> tuple[bool, str]:
-    comment = (comment or "").strip().strip('"').strip("'")
-    if not comment:
-        return False, "empty"
-    words = comment.split()
-    if len(words) < 5:
-        return False, f"too short ({len(words)} words)"
-    if len(comment) > 200:
-        return False, f"too long ({len(comment)} chars)"
-    if is_cliche(comment):
-        return False, "cliche"
-    if "emoji" in comment.lower():
-        return False, "mentions emoji"
-    if re.search(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", comment):
-        return False, "contains emoji"
-    return True, comment
 
 
 class EngagementHandler:
@@ -247,6 +33,11 @@ class EngagementHandler:
             return False
         if is_blacklisted(post_text):
             logger.debug("Post blacklisted by keyword filter")
+            return False
+        # Post fino/só-link/só-imagem: sem substância real p/ ancorar comentário.
+        # Comentar aqui força o modelo a inventar (ex: 'RPA em produção').
+        if not is_commentable_post(post_text):
+            logger.info("is_relevant: post sem substância (link/imagem), pulando")
             return False
         if os.getenv("ENGAGE_SKIP_RELEVANCE") == "1":
             logger.info("ENGAGE_SKIP_RELEVANCE=1, assuming relevant")
@@ -304,7 +95,12 @@ class EngagementHandler:
             f"tecnologia e o stack que o PRÓPRIO post menciona.\n"
             f"- NUNCA introduza linguagens, frameworks ou ferramentas que o post não "
             f"cita. Se o post fala de Java/Spring, não fale de Python/Django.\n"
-            f"- Não traga seu próprio stack pessoal para o comentário.\n\n"
+            f"- Não traga seu próprio stack pessoal para o comentário.\n"
+            f"- NÃO invente fatos sobre o projeto (ex: que está 'em produção', que usa "
+            f"'RPA', 'microsserviços', que 'escalou', resultados ou métricas) se o post "
+            f"não disser isso explicitamente.\n"
+            f"- Se o post só compartilha um link ou imagem sem descrever conteúdo "
+            f"técnico no texto, retorne string vazia (você não vê o link/imagem).\n\n"
             f"Regras estritas:\n"
             f"- NÃO use emojis\n"
             f"- NÃO mencione que está procurando emprego\n"
@@ -333,6 +129,12 @@ class EngagementHandler:
             if foreign:
                 logger.info(
                     f"Comment rejected (stack alucinado: {foreign!r} ausente do post) "
+                    f"tentativa {attempt + 1}: {payload!r}"
+                )
+                continue
+            if not comment_is_grounded(payload, post_text):
+                logger.info(
+                    f"Comment rejected (ungrounded: nada em comum com o post) "
                     f"tentativa {attempt + 1}: {payload!r}"
                 )
                 continue

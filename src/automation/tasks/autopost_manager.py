@@ -8,7 +8,7 @@ the browser and publishes on approval (see ``src/bot/runner.py``). The
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
-from src.core.use_cases.engagement_handler import load_resume_text
+from src.core.use_cases.resume_loader import load_resume_text
 from src.core.use_cases.post_drafter import PostDrafter
 from src.core.use_cases.post_sources import (
     pick_content,

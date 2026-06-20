@@ -10,7 +10,7 @@ from playwright.async_api import Page
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
-from src.core.use_cases.engagement_handler import load_resume_text
+from src.core.use_cases.resume_loader import load_resume_text
 from src.core.use_cases.followup_dm import FollowupDMGenerator
 from src.core.use_cases.followup_tracker import FollowupTracker
 
