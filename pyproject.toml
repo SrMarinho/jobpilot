@@ -18,6 +18,7 @@ dependencies = [
     "typer>=0.15.0",
     "rich>=13.0",
     "textual>=0.80.0",
+    "filelock>=3.0",
 ]
 
 [dependency-groups]

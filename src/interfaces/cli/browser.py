@@ -1,9 +1,9 @@
 import os
-import time
 import asyncio
 from pathlib import Path
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+from filelock import FileLock, Timeout
 
 from src.config.settings import logger
 import src.config.settings as setting
@@ -15,36 +15,58 @@ _LAUNCH_TIMEOUT_MS = 90_000
 _LAUNCH_RETRIES = 2
 _RETRY_WAIT_S = 5
 _LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
-_LOCK_FRESH_THRESHOLD_S = 60  # locks newer than this likely belong to a live Chrome
+
+# ── App-level browser lock (cross-process queue) ──────────────────
+# Only one JobPilot browser session may use bot_profile at a time. A
+# scheduled run that finds the lock held waits in line until it frees,
+# instead of colliding with the live Chrome and dying. filelock releases
+# automatically if the holding process crashes (OS-level handle).
+_APP_LOCK_PATH = str(Path(BOT_PROFILE_DIR).parent / "bot_profile.lock")
+_LOCK_MAX_WAIT_S = 3600  # give up after 1h in queue
+_LOCK_POLL_S = 5
 
 
-def _lock_is_fresh(lock_path: Path) -> bool:
-    """True if the lock was touched recently — assume another live Chrome owns it."""
+async def acquire_browser_lock(label: str = "browser") -> FileLock:
+    """Acquire the exclusive browser lock, queuing if another run holds it.
+
+    Returns the held FileLock — caller MUST ``release()`` it in a finally.
+    """
+    lock = FileLock(_APP_LOCK_PATH, thread_local=False)
+    waited = 0
+    while True:
+        try:
+            lock.acquire(blocking=False)
+            logger.info(f"Browser lock adquirido ({label})")
+            return lock
+        except Timeout:
+            if waited == 0:
+                logger.info(
+                    f"Browser ocupado por outra instancia. {label} na fila, aguardando..."
+                )
+            await asyncio.sleep(_LOCK_POLL_S)
+            waited += _LOCK_POLL_S
+            if waited % 30 == 0:
+                logger.info(f"{label} ainda na fila... ({waited}s)")
+            if waited >= _LOCK_MAX_WAIT_S:
+                raise RuntimeError(
+                    f"Espera de browser lock excedeu {_LOCK_MAX_WAIT_S}s ({label})"
+                )
+
+
+def _release_browser_lock(lock: FileLock, label: str = "browser") -> None:
     try:
-        age = time.time() - lock_path.stat().st_mtime
-        return age < _LOCK_FRESH_THRESHOLD_S
-    except Exception:
-        return False
-
-
-def _another_instance_active() -> bool:
-    """Detect if another JobPilot instance is currently using the bot_profile."""
-    profile = Path(BOT_PROFILE_DIR)
-    if not profile.exists():
-        return False
-    for name in _LOCK_FILES:
-        lock = profile / name
-        if (lock.exists() or lock.is_symlink()) and _lock_is_fresh(lock):
-            return True
-    return False
+        lock.release()
+        logger.info(f"Browser lock liberado ({label})")
+    except Exception as e:
+        logger.warning(f"Falha ao liberar browser lock ({label}): {e}")
 
 
 def _clear_chrome_locks() -> None:
-    """Remove ORPHAN Chrome singleton lock files from a previous crashed run.
+    """Remove orphan Chrome singleton lock files from a previous crashed run.
 
-    Skips fresh locks (< 60s old) to avoid stealing the lock from a parallel
-    JobPilot instance (e.g. connect running while apply is also active).
-    Without this guard, the second instance would silently kill the first.
+    Safe to clear unconditionally: the app-level browser lock guarantees no
+    other JobPilot instance is using bot_profile right now, so any singleton
+    lock present is an orphan.
     """
     profile = Path(BOT_PROFILE_DIR)
     if not profile.exists():
@@ -53,11 +75,6 @@ def _clear_chrome_locks() -> None:
         lock = profile / name
         try:
             if not (lock.exists() or lock.is_symlink()):
-                continue
-            if _lock_is_fresh(lock):
-                logger.info(
-                    f"Skipping fresh Chrome lock ({name}) — another instance likely active"
-                )
                 continue
             lock.unlink()
             logger.info(f"Removed stale Chrome lock: {name}")
@@ -90,14 +107,6 @@ def get_config(force_headless: bool = False) -> dict:
 
 async def create_context(pw, force_headless: bool = False):
     config = get_config(force_headless)
-    if _another_instance_active():
-        msg = (
-            "Outra instancia do JobPilot esta usando bot_profile (lock fresco detectado). "
-            "Rodar apply e connect ao mesmo tempo com o mesmo perfil causa crash do Chrome. "
-            "Espere a outra terminar ou stagger os agendamentos."
-        )
-        logger.error(msg)
-        raise RuntimeError(msg)
     logger.info(f"Launching Chrome (headless={config['headless']})")
     _clear_chrome_locks()
 
@@ -137,46 +146,56 @@ async def create_context(pw, force_headless: bool = False):
 async def run_login(site: str):
     url = LOGIN_URLS[site]
     print(f"Opening {url}...", flush=True)
-    async with async_playwright() as pw:
-        context, page = await create_context(pw, force_headless=False)
-        try:
-            await page.goto(url, wait_until="domcontentloaded")
-            print(f"Browser opened at {url}", flush=True)
-            print("Log in and close the browser window when done.", flush=True)
-            while True:
-                try:
-                    if len(context.pages) == 0:
-                        break
-                    await page.wait_for_timeout(1000)
-                except Exception:
-                    break
-            print("Browser closed. Login session saved.", flush=True)
-        finally:
+    lock = await acquire_browser_lock("login")
+    try:
+        async with async_playwright() as pw:
+            context, page = await create_context(pw, force_headless=False)
             try:
-                await context.close()
-            except Exception:
-                pass
+                await page.goto(url, wait_until="domcontentloaded")
+                print(f"Browser opened at {url}", flush=True)
+                print("Log in and close the browser window when done.", flush=True)
+                while True:
+                    try:
+                        if len(context.pages) == 0:
+                            break
+                        await page.wait_for_timeout(1000)
+                    except Exception:
+                        break
+                print("Browser closed. Login session saved.", flush=True)
+            finally:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+    finally:
+        _release_browser_lock(lock, "login")
 
 
 async def run_logout(site: str):
     domains = SITE_DOMAINS[site]
     login_url = LOGIN_URLS[site]
-    async with async_playwright() as pw:
-        context, page = await create_context(pw, force_headless=False)
-        try:
-            await page.goto(login_url, wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
-            removed = 0
-            for cookie in await context.cookies():
-                domain = cookie.get("domain", "")
-                if any(domain.endswith(d.lstrip(".")) or domain == d for d in domains):
-                    removed += 1
-                    await context.clear_cookies()
-                    break
-            print(f"Cleared {removed} cookie(s) for {site}.")
-            print(f"Session removed. Run 'login {site}' to log in again.")
-        finally:
-            await context.close()
+    lock = await acquire_browser_lock("logout")
+    try:
+        async with async_playwright() as pw:
+            context, page = await create_context(pw, force_headless=False)
+            try:
+                await page.goto(login_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)
+                removed = 0
+                for cookie in await context.cookies():
+                    domain = cookie.get("domain", "")
+                    if any(
+                        domain.endswith(d.lstrip(".")) or domain == d for d in domains
+                    ):
+                        removed += 1
+                        await context.clear_cookies()
+                        break
+                print(f"Cleared {removed} cookie(s) for {site}.")
+                print(f"Session removed. Run 'login {site}' to log in again.")
+            finally:
+                await context.close()
+    finally:
+        _release_browser_lock(lock, "logout")
 
 
 async def run_browser(work, *, headless: bool = False):
@@ -184,27 +203,32 @@ async def run_browser(work, *, headless: bool = False):
 
     ``work`` is an async callable that receives the page object.
     Screenshot is taken on both success and error; context is always closed.
+    Serialized via the app-level browser lock (queues if another run holds it).
     """
-    async with async_playwright() as pw:
-        context, page = await create_context(pw, force_headless=headless)
-        try:
-            await work(page)
+    lock = await acquire_browser_lock("run_browser")
+    try:
+        async with async_playwright() as pw:
+            context, page = await create_context(pw, force_headless=headless)
             try:
-                await page.screenshot(path=f"{setting.screenshots_path}.png")
-            except Exception:
-                pass
-        except Exception as e:
-            logger.critical(f"{str(e)}")
-            try:
-                await page.screenshot(path=f"{setting.screenshots_path}.png")
-            except Exception:
-                pass
-            raise
-        finally:
-            try:
-                await context.close()
-            except Exception:
-                pass
+                await work(page)
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.critical(f"{str(e)}")
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+    finally:
+        _release_browser_lock(lock, "run_browser")
 
 
 async def run_browser_simple(work, *, headless: bool = False, post_wait_ms: int = 0):
@@ -212,18 +236,23 @@ async def run_browser_simple(work, *, headless: bool = False, post_wait_ms: int 
 
     Lighter wrapper for ad-hoc tasks (e.g. test-apply). Optionally waits
     ``post_wait_ms`` before closing so the user can inspect the final state.
+    Serialized via the app-level browser lock.
     """
-    async with async_playwright() as pw:
-        context, page = await create_context(pw, force_headless=headless)
-        try:
-            await work(page)
-        finally:
-            if post_wait_ms > 0:
+    lock = await acquire_browser_lock("run_browser_simple")
+    try:
+        async with async_playwright() as pw:
+            context, page = await create_context(pw, force_headless=headless)
+            try:
+                await work(page)
+            finally:
+                if post_wait_ms > 0:
+                    try:
+                        await page.wait_for_timeout(post_wait_ms)
+                    except Exception:
+                        pass
                 try:
-                    await page.wait_for_timeout(post_wait_ms)
+                    await context.close()
                 except Exception:
                     pass
-            try:
-                await context.close()
-            except Exception:
-                pass
+    finally:
+        _release_browser_lock(lock, "run_browser_simple")

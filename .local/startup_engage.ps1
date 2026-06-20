@@ -7,8 +7,8 @@ $env:LLM_PROVIDER = 'langchain'
 $env:LLM_PROVIDER_EVAL = 'langchain'
 $env:LANGCHAIN_BACKEND = 'ollama'
 $env:LANGCHAIN_BACKEND_EVAL = 'ollama'
-$env:LANGCHAIN_MODEL = 'llama3.2'
-$env:LANGCHAIN_MODEL_EVAL = 'llama3.2'
+$env:LANGCHAIN_MODEL = 'qwen3:8b'
+$env:LANGCHAIN_MODEL_EVAL = 'qwen3:8b'
 $env:LANGCHAIN_BASE_URL = 'http://localhost:11434'
 
 # Ensure Ollama is up (start hidden if needed)
