@@ -23,6 +23,8 @@ def resolve_engage_config(
     dry_run: bool,
     scheduled: bool,
     force: bool,
+    targets: list[str] | None = None,
+    save_targets: bool = False,
 ) -> dict | None:
     """Returns config dict or None if scheduled run should skip."""
     if scheduled and not force:
@@ -40,6 +42,13 @@ def resolve_engage_config(
     if scheduled and not force:
         save_ran_today("engage")
 
+    # Alvos: usa os --target ou os salvos; persiste se pedido.
+    from src.core.use_cases.engage_targets import load_targets, save_targets as _save
+
+    resolved_targets = list(targets) if targets else load_targets()
+    if save_targets and targets:
+        _save(targets)
+
     return {
         "resume_path": resume_path,
         "max_posts": max_posts,
@@ -47,6 +56,7 @@ def resolve_engage_config(
         "enable_comment": enable_comment,
         "enable_share": enable_share,
         "dry_run": dry_run,
+        "targets": resolved_targets,
         "user_name": os.getenv("USER_NAME", "Matheus Marinho"),
         "user_headline": os.getenv(
             "USER_HEADLINE", "Software Engineer focado em Python e Node.js"
@@ -68,6 +78,7 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
         enable_comment=cfg["enable_comment"],
         enable_share=cfg["enable_share"],
         dry_run=cfg["dry_run"],
+        targets=cfg.get("targets") or [],
     )
     result = await manager.run()
 

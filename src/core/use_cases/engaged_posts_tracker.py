@@ -46,7 +46,12 @@ class EngagedPostsTracker:
         return any(p.get("urn") == urn for p in self._data["engaged"])
 
     def mark_engaged(
-        self, urn: str, author: str, actions: list[str], comment: str = ""
+        self,
+        urn: str,
+        author: str,
+        actions: list[str],
+        comment: str = "",
+        variant: str = "",
     ):
         now = datetime.now()
         self._data["engaged"].append(
@@ -56,6 +61,7 @@ class EngagedPostsTracker:
                 "author": author,
                 "actions": actions,
                 "comment": comment,
+                "variant": variant,
                 "month": now.strftime("%Y-%m"),
                 "week": now.strftime("%Y-W%W"),
                 "day": now.date().isoformat(),

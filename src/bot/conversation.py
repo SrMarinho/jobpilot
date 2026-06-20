@@ -44,6 +44,14 @@ class ConversationFlow:
             self._handle_autopost_callback(data)
             return
 
+        if data.startswith("followup_"):
+            self._handle_followup_callback(data)
+            return
+
+        if data.startswith("engage_"):
+            self._handle_engage_callback(data)
+            return
+
         if data.startswith("sp:"):  # start_page escolhido
             value = data[3:]
             if value == "custom":
@@ -97,6 +105,84 @@ class ConversationFlow:
             self._form = {"draft_id": draft_id}
             self.client.send("✏️ Envie o novo texto do post:")
 
+    # ── Engage comment approval (human-in-loop) ───────────────────────────────
+
+    def _handle_engage_callback(self, data: str) -> None:
+        action, _, req_id = data.partition(":")
+        gate = self.runner.approval
+        if not gate.has(req_id):
+            self.client.send("⚠️ Aprovação expirada ou já processada.")
+            return
+        if action == "engage_approve":
+            gate.resolve(req_id, "approve")
+            self.client.send("✅ Comentário aprovado.")
+        elif action == "engage_reject":
+            gate.resolve(req_id, "reject")
+            self.client.send("❌ Comentário pulado.")
+        elif action == "engage_edit":
+            self._step = "engage_edit"
+            self._form = {"req_id": req_id}
+            self.client.send("✏️ Envie o novo texto do comentário:")
+
+    def _handle_engage_edit(self, text: str) -> None:
+        req_id = self._form.get("req_id")
+        self.reset()
+        gate = self.runner.approval
+        if gate.resolve(req_id, "approve", text.strip()):
+            self.client.send("✅ Comentário editado e aprovado.")
+        else:
+            self.client.send("⚠️ Aprovação expirada.")
+
+    # ── Follow-up DM approval ─────────────────────────────────────────────────
+
+    def _handle_followup_callback(self, data: str) -> None:
+        from src.core.use_cases.followup_tracker import (
+            FollowupTracker,
+            STATUS_REJECTED,
+        )
+
+        action, _, draft_id = data.partition(":")
+        tracker = FollowupTracker()
+        draft = tracker.get_draft(draft_id)
+        if not draft or draft.get("status") != "pending":
+            self.client.send("⚠️ DM expirado ou já processado.")
+            return
+
+        if action == "followup_approve":
+            self.client.send("📤 Enviando DM no LinkedIn...")
+            self.runner.launch_followup_send(draft_id)
+
+        elif action == "followup_reject":
+            tracker.set_status(draft_id, STATUS_REJECTED)
+            self.client.send("❌ DM descartado.")
+
+        elif action == "followup_regen":
+            self.client.send("🔄 Regenere via /followup (novo scan).")
+
+        elif action == "followup_edit":
+            self._step = "followup_edit"
+            self._form = {"draft_id": draft_id}
+            self.client.send("✏️ Envie o novo texto do DM:")
+
+    def _handle_followup_edit(self, text: str) -> None:
+        from src.core.use_cases.followup_dm import validate_dm
+        from src.core.use_cases.followup_tracker import FollowupTracker
+        from src.automation.tasks.followup_manager import followup_buttons
+
+        draft_id = self._form.get("draft_id")
+        self.reset()
+        ok, payload = validate_dm(text)
+        if not ok:
+            self.client.send(f"❌ Texto inválido ({payload}). Edição cancelada.")
+            return
+        tracker = FollowupTracker()
+        draft = tracker.update_content(draft_id, payload)
+        if not draft:
+            self.client.send("⚠️ Draft não encontrado.")
+            return
+        header = f"💬 <b>DM editado</b> — {draft.get('name')}\n\n"
+        self.client.send(header + payload, buttons=followup_buttons(draft_id))
+
     def _ask_start_page(self) -> None:
         self._step = "connect_start_page"
         self.client.send(
@@ -136,6 +222,14 @@ class ConversationFlow:
 
         if self._step == "autopost_edit":
             self._handle_autopost_edit(text)
+            return
+
+        if self._step == "followup_edit":
+            self._handle_followup_edit(text)
+            return
+
+        if self._step == "engage_edit":
+            self._handle_engage_edit(text)
             return
 
         if self._step == "connect_url":

@@ -37,6 +37,8 @@ class EngagementManager:
         enable_share: bool = True,
         dry_run: bool = False,
         stop_event: threading.Event | None = None,
+        targets: list[str] | None = None,
+        comment_approver=None,
     ):
         self.page = page
         self.max_posts = max_posts
@@ -45,6 +47,10 @@ class EngagementManager:
         self.enable_share = enable_share
         self.dry_run = dry_run
         self.stop_event = stop_event or threading.Event()
+        self.targets = targets or []
+        # Async callable (text, author) -> approved_text | None. Quando setado,
+        # o comentário passa por aprovação humana antes de postar (Telegram).
+        self.comment_approver = comment_approver
 
         self.feed = FeedPage(page)
         self.tracker = EngagedPostsTracker()
@@ -100,6 +106,12 @@ class EngagementManager:
                 if is_blacklisted(text):
                     self.result.skipped += 1
                     continue
+                if self.targets:
+                    from src.core.use_cases.engage_targets import matches_target
+
+                    if not matches_target(author, text, self.targets):
+                        self.result.skipped += 1
+                        continue
                 logger.info(f"Evaluating relevance for author={author!r}")
                 if not await self.handler.is_relevant(text):
                     self.result.skipped += 1
@@ -150,17 +162,18 @@ class EngagementManager:
             logger.info(f"=== Post {i}/{len(candidates)} — {author} ===")
             actions: list[str] = []
             comment_text = ""
+            variant = ""
 
             if self.dry_run:
                 logger.info(f"[dry-run] Would like, comment, share for urn={urn}")
-                preview = await self.handler.generate_comment(text, author)
+                preview, variant = await self.handler.generate_comment(text, author)
                 if preview:
-                    logger.info(f"[dry-run] Generated comment: {preview!r}")
+                    logger.info(f"[dry-run] Generated comment ({variant}): {preview!r}")
                     comment_text = preview
                     actions = ["like", "comment", "share"]
                 else:
                     actions = ["like", "share"]
-                self.tracker.mark_engaged(urn, author, actions, comment_text)
+                self.tracker.mark_engaged(urn, author, actions, comment_text, variant)
                 self.result.liked += 1
                 if "comment" in actions:
                     self.result.commented += 1
@@ -174,7 +187,9 @@ class EngagementManager:
                 await self.feed.random_pause(5, 12)
 
             if self.enable_comment:
-                comment = await self.handler.generate_comment(text, author)
+                comment, variant = await self.handler.generate_comment(text, author)
+                if comment and self.comment_approver:
+                    comment = await self.comment_approver(comment, author)
                 if comment:
                     if await self.feed.submit_comment(post, comment):
                         actions.append("comment")
@@ -189,7 +204,7 @@ class EngagementManager:
                 await self.feed.random_pause(5, 10)
 
             if actions:
-                self.tracker.mark_engaged(urn, author, actions, comment_text)
+                self.tracker.mark_engaged(urn, author, actions, comment_text, variant)
                 self.result.engaged_urns.append(urn)
             else:
                 logger.warning(f"No actions taken for urn={urn}")

@@ -49,7 +49,9 @@ class ReportFormatter:
             f"{qa_line}"
             f"{self._ssi_block(report.get('ssi'))}"
             f"{self._engagement_block(report.get('engagement'))}"
-            f"{self._autopost_block(report.get('autopost'))}\n\n"
+            f"{self._autopost_block(report.get('autopost'))}"
+            f"{self._followup_block(report.get('followup'))}"
+            f"{self._goals_block(report.get('goals'))}\n\n"
             f"🌐 <b>Por site:</b>"
             f"{self._site_block(report, with_delta=True) or ' —'}\n\n"
             f"🎓 <b>Candidaturas por nível:</b>"
@@ -143,12 +145,18 @@ class ReportFormatter:
         eng = eng or {}
         top_authors = eng.get("top_authors") or []
         top_lines = "".join(f"\n    • {name} ({n}x)" for name, n in top_authors)
+        by_variant = eng.get("by_variant") or {}
+        variant_lines = "".join(
+            f"\n    • {k}: {v}x"
+            for k, v in sorted(by_variant.items(), key=lambda x: -x[1])
+        )
         return (
             f"\n\n🤝 <b>Engagement (semana):</b>\n"
             f"    ❤️ Likes: <b>{eng.get('likes', 0)}</b>\n"
             f"    💬 Comments: <b>{eng.get('comments', 0)}</b>\n"
             f"    🔁 Shares: <b>{eng.get('shares', 0)}</b>"
             + (f"\n    👥 Top autores:{top_lines}" if top_authors else "")
+            + (f"\n    🧪 A/B comentário:{variant_lines}" if by_variant else "")
         )
 
     @staticmethod
@@ -172,6 +180,45 @@ class ReportFormatter:
             f"    ✍️ Média: {ap.get('avg_chars', 0)} chars"
             + (f"\n    📑 Por formato:{fmt_parts}" if fmt_parts else "")
         )
+
+    @staticmethod
+    def _followup_block(fu: dict | None) -> str:
+        fu = fu or {}
+        sent = fu.get("sent", 0)
+        generated = fu.get("generated", 0)
+        if not sent and not generated:
+            return ""
+        return (
+            f"\n\n💬 <b>Follow-up DM (semana):</b>\n"
+            f"    📤 Enviados: <b>{sent}</b> · 🧪 Gerados: {generated}"
+        )
+
+    @staticmethod
+    def _goals_block(goals: dict | None) -> str:
+        goals = goals or {}
+        rows = goals.get("rows") or []
+        if not rows:
+            return ""
+        labels = {
+            "applications": "Candidaturas",
+            "connections": "Conexões",
+            "posts": "Posts",
+            "comments": "Comentários",
+        }
+        lines = []
+        for r in rows:
+            mark = "✅" if r["ok"] else "🔸"
+            label = labels.get(r["key"], r["key"])
+            lines.append(
+                f"\n    {mark} {label}: {r['actual']}/{r['target']} ({r['pct']}%)"
+            )
+        behind = goals.get("behind") or []
+        alert = (
+            f"\n    ⚠️ Atrás em: {', '.join(labels.get(k, k) for k in behind)}"
+            if behind
+            else "\n    🎉 Todas as metas batidas!"
+        )
+        return f"\n\n🎯 <b>Metas (semana):</b>{''.join(lines)}{alert}"
 
     @staticmethod
     def _ssi_block(ssi: dict | None) -> str:

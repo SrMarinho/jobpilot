@@ -27,6 +27,9 @@ class BrowserTaskRunner:
         self.resume_path = resume_path
         self.stop_event = threading.Event()
         self.current_task: threading.Thread | None = None
+        from src.bot.approval import ApprovalGate
+
+        self.approval = ApprovalGate(client)
 
     # ── State ─────────────────────────────────────────────────────────────────
 
@@ -98,6 +101,27 @@ class BrowserTaskRunner:
             self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
             return
         self._spawn(lambda: self._autopost_publish_async(draft_id))
+
+    def launch_engage(self, max_posts: int = 3, review: bool = True) -> None:
+        if self.is_busy():
+            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+            return
+        mode = "com aprovação" if review else "automático"
+        self.client.send(f"🤝 Iniciando engage ({mode})...")
+        self._spawn(lambda: self._engage_async(max_posts, review))
+
+    def launch_followup_scan(self, max_dms: int = 5) -> None:
+        if self.is_busy():
+            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+            return
+        self.client.send("💬 Buscando conexões novas p/ follow-up...")
+        self._spawn(lambda: self._followup_scan_async(max_dms))
+
+    def launch_followup_send(self, draft_id: str) -> None:
+        if self.is_busy():
+            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+            return
+        self._spawn(lambda: self._followup_send_async(draft_id))
 
     # ── Coroutines ────────────────────────────────────────────────────────────
 
@@ -198,6 +222,117 @@ class BrowserTaskRunner:
                         pass
         finally:
             _release_browser_lock(lock, "bot_autopost")
+
+    async def _engage_async(self, max_posts: int, review: bool) -> None:
+        import os
+
+        from src.core.ai.llm_provider import get_eval_provider
+        from src.core.ai.warmup import warmup_llm_providers
+        from src.automation.tasks.engagement_manager import EngagementManager
+        from src.core.use_cases.engage_targets import load_targets
+
+        os.environ.setdefault("LLM_PROVIDER_EVAL", "langchain")
+        warmup_llm_providers()
+        provider = get_eval_provider()
+
+        approver = None
+        if review:
+
+            async def approver(text, author):
+                return await self.approval.request("comentário", text, author)
+
+        lock = await acquire_browser_lock("bot_engage")
+        try:
+            async with async_playwright() as pw:
+                context, page = await create_context(pw, force_headless=False)
+                try:
+                    manager = EngagementManager(
+                        page,
+                        llm_provider=provider,
+                        resume_path=self.resume_path,
+                        user_name=os.getenv("USER_NAME", "Matheus Marinho"),
+                        user_headline=os.getenv(
+                            "USER_HEADLINE",
+                            "Software Engineer focado em Python e Node.js",
+                        ),
+                        max_posts=max_posts,
+                        stop_event=self.stop_event,
+                        targets=load_targets(),
+                        comment_approver=approver,
+                    )
+                    result = await manager.run()
+                    self.client.send(
+                        f"🤝 Engage concluído!\n"
+                        f"❤️ {result.liked} | 💬 {result.commented} | 🔁 {result.shared}"
+                    )
+                except Exception as e:
+                    self.client.send(f"❌ Erro no engage: {e}")
+                    logger.error(f"engage task error: {e}")
+                finally:
+                    try:
+                        await context.close()
+                    except Exception:
+                        pass
+        finally:
+            _release_browser_lock(lock, "bot_engage")
+
+    async def _followup_scan_async(self, max_dms: int) -> None:
+        from src.interfaces.cli.followup.logic import (
+            resolve_followup_config,
+            run_followup_browser,
+        )
+
+        cfg = resolve_followup_config(None, max_dms, scheduled=False, force=False)
+        lock = await acquire_browser_lock("bot_followup")
+        try:
+            async with async_playwright() as pw:
+                context, page = await create_context(pw, force_headless=False)
+                try:
+                    await run_followup_browser(page, cfg)
+                except Exception as e:
+                    self.client.send(f"❌ Erro no follow-up: {e}")
+                    logger.error(f"followup scan error: {e}")
+                finally:
+                    try:
+                        await context.close()
+                    except Exception:
+                        pass
+        finally:
+            _release_browser_lock(lock, "bot_followup")
+
+    async def _followup_send_async(self, draft_id: str) -> None:
+        from src.core.use_cases.followup_tracker import FollowupTracker
+        from src.automation.pages.messaging_page import MessagingPage
+
+        tracker = FollowupTracker()
+        draft = tracker.get_draft(draft_id)
+        if not draft:
+            self.client.send("⚠️ Draft de DM não encontrado.")
+            return
+
+        lock = await acquire_browser_lock("bot_followup_send")
+        try:
+            async with async_playwright() as pw:
+                context, page = await create_context(pw, force_headless=False)
+                try:
+                    ok = await MessagingPage(page).send_dm(
+                        draft["profile_url"], draft["content"]
+                    )
+                    if ok:
+                        tracker.mark_sent(draft_id)
+                        self.client.send(f"✅ DM enviado p/ {draft.get('name')}!")
+                    else:
+                        self.client.send("❌ Falha ao enviar o DM.")
+                except Exception as e:
+                    self.client.send(f"❌ Erro ao enviar DM: {e}")
+                    logger.error(f"followup send error: {e}")
+                finally:
+                    try:
+                        await context.close()
+                    except Exception:
+                        pass
+        finally:
+            _release_browser_lock(lock, "bot_followup_send")
 
     async def _capture_ssi(self, page) -> None:
         """Best-effort SSI snapshot after publishing (never fatal)."""

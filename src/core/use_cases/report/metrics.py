@@ -130,6 +130,7 @@ class MetricsCalculator:
     def engagement(self, period: WeekPeriod) -> dict:
         likes = comments = shares = 0
         authors: dict[str, int] = {}
+        variants: dict[str, int] = {}
         for p in self.repo.engaged():
             if not isinstance(p, dict) or p.get("week") != period.key:
                 continue
@@ -139,11 +140,15 @@ class MetricsCalculator:
             shares += "share" in acts
             a = p.get("author") or "unknown"
             authors[a] = authors.get(a, 0) + 1
+            if "comment" in acts and p.get("variant"):
+                v = p["variant"]
+                variants[v] = variants.get(v, 0) + 1
         return {
             "likes": likes,
             "comments": comments,
             "shares": shares,
             "top_authors": sorted(authors.items(), key=lambda x: -x[1])[:5],
+            "by_variant": variants,
         }
 
     # ── autopost ─────────────────────────────────────────────────
@@ -178,6 +183,24 @@ class MetricsCalculator:
             "rejected": status.get("rejected", 0),
             "expired": status.get("expired", 0),
             "avg_chars": int(sum(chars) / len(chars)) if chars else 0,
+        }
+
+    # ── follow-up DM ─────────────────────────────────────────────
+    def followup(self, period: WeekPeriod) -> dict:
+        data = self.repo.followup()
+        sent = [
+            s
+            for s in data.get("sent", [])
+            if isinstance(s, dict) and s.get("week") == period.key
+        ]
+        drafts = [
+            d
+            for d in data.get("drafts", [])
+            if isinstance(d, dict) and d.get("week") == period.key
+        ]
+        return {
+            "sent": len(sent),
+            "generated": len(drafts),
         }
 
     # ── SSI ──────────────────────────────────────────────────────

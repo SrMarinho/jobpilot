@@ -28,10 +28,12 @@ class UpdateRouter:
                 "📋 <b>Comandos disponíveis:</b>\n\n"
                 "/connect — enviar conexões\n"
                 "/apply &lt;url&gt; — aplicar vagas\n"
+                "/engage — engajar no feed (com aprovação)\n"
                 "/autopost — gerar post autoral\n"
                 "/autopost_topic &lt;tema&gt; — post com tema custom\n"
                 "/autopost_format &lt;tipo&gt; — força formato\n"
                 "/autopost_list — últimos posts + pendentes\n"
+                "/followup — DMs pós-conexão p/ aprovar\n"
                 "/resume — atualizar currículo\n"
                 "/status — ver se tem tarefa rodando\n"
                 "/stop — parar tarefa atual\n"
@@ -77,6 +79,16 @@ class UpdateRouter:
 
         elif cmd == "/autopost_list":
             self._autopost_list()
+
+        elif cmd == "/followup":
+            max_dms = 5
+            if arg.isdigit():
+                max_dms = int(arg)
+            self.runner.launch_followup_scan(max_dms)
+
+        elif cmd == "/engage":
+            max_posts = int(arg) if arg.isdigit() else 3
+            self.runner.launch_engage(max_posts, review=True)
 
         elif cmd == "/ping":
             start = time.time()

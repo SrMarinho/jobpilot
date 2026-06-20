@@ -42,6 +42,11 @@ def register_connect_command(app: typer.Typer) -> None:
             "--scheduled",
             help="Scheduled mode: skip if already ran today or weekly limit reached",
         ),
+        rotate: bool = typer.Option(
+            False,
+            "--rotate",
+            help="Use the next saved-search in rotation (see 'searches' command)",
+        ),
     ):
         """Send connection requests (LinkedIn people search)."""
         set_run_context("connect")
@@ -54,6 +59,7 @@ def register_connect_command(app: typer.Typer) -> None:
             start_page,
             resume,
             scheduled,
+            rotate,
         )
         if cfg is None:
             return  # scheduled skip

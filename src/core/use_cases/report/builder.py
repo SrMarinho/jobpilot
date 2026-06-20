@@ -24,11 +24,21 @@ class ReportBuilder:
         rejections = m.count_entries(rejected, "rejected_at", period)
         total_seen = applications + rejections
 
+        connections = m.connections(period)
+        engagement = m.engagement(period)
+        autopost = m.autopost(period)
+        goals = self._goals_progress(
+            applications=applications,
+            connections=connections,
+            posts=autopost.get("published", 0),
+            comments=engagement.get("comments", 0),
+        )
+
         return {
             "week": period.key,
             "range": period.label_range,
             "applications": applications,
-            "connections": m.connections(period),
+            "connections": connections,
             "rejections": rejections,
             "rejection_breakdown": m.rejection_breakdown(rejected, period),
             "level_breakdown": m.level_breakdown(applied, period),
@@ -41,14 +51,42 @@ class ReportBuilder:
             "avg_salary_offered": m.avg_salary(applied, period),
             "qa_pending": m.qa_pending(),
             "top_skills": m.top_skills(3),
-            "engagement": m.engagement(period),
-            "autopost": m.autopost(period),
+            "engagement": engagement,
+            "autopost": autopost,
+            "followup": m.followup(period),
+            "goals": goals,
             "ssi": m.ssi(period),
             "prev_applications": prev.get("applications") if prev else None,
             "prev_connections": prev.get("connections") if prev else None,
             "prev_site_applications": (prev.get("site_applications") if prev else None)
             or {},
         }
+
+    @staticmethod
+    def _goals_progress(
+        applications: int, connections: int, posts: int, comments: int
+    ) -> dict:
+        from src.core.use_cases.goals_tracker import GoalsTracker
+
+        targets = GoalsTracker().all()
+        actual = {
+            "applications": applications,
+            "connections": connections,
+            "posts": posts,
+            "comments": comments,
+        }
+        rows = []
+        behind = []
+        for key, target in targets.items():
+            got = actual.get(key, 0)
+            pct = round(got / target * 100) if target else 100
+            ok = got >= target
+            rows.append(
+                {"key": key, "target": target, "actual": got, "pct": pct, "ok": ok}
+            )
+            if not ok:
+                behind.append(key)
+        return {"rows": rows, "behind": behind}
 
     def annual(self, year: int) -> dict:
         m = self.metrics

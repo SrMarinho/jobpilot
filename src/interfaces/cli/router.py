@@ -5,6 +5,11 @@ from src.interfaces.cli.connect.command import register_connect_command
 from src.interfaces.cli.engage.command import register_engage_command
 from src.interfaces.cli.autopost.command import register_autopost_command
 from src.interfaces.cli.report.command import register_report_command
+from src.interfaces.cli.export.command import register_export_command
+from src.interfaces.cli.searches.command import register_searches_commands
+from src.interfaces.cli.goals.command import register_goals_commands
+from src.interfaces.cli.dashboard.command import register_dashboard_command
+from src.interfaces.cli.followup.command import register_followup_command
 from src.interfaces.cli.misc.command import register_misc_commands
 from src.interfaces.cli.skills.command import register_skills_commands
 from src.interfaces.cli.answers.command import register_answers_commands
@@ -40,9 +45,24 @@ def register(app: typer.Typer) -> None:
     register_connect_command(app)
     register_engage_command(app)
     register_autopost_command(app)
+    register_followup_command(app)
     register_report_command(app)
+    register_export_command(app)
+    register_dashboard_command(app)
     register_misc_commands(app)
 
+    _add_group(
+        app,
+        "searches",
+        "Manage rotating saved-searches (connect/apply)",
+        register_searches_commands,
+    )
+    _add_group(
+        app,
+        "goals",
+        "Weekly goals (applications/connections/posts/comments)",
+        register_goals_commands,
+    )
     _add_group(
         app,
         "skills",

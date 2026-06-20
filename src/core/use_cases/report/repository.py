@@ -47,6 +47,9 @@ class ReportRepository:
     def autopost(self) -> dict:
         return self._load("posted_history.json")
 
+    def followup(self) -> dict:
+        return self._load("followup_dms.json")
+
     # ── connections log (write) ──────────────────────────────────
     def add_connections(self, count: int) -> None:
         path = self.files_dir / "connections_log.json"

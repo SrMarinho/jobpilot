@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -26,6 +26,14 @@ def register_engage_command(app: typer.Typer) -> None:
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Log decisions/comments without acting"
         ),
+        target: Optional[List[str]] = typer.Option(
+            None,
+            "--target",
+            help="Engaja só posts de empresas/pessoas-alvo (repetível)",
+        ),
+        save_targets: bool = typer.Option(
+            False, "--save-targets", help="Persiste os --target informados"
+        ),
         scheduled: bool = typer.Option(
             False, "--scheduled", help="Scheduled mode: skip if already ran today"
         ),
@@ -46,6 +54,8 @@ def register_engage_command(app: typer.Typer) -> None:
             dry_run=dry_run,
             scheduled=scheduled,
             force=force,
+            targets=target,
+            save_targets=save_targets,
         )
         if cfg is None:
             return  # skip-today exit 0

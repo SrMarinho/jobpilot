@@ -22,6 +22,7 @@ def resolve_connect_config(
     start_page: int | None,
     resume: bool,
     scheduled: bool,
+    rotate: bool = False,
 ) -> dict | None:
     """Resolve connect URL from args or saved state.  Returns None if should skip.
 
@@ -40,6 +41,17 @@ def resolve_connect_config(
             logger.info("Weekly connection limit already reached this week. Skipping.")
             return None
         save_ran_today()
+
+    # ── rotação de saved-searches ──
+    if rotate and not url:
+        from src.core.use_cases.saved_searches import SavedSearches
+
+        nxt = SavedSearches().next("connect")
+        if nxt and nxt.get("url"):
+            url = nxt["url"]
+            logger.info(f"Rotação connect: usando '{nxt.get('label')}'")
+        else:
+            logger.warning("--rotate sem buscas salvas; caindo para resolução normal")
 
     # ── URL resolution ──
     if url:

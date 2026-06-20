@@ -1,4 +1,5 @@
 import os
+import random
 import re
 from pathlib import Path
 
@@ -228,14 +229,30 @@ class EngagementHandler:
         )
         return result
 
-    async def generate_comment(self, post_text: str, author: str) -> str | None:
+    # Variantes A/B: dois ângulos de comentário. O variant usado é gravado no
+    # tracker p/ o relatório cruzar qual estilo aparece mais (conversão real
+    # depende de tracking de respostas — futuro).
+    _VARIANTS = {
+        "insight": "Traga 1 insight técnico concreto ou uma observação que agregue.",
+        "pergunta": "Faça 1 pergunta específica e relevante que convide ao diálogo.",
+    }
+
+    def _pick_variant(self) -> str:
+        return random.choice(list(self._VARIANTS.keys()))
+
+    async def generate_comment(
+        self, post_text: str, author: str, variant: str | None = None
+    ) -> tuple[str | None, str]:
+        """Gera comentário. Retorna ``(texto|None, variant)``."""
+        variant = variant or self._pick_variant()
+        angle = self._VARIANTS.get(variant, self._VARIANTS["insight"])
         prompt = (
             f"Você é {self.user_name}, {self.user_headline}.\n"
             f"Você está engajando em um post do LinkedIn como peer profissional.\n\n"
             f"Currículo (resumo):\n{self.resume[:500]}\n\n"
             f'Post de {author}:\n"""\n{post_text[:800]}\n"""\n\n'
             f"Escreva 1 comentário curto (5-15 palavras), profissional, no mesmo idioma do post.\n"
-            f"Pode trazer um insight técnico, agradecimento concreto, ou pergunta relevante.\n\n"
+            f"Ângulo desta vez: {angle}\n\n"
             f"Regras estritas:\n"
             f"- NÃO use emojis\n"
             f"- NÃO mencione que está procurando emprego\n"
@@ -249,12 +266,12 @@ class EngagementHandler:
             raw = await self.llm.complete(prompt)
         except Exception as e:
             logger.warning(f"generate_comment LLM call failed: {e}")
-            return None
+            return None, variant
         ok, payload = validate_comment(raw)
         if not ok:
             logger.info(f"Comment rejected ({payload}): {raw!r}")
-            return None
+            return None, variant
         if is_blacklisted(payload):
             logger.info("Comment rejected (blacklisted content)")
-            return None
-        return payload
+            return None, variant
+        return payload, variant
