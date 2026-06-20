@@ -126,6 +126,116 @@ uv run main.py connect --continue
 
 ---
 
+## `engage`
+
+Engaja no feed do LinkedIn (like + comentário + share via LLM).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--max-posts` | int | 3 | Máx posts por run |
+| `--no-like` / `--no-comment` / `--no-share` | flag | false | Desativa cada ação |
+| `--target` | list | — | Engaja só posts de empresa/pessoa-alvo (repetível) |
+| `--save-targets` | flag | false | Persiste os `--target` (reuso futuro) |
+| `--resume` | path | auto | Override do currículo |
+| `--dry-run` | flag | false | Loga decisões/comentários sem agir |
+| `--scheduled` | flag | false | Pula se já rodou hoje |
+| `--force` | flag | false | Ignora skip-today |
+
+```bash
+# Engage normal
+uv run main.py engage --max-posts 5
+
+# Engage com alvo (empresas relevantes) e salvar a lista
+uv run main.py engage --target "Nubank" --target "Stone" --save-targets
+```
+
+O comentário tem A/B test embutido (variantes `insight`/`pergunta`); a
+variante usada é gravada e aparece no relatório semanal. Para aprovação
+humana antes de postar, use `/engage` no bot (human-in-loop).
+
+---
+
+## `autopost`
+
+Gera post autoral via LLM com aprovação no Telegram. Ver `docs/specs/autopost-feature.md`.
+
+```bash
+uv run main.py autopost                          # weekday default
+uv run main.py autopost --source manual --topic "..." --dry-run
+uv run main.py autopost --no-telegram            # printa stdout
+```
+
+---
+
+## `followup`
+
+Follow-up DM pós-conexão: lê conexões novas, gera um DM curto via LLM e manda
+pro Telegram pra aprovar. O envio acontece no bot ao aprovar.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--max-dms` | int | 5 | Máx DMs por run |
+| `--resume` | path | auto | Override do currículo |
+| `--scheduled` / `--force` | flag | false | Skip-today / ignora skip |
+
+```bash
+uv run main.py followup --max-dms 3
+```
+
+---
+
+## `dashboard`
+
+Dashboard TUI ao vivo (textual): candidaturas, engagement, autopost, SSI e
+progresso de metas. `r` atualiza, `q` sai.
+
+```bash
+uv run main.py dashboard
+```
+
+---
+
+## `export`
+
+Exporta vagas para CSV (Excel/Sheets/Notion importam direto).
+
+```bash
+uv run main.py export applied                    # .local/export_applied.csv
+uv run main.py export rejected -o rej.csv
+uv run main.py export all
+```
+
+---
+
+## `searches`
+
+Saved-searches em rodízio (mais cobertura sem repetir a mesma busca).
+
+```bash
+uv run main.py searches add "tech-recruiters" "https://.../search/..." --task connect
+uv run main.py searches list
+uv run main.py searches next --task connect      # avança o cursor
+uv run main.py searches remove 0
+```
+
+Use no rodízio: `uv run main.py connect --rotate --scheduled`.
+
+---
+
+## `goals`
+
+Metas semanais; o relatório semanal avisa o que está atrás.
+
+```bash
+uv run main.py goals show
+uv run main.py goals set applications 12
+uv run main.py goals set connections 60
+```
+
+Métricas suportadas: `applications`, `connections`, `posts`, `comments`.
+
+---
+
 ## `test-apply`
 
 Test Easy Apply form filling on a single job (skips AI evaluation).
@@ -150,12 +260,18 @@ uv run main.py bot --resume "resume.pdf"
 Telegram commands:
 - `/apply <url>` — Start applying
 - `/connect` — Start connection requests
+- `/engage [n]` — Engage feed com aprovação humana (human-in-loop)
+- `/autopost`, `/autopost_topic`, `/autopost_format`, `/autopost_list` — posts autorais
+- `/followup [n]` — DMs pós-conexão para aprovar
 - `/status` — Check running task
 - `/stop` — Stop current task
 - `/resume` — Upload new resume
 - `/ping` — Bot liveness check
 - `/reiniciar` — Restart bot process
 - `/help` — List all commands
+
+Botões de aprovação (inline): autopost (✅/❌/✏️/🔄), follow-up DM (✅/❌/✏️/🔄)
+e engage (✅ Postar / ❌ Pular / ✏️ Editar).
 
 ---
 
