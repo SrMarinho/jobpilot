@@ -27,7 +27,8 @@ $MaxRetries = 5
 $BaseDelay = 30
 
 for ($i = 0; $i -lt $MaxRetries; $i++) {
-    & $UvPath run main.py --headless engage --scheduled
+    # posts-number=random sorteia entre --min-post e --max-post a cada run
+    & $UvPath run main.py --headless engage --scheduled --posts-number random --min-post 1 --max-post 20
     $exitCode = $LASTEXITCODE
 
     if ($exitCode -eq 0) {
