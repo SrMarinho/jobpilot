@@ -57,8 +57,11 @@ class FeedPage:
         self.url = url
 
     async def goto(self) -> None:
+        from src.automation.checkpoint import ensure_not_blocked
+
         logger.info(f"Opening feed: {self.url}")
         await self.page.goto(self.url, wait_until="domcontentloaded")
+        await ensure_not_blocked(self.page, "engage")
         try:
             await self.page.wait_for_selector(_COMMENT_SELECTOR, timeout=20000)
         except Exception:

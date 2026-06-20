@@ -40,6 +40,10 @@ class ConnectionManager:
             logger.info(f"Navigating to page {page_num}")
             await self.page.goto(url, wait_until="domcontentloaded")
 
+            from src.automation.checkpoint import ensure_not_blocked
+
+            await ensure_not_blocked(self.page, "connect")
+
             await self._wait_for_page_load(page_num)
 
             await self.connect_people.run()

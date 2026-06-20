@@ -140,6 +140,10 @@ class BaseJobApplicationManager(ABC):
             logger.info(f"Navigating to page {page_num}")
             await self.page.goto(url, wait_until="domcontentloaded")
 
+            from src.automation.checkpoint import ensure_not_blocked
+
+            await ensure_not_blocked(self.page, "apply")
+
             job_cards = await self._wait_for_job_cards(page_num)
             if not job_cards:
                 logger.info("No more jobs found, stopping")
