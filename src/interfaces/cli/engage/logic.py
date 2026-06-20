@@ -1,6 +1,8 @@
 import os
+import random
 from typing import Optional
 
+import typer
 from playwright.async_api import Page
 
 from src.config.settings import logger
@@ -12,6 +14,35 @@ from src.interfaces.cli.persistence import (
     is_already_ran_today,
     save_ran_today,
 )
+
+
+def resolve_posts_count(posts_number: str, min_post: int, max_post: int) -> int:
+    """Resolve quantos posts engajar.
+
+    ``posts_number`` = 'random' sorteia um inteiro em [min_post, max_post];
+    senão usa o inteiro exato, validando que cai dentro do range.
+    """
+    if min_post < 1:
+        raise typer.BadParameter("--min-post deve ser >= 1")
+    if max_post < min_post:
+        raise typer.BadParameter("--max-post deve ser >= --min-post")
+
+    value = (posts_number or "").strip().lower()
+    if value in ("random", "rand", "r", ""):
+        n = random.randint(min_post, max_post)
+        logger.info(f"posts-number=random → {n} (range {min_post}..{max_post})")
+        return n
+    try:
+        exact = int(value)
+    except ValueError:
+        raise typer.BadParameter(
+            f"--posts-number deve ser 'random' ou um inteiro, recebi {posts_number!r}"
+        )
+    if not (min_post <= exact <= max_post):
+        raise typer.BadParameter(
+            f"--posts-number={exact} fora do range {min_post}..{max_post}"
+        )
+    return exact
 
 
 def resolve_engage_config(

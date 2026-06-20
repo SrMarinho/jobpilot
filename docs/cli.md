@@ -132,7 +132,9 @@ Engaja no feed do LinkedIn (like + comentário + share via LLM).
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--max-posts` | int | 3 | Máx posts por run |
+| `--min-post` | int | 1 | Piso do range de posts |
+| `--max-post` | int | 20 | Teto do range de posts |
+| `--posts-number` | str | `random` | `random` sorteia em [min,max]; ou inteiro exato (validado no range) |
 | `--no-like` / `--no-comment` / `--no-share` | flag | false | Desativa cada ação |
 | `--target` | list | — | Engaja só posts de empresa/pessoa-alvo (repetível) |
 | `--save-targets` | flag | false | Persiste os `--target` (reuso futuro) |
@@ -142,8 +144,14 @@ Engaja no feed do LinkedIn (like + comentário + share via LLM).
 | `--force` | flag | false | Ignora skip-today |
 
 ```bash
-# Engage normal
-uv run main.py engage --max-posts 5
+# Engage: sorteia entre 1 e 20 posts (default)
+uv run main.py engage
+
+# Engage: exatamente 5 posts
+uv run main.py engage --posts-number 5
+
+# Engage: sorteia entre 3 e 8
+uv run main.py engage --min-post 3 --max-post 8
 
 # Engage com alvo (empresas relevantes) e salvar a lista
 uv run main.py engage --target "Nubank" --target "Stone" --save-targets

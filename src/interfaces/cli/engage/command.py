@@ -5,15 +5,27 @@ import typer
 from src.utils.async_utils import run_async
 from src.utils.logger import set_run_context
 from src.interfaces.cli.browser import run_browser
-from src.interfaces.cli.engage.logic import resolve_engage_config, run_engage_browser
+from src.interfaces.cli.engage.logic import (
+    resolve_engage_config,
+    resolve_posts_count,
+    run_engage_browser,
+)
 
 
 def register_engage_command(app: typer.Typer) -> None:
     @app.command()
     def engage(
         ctx: typer.Context,
-        max_posts: int = typer.Option(
-            3, "--max-posts", help="Max posts to engage per run (default 3)"
+        min_post: int = typer.Option(
+            1, "--min-post", help="Mínimo de posts (default 1)"
+        ),
+        max_post: int = typer.Option(
+            20, "--max-post", help="Máximo de posts (default 20)"
+        ),
+        posts_number: str = typer.Option(
+            "random",
+            "--posts-number",
+            help="'random' (sorteia entre min/max) ou um inteiro exato (validado no range)",
         ),
         no_like: bool = typer.Option(False, "--no-like", help="Skip like action"),
         no_comment: bool = typer.Option(
@@ -44,6 +56,8 @@ def register_engage_command(app: typer.Typer) -> None:
         """Engage with LinkedIn feed posts (like + comment + share via LLM)."""
         set_run_context("engage")
         headless = ctx.obj.get("headless", False)
+
+        max_posts = resolve_posts_count(posts_number, min_post, max_post)
 
         cfg = resolve_engage_config(
             resume=resume,
