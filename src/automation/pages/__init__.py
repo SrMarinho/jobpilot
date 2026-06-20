@@ -4,6 +4,7 @@ from .jobs_search_page import JobsSearchPage
 from .indeed_jobs_page import IndeedJobsPage
 from .glassdoor_jobs_page import GlassdoorJobsPage
 from .feed_page import FeedPage
+from .ssi_page import SSIPage
 
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "IndeedJobsPage",
     "GlassdoorJobsPage",
     "FeedPage",
+    "SSIPage",
 ]

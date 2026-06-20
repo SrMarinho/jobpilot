@@ -71,6 +71,25 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
     )
     result = await manager.run()
 
+    # Capture SSI snapshot (best-effort; never breaks engage). Browser is
+    # already logged in. Once per day — skip if already captured today.
+    try:
+        from src.automation.pages.ssi_page import SSIPage
+        from src.core.use_cases.ssi_tracker import SSITracker
+
+        ssi_tracker = SSITracker()
+        if ssi_tracker.already_captured_today():
+            logger.info("SSI already captured today, skipping")
+        else:
+            snap = await SSIPage(page).scrape_with_goto()
+            if snap:
+                ssi_tracker.save(snap)
+                logger.info(f"SSI captured: total={snap['total']}/100")
+            else:
+                logger.warning("SSI scrape returned no data")
+    except Exception as e:
+        logger.warning(f"SSI capture failed (non-fatal): {e}")
+
     try:
         from src.utils.telegram import send_telegram
 

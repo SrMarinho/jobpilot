@@ -111,6 +111,31 @@ def _engagement_in_week(year: int, week: int) -> dict:
     }
 
 
+def _ssi_for_week(year: int, week: int) -> dict | None:
+    """Latest SSI snapshot in the week + deltas vs latest snapshot before it."""
+    from src.core.use_cases.ssi_tracker import SSITracker
+
+    tracker = SSITracker()
+    cur = tracker.latest_in_week(year, week)
+    if not cur:
+        return None
+    prev = tracker.latest_before_week(year, week)
+
+    def _d(key: str) -> float | None:
+        if not prev or key not in prev or key not in cur:
+            return None
+        return round(cur[key] - prev[key], 1)
+
+    return {
+        "current": cur,
+        "delta_total": _d("total"),
+        "delta_brand": _d("brand"),
+        "delta_find_people": _d("find_people"),
+        "delta_engage_insights": _d("engage_insights"),
+        "delta_relationships": _d("relationships"),
+    }
+
+
 def _rejection_breakdown(rejected: dict, year: int, week: int) -> dict:
     breakdown: dict[str, int] = {}
     for v in rejected.values():
@@ -266,6 +291,7 @@ def generate_report(year: int, week: int) -> dict:
     site_avg_salary = _site_avg_salary(applied, year, week)
     qa_pending = _qa_pending_count()
     engagement = _engagement_in_week(year, week)
+    ssi = _ssi_for_week(year, week)
     start, end = _week_range(year, week)
 
     return {
@@ -284,6 +310,7 @@ def generate_report(year: int, week: int) -> dict:
         "qa_pending": qa_pending,
         "top_skills": [{"skill": s, "count": c} for s, c in top_skills],
         "engagement": engagement,
+        "ssi": ssi,
         "prev_applications": prev.get("applications") if prev else None,
         "prev_connections": prev.get("connections") if prev else None,
         "prev_site_applications": (prev.get("site_applications") if prev else None)
@@ -507,6 +534,8 @@ def _format_report(report: dict) -> str:
         + (f"\n    👥 Top autores:{top_authors_lines}" if top_authors else "")
     )
 
+    ssi_block = _format_ssi_block(report.get("ssi"))
+
     return (
         f"📊 <b>Relatório Semanal — {week_label}</b>\n"
         f"<i>{rng}</i>\n\n"
@@ -516,11 +545,47 @@ def _format_report(report: dict) -> str:
         f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
         f"{salary_line}"
         f"{qa_line}"
+        f"{ssi_block}"
         f"{eng_block}\n\n"
         f"🌐 <b>Por site:</b>{site_lines or ' —'}\n\n"
         f"🎓 <b>Candidaturas por nível:</b>{level_lines or ' —'}\n\n"
         f"📋 <b>Motivos de rejeição:</b>{breakdown_lines or ' —'}\n\n"
         f"🔥 <b>Top 3 skills mais exigidas:</b>{skills_global_lines or ' —'}"
+    )
+
+
+def _format_ssi_block(ssi: dict | None) -> str:
+    if not ssi or not ssi.get("current"):
+        return "\n\n📈 <b>SSI:</b> — (sem captura esta semana)"
+    cur = ssi["current"]
+
+    def _dstr(key: str) -> str:
+        d = ssi.get(f"delta_{key}")
+        if d is None:
+            return ""
+        if d > 0:
+            return f" (↑{d})"
+        if d < 0:
+            return f" (↓{abs(d)})"
+        return " (=)"
+
+    rank_parts = []
+    if cur.get("rank_industry_pct") is not None:
+        rank_parts.append(f"Top {cur['rank_industry_pct']}% no setor")
+    if cur.get("rank_network_pct") is not None:
+        rank_parts.append(f"Top {cur['rank_network_pct']}% na rede")
+    rank_line = f"\n    📊 {' · '.join(rank_parts)}" if rank_parts else ""
+
+    return (
+        f"\n\n📈 <b>SSI (Social Selling Index): "
+        f"{cur['total']}/100{_dstr('total')}</b>\n"
+        f"    🏷️ Marca profissional:   {cur['brand']}/25{_dstr('brand')}\n"
+        f"    🔍 Pessoas certas:        {cur['find_people']}/25{_dstr('find_people')}\n"
+        f"    💡 Interagir c/ insights: {cur['engage_insights']}/25"
+        f"{_dstr('engage_insights')}\n"
+        f"    🤝 Relacionamentos:       {cur['relationships']}/25"
+        f"{_dstr('relationships')}"
+        f"{rank_line}"
     )
 
 
