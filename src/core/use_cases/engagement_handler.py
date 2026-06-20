@@ -38,6 +38,96 @@ _BLACKLIST_KEYWORDS = {
     "recrutador",
 }
 
+_TECH_KEYWORDS = (
+    "python",
+    "node",
+    "nodejs",
+    "javascript",
+    "typescript",
+    "java",
+    "golang",
+    " go ",
+    "rust",
+    "react",
+    "vue",
+    "angular",
+    "django",
+    "flask",
+    "fastapi",
+    "spring",
+    "kubernetes",
+    "k8s",
+    "docker",
+    "devops",
+    "cloud",
+    "aws",
+    "azure",
+    "gcp",
+    "google cloud",
+    "terraform",
+    "ci/cd",
+    "cicd",
+    "pipeline",
+    "microservi",
+    "api",
+    "rest",
+    "graphql",
+    "sql",
+    "postgres",
+    "mysql",
+    "mongodb",
+    "redis",
+    "banco de dados",
+    "database",
+    "backend",
+    "frontend",
+    "full-stack",
+    "fullstack",
+    "machine learning",
+    "ml",
+    " ia ",
+    " ai ",
+    "inteligência artificial",
+    "inteligencia artificial",
+    "llm",
+    "data",
+    "dados",
+    "etl",
+    "engenharia de software",
+    "software",
+    "desenvolv",
+    "programa",
+    "código",
+    "codigo",
+    "git",
+    "linux",
+    "observability",
+    "monitoring",
+    "rpa",
+    "automacao",
+    "automação",
+    "agile",
+    "scrum",
+    "arquitetura",
+    "architecture",
+    "deploy",
+    "infraestrutura",
+    "infra",
+    "engineer",
+    "developer",
+    "tech",
+    "ti ",
+    "framework",
+    "biblioteca",
+    "library",
+)
+
+
+def has_tech_keyword(text: str) -> bool:
+    low = f" {text.lower()} "
+    return any(kw in low for kw in _TECH_KEYWORDS)
+
+
 _CLICHE_PATTERNS = (
     r"^(ótimo|otimo|excelente|incrível|incrivel|amazing|great|awesome) post[!.]?\s*$",
     r"^(concordo|i agree|agreed)[!.]?\s*$",
@@ -111,6 +201,11 @@ class EngagementHandler:
             return False
         if os.getenv("ENGAGE_SKIP_RELEVANCE") == "1":
             logger.info("ENGAGE_SKIP_RELEVANCE=1, assuming relevant")
+            return True
+        # Keyword heuristic first — robust against weak local LLMs that
+        # over-reject. Tech keyword present => relevant, skip LLM.
+        if has_tech_keyword(post_text):
+            logger.info("is_relevant: tech keyword match, relevant (skipped LLM)")
             return True
         prompt = (
             f"Voce avalia se um post do LinkedIn fala sobre tecnologia/desenvolvimento de software.\n\n"

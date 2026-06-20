@@ -67,7 +67,13 @@ class FeedPage:
 
     async def scroll_feed(self, n: int = 5, pause_ms: int = 1500) -> None:
         for i in range(n):
-            await self.page.evaluate("window.scrollBy(0, window.innerHeight * 1.2)")
+            # Scroll to bottom to force LinkedIn lazy-load of more posts
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.page.wait_for_timeout(pause_ms)
+            # Nudge up then down — triggers IntersectionObserver loaders
+            await self.page.evaluate("window.scrollBy(0, -300)")
+            await self.page.wait_for_timeout(300)
+            await self.page.evaluate("window.scrollBy(0, 600)")
             await self.page.wait_for_timeout(pause_ms)
             logger.debug(f"Scrolled feed {i + 1}/{n}")
 
@@ -234,6 +240,35 @@ class FeedPage:
         except Exception:
             pass
 
+    async def dismiss_overlays(self) -> None:
+        """Close lingering menus/toasts/modals that intercept pointer events."""
+        for _ in range(3):
+            try:
+                await self.page.keyboard.press("Escape")
+                await self.page.wait_for_timeout(250)
+            except Exception:
+                break
+        # Click neutral area top-left to dismiss popovers
+        try:
+            await self.page.mouse.click(5, 200)
+            await self.page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+    async def _safe_click(self, elem: ElementHandle, what: str = "element") -> bool:
+        """Click with fast timeout; fall back to JS click on pointer interception."""
+        try:
+            await elem.click(timeout=5000)
+            return True
+        except Exception as e:
+            logger.debug(f"Normal click on {what} failed ({e}); trying JS click")
+        try:
+            await elem.evaluate("el => el.click()")
+            return True
+        except Exception as e:
+            logger.warning(f"JS click on {what} also failed: {e}")
+            return False
+
     async def like_post(self, post: ElementHandle) -> bool:
         await self._scroll_into_view(post)
         try:
@@ -264,14 +299,12 @@ class FeedPage:
         if any(m in label for m in already_liked_markers) and "nenhuma" not in label:
             logger.info(f"Already liked (label={label!r}), skipping")
             return False
-        try:
-            await elem.click()
+        if await self._safe_click(elem, "like button"):
             logger.info(f"Liked post (button label={label!r})")
             await self.page.wait_for_timeout(800)
             return True
-        except Exception as e:
-            logger.warning(f"Like click failed: {e}")
-            return False
+        logger.warning("Like click failed")
+        return False
 
     async def _find_visible_editor(self) -> Optional[ElementHandle]:
         # LinkedIn 2026: editor div[role=textbox][contenteditable=true]
@@ -354,15 +387,13 @@ class FeedPage:
             return False
 
     async def submit_comment(self, post: ElementHandle, text: str) -> bool:
+        await self.dismiss_overlays()
         await self._scroll_into_view(post)
         comment_btn = await post.query_selector(_COMMENT_SELECTOR)
         if not comment_btn:
             logger.warning("Comment button not found in container")
             return False
-        try:
-            await comment_btn.click()
-        except Exception as e:
-            logger.warning(f"Comment button click failed: {e}")
+        if not await self._safe_click(comment_btn, "comment button"):
             return False
         await self.page.wait_for_timeout(1500)
 
@@ -391,15 +422,13 @@ class FeedPage:
         return True
 
     async def share_post(self, post: ElementHandle) -> bool:
+        await self.dismiss_overlays()
         await self._scroll_into_view(post)
         share_btn = await post.query_selector(_SHARE_SELECTOR)
         if not share_btn:
             logger.warning("Share button not found in container")
             return False
-        try:
-            await share_btn.click()
-        except Exception as e:
-            logger.warning(f"Share button click failed: {e}")
+        if not await self._safe_click(share_btn, "share button"):
             return False
         await self.page.wait_for_timeout(1500)
 
@@ -441,14 +470,12 @@ class FeedPage:
                 pass
             logger.warning("Repost option not found in share menu")
             return False
-        try:
-            await repost_elem.click()
+        if await self._safe_click(repost_elem, "repost option"):
             logger.info("Reposted (compartilhar direto)")
             await self.page.wait_for_timeout(2000)
             return True
-        except Exception as e:
-            logger.warning(f"Repost click failed: {e}")
-            return False
+        logger.warning("Repost click failed")
+        return False
 
     async def random_pause(self, lo: int = 5, hi: int = 15) -> None:
         await asyncio.sleep(random.randint(lo, hi))

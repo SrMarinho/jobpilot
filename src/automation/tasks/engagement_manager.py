@@ -58,17 +58,22 @@ class EngagementManager:
         self.self_author = self.tracker.self_author() or user_name or ""
 
     async def _collect_candidates(self, target: int) -> list[tuple]:
-        """Scroll until we have `target` relevant posts (or hit scroll cap)."""
+        """Keep scrolling/loading posts until `target` relevant ones are found
+        (or the scroll cap / no-progress limit is hit)."""
         candidates: list[tuple] = []  # (post_handle, urn, author, text)
-        scrolls_done = 0
-        max_scrolls = 8
         seen_urns: set[str] = set()
+        max_iterations = 20  # hard cap on scroll rounds
+        stale_rounds = 0  # consecutive rounds with no new posts seen
+        max_stale = 4
 
-        await self.feed.scroll_feed(n=3, pause_ms=1500)
-        scrolls_done += 3
+        await self.feed.scroll_feed(n=2, pause_ms=1500)
 
-        while len(candidates) < target and scrolls_done <= max_scrolls:
+        for iteration in range(max_iterations):
+            if self.stop_event.is_set():
+                break
             posts = await self.feed.get_posts()
+            new_this_round = 0
+
             for post in posts:
                 if self.stop_event.is_set():
                     break
@@ -76,6 +81,7 @@ class EngagementManager:
                 if not urn or urn in seen_urns:
                     continue
                 seen_urns.add(urn)
+                new_this_round += 1
 
                 if self.tracker.already_engaged(urn):
                     self.result.skipped += 1
@@ -105,8 +111,25 @@ class EngagementManager:
 
             if len(candidates) >= target:
                 break
-            await self.feed.scroll_feed(n=2, pause_ms=1500)
-            scrolls_done += 2
+
+            # Track progress: if no new posts appear after scrolling repeatedly,
+            # the feed is exhausted — stop to avoid infinite loop.
+            if new_this_round == 0:
+                stale_rounds += 1
+                logger.info(
+                    f"No new posts this round ({stale_rounds}/{max_stale} stale)"
+                )
+                if stale_rounds >= max_stale:
+                    logger.warning("Feed exhausted — no more new posts loading")
+                    break
+            else:
+                stale_rounds = 0
+                logger.info(
+                    f"Round {iteration + 1}: {new_this_round} new posts, "
+                    f"{len(candidates)}/{target} relevant so far"
+                )
+
+            await self.feed.scroll_feed(n=2, pause_ms=1800)
 
         return candidates[:target]
 
@@ -170,6 +193,9 @@ class EngagementManager:
                 self.result.engaged_urns.append(urn)
             else:
                 logger.warning(f"No actions taken for urn={urn}")
+
+            # Close any lingering toast/menu before next post
+            await self.feed.dismiss_overlays()
 
             if i < len(candidates):
                 await self.feed.random_pause(30, 60)
