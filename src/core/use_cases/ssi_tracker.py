@@ -9,7 +9,7 @@ SSI_HISTORY_FILE = _FILES_DIR / "ssi_history.json"
 
 
 def _week_range(year: int, week: int) -> tuple[date, date]:
-    """Monday-Sunday range matching date.strftime('%W'). Mirrors weekly_report."""
+    """Monday-Sunday range matching date.strftime('%W'). Mirrors report.period."""
     jan1 = date(year, 1, 1)
     days_to_monday = (7 - jan1.weekday()) % 7
     first_monday = jan1 + timedelta(days=days_to_monday)

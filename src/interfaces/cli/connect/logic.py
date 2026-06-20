@@ -110,7 +110,7 @@ def resolve_connect_config(
 async def run_connect_browser(
     page, url: str, max_pages: int, start_page: int, on_page_change
 ) -> None:
-    from src.core.use_cases.weekly_report import save_connections
+    from src.core.use_cases.report import ReportService
 
     manager = ConnectionManager(
         page,
@@ -122,7 +122,7 @@ async def run_connect_browser(
     await manager.run()
     sent = manager.connect_people.invite_sended
     if sent:
-        save_connections(sent)
+        ReportService().save_connections(sent)
     if manager.connect_people.limit_reached:
         save_weekly_limit_reached()
         logger.info("Weekly limit reached — saved. Will skip until next week.")
