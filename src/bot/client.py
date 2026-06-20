@@ -123,6 +123,15 @@ class TelegramClient:
                             "command": "apply",
                             "description": "Aplicar vagas — /apply <url>",
                         },
+                        {"command": "autopost", "description": "Gerar post autoral"},
+                        {
+                            "command": "autopost_topic",
+                            "description": "Post com tema — /autopost_topic <tema>",
+                        },
+                        {
+                            "command": "autopost_list",
+                            "description": "Últimos posts + drafts pendentes",
+                        },
                         {"command": "resume", "description": "Atualizar currículo"},
                         {
                             "command": "status",

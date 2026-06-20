@@ -42,6 +42,7 @@ class ReportBuilder:
             "qa_pending": m.qa_pending(),
             "top_skills": m.top_skills(3),
             "engagement": m.engagement(period),
+            "autopost": m.autopost(period),
             "ssi": m.ssi(period),
             "prev_applications": prev.get("applications") if prev else None,
             "prev_connections": prev.get("connections") if prev else None,

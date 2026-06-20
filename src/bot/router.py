@@ -28,6 +28,10 @@ class UpdateRouter:
                 "📋 <b>Comandos disponíveis:</b>\n\n"
                 "/connect — enviar conexões\n"
                 "/apply &lt;url&gt; — aplicar vagas\n"
+                "/autopost — gerar post autoral\n"
+                "/autopost_topic &lt;tema&gt; — post com tema custom\n"
+                "/autopost_format &lt;tipo&gt; — força formato\n"
+                "/autopost_list — últimos posts + pendentes\n"
                 "/resume — atualizar currículo\n"
                 "/status — ver se tem tarefa rodando\n"
                 "/stop — parar tarefa atual\n"
@@ -51,6 +55,29 @@ class UpdateRouter:
         elif cmd == "/connect":
             self.conversation.start_connect()
 
+        elif cmd == "/autopost":
+            self.client.send("📝 Gerando autopost draft...")
+            self.runner.launch_autopost_generate()
+
+        elif cmd == "/autopost_topic":
+            if not arg:
+                self.client.send("Uso: /autopost_topic &lt;tema&gt;")
+                return
+            self.client.send("📝 Gerando autopost draft (tema custom)...")
+            self.runner.launch_autopost_generate(source="manual", topic=arg)
+
+        elif cmd == "/autopost_format":
+            if not arg:
+                self.client.send(
+                    "Uso: /autopost_format &lt;snippet|story|dissertativo|contrarian&gt;"
+                )
+                return
+            self.client.send(f"📝 Gerando autopost draft (formato {arg})...")
+            self.runner.launch_autopost_generate(fmt=arg)
+
+        elif cmd == "/autopost_list":
+            self._autopost_list()
+
         elif cmd == "/ping":
             start = time.time()
             self.client.send(
@@ -73,3 +100,22 @@ class UpdateRouter:
 
         else:
             self.client.send("Comando não reconhecido. Digite /help.")
+
+    def _autopost_list(self) -> None:
+        from src.core.use_cases.posted_tracker import PostedTracker
+
+        tracker = PostedTracker()
+        posts = tracker._data.get("posts", [])[-5:]
+        pending = tracker.pending_drafts()
+        lines = ["📝 <b>Autopost</b>\n"]
+        if posts:
+            lines.append("<b>Últimos publicados:</b>")
+            for p in reversed(posts):
+                day = p.get("day", "?")
+                topic = (p.get("topic") or "")[:40]
+                lines.append(f"• {day} — {topic}")
+        else:
+            lines.append("<i>Nenhum post publicado ainda.</i>")
+        if pending:
+            lines.append(f"\n<b>Drafts pendentes:</b> {len(pending)}")
+        self.client.send("\n".join(lines))

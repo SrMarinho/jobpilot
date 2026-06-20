@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-06-23T09:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <RandomDelay>PT30M</RandomDelay>
+      <ScheduleByWeek>
+        <DaysOfWeek>
+          <Tuesday />
+          <Friday />
+        </DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>wscript.exe</Command>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_autopost.bat"</Arguments>
+    </Exec>
+  </Actions>
+  <Settings>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <Enabled>true</Enabled>
+  </Settings>
+  <RegistrationInfo>
+    <Description>JobPilot - Gera post autoral no LinkedIn via LLM (Ter/Sex 09h), envia para aprovacao no Telegram</Description>
+  </RegistrationInfo>
+</Task>

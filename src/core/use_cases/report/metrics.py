@@ -146,6 +146,40 @@ class MetricsCalculator:
             "top_authors": sorted(authors.items(), key=lambda x: -x[1])[:5],
         }
 
+    # ── autopost ─────────────────────────────────────────────────
+    def autopost(self, period: WeekPeriod) -> dict:
+        data = self.repo.autopost()
+        posts = [
+            p
+            for p in data.get("posts", [])
+            if isinstance(p, dict) and p.get("week") == period.key
+        ]
+        drafts = [
+            d
+            for d in data.get("drafts", [])
+            if isinstance(d, dict) and d.get("week") == period.key
+        ]
+        by_source: dict[str, int] = {}
+        by_format: dict[str, int] = {}
+        chars: list[int] = []
+        for p in posts:
+            by_source[p.get("source", "?")] = by_source.get(p.get("source", "?"), 0) + 1
+            by_format[p.get("format", "?")] = by_format.get(p.get("format", "?"), 0) + 1
+            chars.append(p.get("chars") or len(p.get("content", "")))
+        status: dict[str, int] = {}
+        for d in drafts:
+            status[d.get("status", "?")] = status.get(d.get("status", "?"), 0) + 1
+        return {
+            "published": len(posts),
+            "by_source": by_source,
+            "by_format": by_format,
+            "generated": len(drafts),
+            "approved": status.get("approved", 0),
+            "rejected": status.get("rejected", 0),
+            "expired": status.get("expired", 0),
+            "avg_chars": int(sum(chars) / len(chars)) if chars else 0,
+        }
+
     # ── SSI ──────────────────────────────────────────────────────
     def ssi(self, period: WeekPeriod) -> dict | None:
         from src.core.use_cases.ssi_tracker import SSITracker

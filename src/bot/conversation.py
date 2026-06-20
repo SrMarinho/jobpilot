@@ -40,6 +40,10 @@ class ConversationFlow:
     # ── Inline button callbacks ───────────────────────────────────────────────
 
     def handle_callback(self, data: str) -> None:
+        if data.startswith("autopost_"):
+            self._handle_autopost_callback(data)
+            return
+
         if data.startswith("sp:"):  # start_page escolhido
             value = data[3:]
             if value == "custom":
@@ -58,6 +62,40 @@ class ConversationFlow:
             self._form["max_pages"] = int(value)
             self._step = ""
             self._launch_connect()
+
+    # ── Autopost approval ─────────────────────────────────────────────────────
+
+    def _handle_autopost_callback(self, data: str) -> None:
+        from src.core.use_cases.posted_tracker import PostedTracker, STATUS_REJECTED
+
+        action, _, draft_id = data.partition(":")
+        tracker = PostedTracker()
+        draft = tracker.get_draft(draft_id)
+        if not draft or draft.get("status") != "pending":
+            self.client.send("⚠️ Draft expirado ou já processado.")
+            return
+
+        if action == "autopost_approve":
+            self.client.send("📤 Publicando no LinkedIn...")
+            self.runner.launch_autopost_publish(draft_id)
+
+        elif action == "autopost_reject":
+            tracker.set_status(draft_id, STATUS_REJECTED)
+            self.client.send("❌ Draft rejeitado.")
+
+        elif action == "autopost_regen":
+            tracker.set_status(draft_id, STATUS_REJECTED)
+            self.client.send("🔄 Regenerando draft...")
+            self.runner.launch_autopost_generate(
+                source=draft.get("source"),
+                topic=draft.get("topic"),
+                fmt=draft.get("format"),
+            )
+
+        elif action == "autopost_edit":
+            self._step = "autopost_edit"
+            self._form = {"draft_id": draft_id}
+            self.client.send("✏️ Envie o novo texto do post:")
 
     def _ask_start_page(self) -> None:
         self._step = "connect_start_page"
@@ -96,6 +134,10 @@ class ConversationFlow:
             on_command(text)
             return
 
+        if self._step == "autopost_edit":
+            self._handle_autopost_edit(text)
+            return
+
         if self._step == "connect_url":
             self._form["url"] = text.strip()
             self._ask_start_page()
@@ -116,6 +158,25 @@ class ConversationFlow:
                 return
             self._step = ""
             self._launch_connect()
+
+    def _handle_autopost_edit(self, text: str) -> None:
+        from src.core.use_cases.post_drafter import validate_draft
+        from src.core.use_cases.posted_tracker import PostedTracker
+        from src.interfaces.cli.autopost.logic import _approval_buttons
+
+        draft_id = self._form.get("draft_id")
+        self.reset()
+        ok, payload = validate_draft(text)
+        if not ok:
+            self.client.send(f"❌ Texto inválido ({payload}). Edição cancelada.")
+            return
+        tracker = PostedTracker()
+        draft = tracker.update_content(draft_id, payload)
+        if not draft:
+            self.client.send("⚠️ Draft não encontrado.")
+            return
+        header = f"📝 <b>Autopost draft (editado)</b>\n<i>{len(payload)} chars</i>\n\n"
+        self.client.send(header + payload, buttons=_approval_buttons(draft_id))
 
     def _launch_connect(self) -> None:
         if self.runner.is_busy():

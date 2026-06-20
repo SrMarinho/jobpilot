@@ -44,6 +44,9 @@ class ReportRepository:
     def engaged(self) -> list:
         return self._load("engaged_posts.json").get("engaged", [])
 
+    def autopost(self) -> dict:
+        return self._load("posted_history.json")
+
     # ── connections log (write) ──────────────────────────────────
     def add_connections(self, count: int) -> None:
         path = self.files_dir / "connections_log.json"

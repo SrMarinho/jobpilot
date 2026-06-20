@@ -48,7 +48,8 @@ class ReportFormatter:
             f"{salary_line}"
             f"{qa_line}"
             f"{self._ssi_block(report.get('ssi'))}"
-            f"{self._engagement_block(report.get('engagement'))}\n\n"
+            f"{self._engagement_block(report.get('engagement'))}"
+            f"{self._autopost_block(report.get('autopost'))}\n\n"
             f"🌐 <b>Por site:</b>"
             f"{self._site_block(report, with_delta=True) or ' —'}\n\n"
             f"🎓 <b>Candidaturas por nível:</b>"
@@ -148,6 +149,28 @@ class ReportFormatter:
             f"    💬 Comments: <b>{eng.get('comments', 0)}</b>\n"
             f"    🔁 Shares: <b>{eng.get('shares', 0)}</b>"
             + (f"\n    👥 Top autores:{top_lines}" if top_authors else "")
+        )
+
+    @staticmethod
+    def _autopost_block(ap: dict | None) -> str:
+        ap = ap or {}
+        published = ap.get("published", 0)
+        generated = ap.get("generated", 0)
+        if not published and not generated:
+            return ""
+        approval = round(ap.get("approved", 0) / generated * 100) if generated else 0
+        fmt_parts = "".join(
+            f"\n    • {k}: {v}x"
+            for k, v in sorted(ap.get("by_format", {}).items(), key=lambda x: -x[1])
+        )
+        return (
+            f"\n\n📝 <b>Autopost (semana):</b>\n"
+            f"    🚀 Publicados: <b>{published}</b>\n"
+            f"    🧪 Gerados: {generated} · ✅ {ap.get('approved', 0)} · "
+            f"❌ {ap.get('rejected', 0)} · ⏰ {ap.get('expired', 0)} "
+            f"(aprovação {approval}%)\n"
+            f"    ✍️ Média: {ap.get('avg_chars', 0)} chars"
+            + (f"\n    📑 Por formato:{fmt_parts}" if fmt_parts else "")
         )
 
     @staticmethod
