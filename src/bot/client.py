@@ -51,6 +51,21 @@ class TelegramClient:
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
 
+    def edit_reply_markup(self, chat_id, message_id) -> None:
+        """Remove os botões inline de uma mensagem já enviada."""
+        try:
+            requests.post(
+                f"{self.base_url}/editMessageReplyMarkup",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reply_markup": {"inline_keyboard": []},
+                },
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to edit reply markup: {e}")
+
     def answer_callback(self, callback_query_id: str) -> None:
         try:
             requests.post(
@@ -63,16 +78,16 @@ class TelegramClient:
 
     # ── Inbound ───────────────────────────────────────────────────────────────
 
-    def get_updates(self) -> list:
+    def get_updates(self, timeout: int = 30) -> list:
         try:
             resp = requests.get(
                 f"{self.base_url}/getUpdates",
                 params={
                     "offset": self.offset,
-                    "timeout": 30,
+                    "timeout": timeout,
                     "allowed_updates": ["message", "callback_query"],
                 },
-                timeout=35,
+                timeout=timeout + 5,
             )
             return resp.json().get("result", [])
         except Exception:

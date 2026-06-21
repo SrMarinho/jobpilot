@@ -20,9 +20,10 @@ POSTED_HISTORY_FILE = _FILES_DIR / "posted_history.json"
 _HARD_CAP = 300
 
 STATUS_PENDING = "pending"
-STATUS_APPROVED = "approved"
+STATUS_APPROVED = "approved"  # aprovado, aguardando publicação
 STATUS_REJECTED = "rejected"
 STATUS_EXPIRED = "expired"
+STATUS_POSTED = "posted"  # já publicado no LinkedIn
 
 
 class PostedTracker:
@@ -94,6 +95,10 @@ class PostedTracker:
     def pending_drafts(self) -> list[dict]:
         return [d for d in self._data["drafts"] if d.get("status") == STATUS_PENDING]
 
+    def approved_drafts(self) -> list[dict]:
+        """Drafts aprovados aguardando publicação (não publicados ainda)."""
+        return [d for d in self._data["drafts"] if d.get("status") == STATUS_APPROVED]
+
     def recent_topics(self, days: int = 30) -> set[str]:
         """Tópicos (normalizados) de drafts+posts dentro da janela ``days``."""
         cutoff = datetime.now() - timedelta(days=days)
@@ -158,7 +163,7 @@ class PostedTracker:
             }
         )
         if draft_id:
-            self.set_status(draft_id, STATUS_APPROVED)  # also saves
+            self.set_status(draft_id, STATUS_POSTED)  # also saves
         else:
             self._save()
 

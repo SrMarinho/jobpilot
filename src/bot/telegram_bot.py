@@ -41,7 +41,7 @@ class TelegramBot:
             cq = update["callback_query"]
             if str(cq["from"]["id"]) == self.client.admin_id:
                 self.client.answer_callback(cq["id"])
-                self.conversation.handle_callback(cq["data"])
+                self.conversation.handle_callback(cq["data"], cq.get("message"))
             return
 
         msg = update.get("message", {})

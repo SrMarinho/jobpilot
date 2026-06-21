@@ -4,6 +4,15 @@ from typing import Callable
 from src.config.settings import logger
 
 
+def _record(feature: str, event: str, **kw) -> None:
+    try:
+        from src.core.use_cases.events_tracker import record_event
+
+        record_event(feature, event, **kw)
+    except Exception:
+        pass
+
+
 class ConversationFlow:
     """Stateful multi-step dialogs (connect form + resume upload).
 
@@ -39,9 +48,9 @@ class ConversationFlow:
 
     # ── Inline button callbacks ───────────────────────────────────────────────
 
-    def handle_callback(self, data: str) -> None:
+    def handle_callback(self, data: str, message: dict | None = None) -> None:
         if data.startswith("autopost_"):
-            self._handle_autopost_callback(data)
+            self._handle_autopost_callback(data, message)
             return
 
         if data.startswith("followup_"):
@@ -73,8 +82,12 @@ class ConversationFlow:
 
     # ── Autopost approval ─────────────────────────────────────────────────────
 
-    def _handle_autopost_callback(self, data: str) -> None:
-        from src.core.use_cases.posted_tracker import PostedTracker, STATUS_REJECTED
+    def _handle_autopost_callback(self, data: str, message: dict | None = None) -> None:
+        from src.core.use_cases.posted_tracker import (
+            PostedTracker,
+            STATUS_APPROVED,
+            STATUS_REJECTED,
+        )
 
         action, _, draft_id = data.partition(":")
         tracker = PostedTracker()
@@ -83,12 +96,22 @@ class ConversationFlow:
             self.client.send("⚠️ Draft expirado ou já processado.")
             return
 
+        # Remove os botões da mensagem original (evita toque duplo).
+        if message and action != "autopost_edit":
+            self.client.edit_reply_markup(
+                message.get("chat", {}).get("id"), message.get("message_id")
+            )
+
         if action == "autopost_approve":
-            self.client.send("📤 Publicando no LinkedIn...")
-            self.runner.launch_autopost_publish(draft_id)
+            tracker.set_status(draft_id, STATUS_APPROVED)
+            _record("autopost", "approved", key=draft_id, detail="telegram")
+            self.client.send(
+                "✅ Aprovado. Será publicado no próximo horário de publicação."
+            )
 
         elif action == "autopost_reject":
             tracker.set_status(draft_id, STATUS_REJECTED)
+            _record("autopost", "rejected", key=draft_id, detail="telegram")
             self.client.send("❌ Draft rejeitado.")
 
         elif action == "autopost_regen":

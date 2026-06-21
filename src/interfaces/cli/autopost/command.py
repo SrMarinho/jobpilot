@@ -4,7 +4,13 @@ import typer
 
 from src.utils.async_utils import run_async
 from src.utils.logger import set_run_context
-from src.interfaces.cli.autopost.logic import resolve_autopost_config, run_autopost
+from src.interfaces.cli.autopost.logic import (
+    resolve_autopost_config,
+    run_autopost,
+    run_publish_approved,
+    list_drafts,
+    approve_draft,
+)
 
 
 def register_autopost_command(app: typer.Typer) -> None:
@@ -31,9 +37,31 @@ def register_autopost_command(app: typer.Typer) -> None:
         force: bool = typer.Option(
             False, "--force", help="Ignora skip-today guard (debug)"
         ),
+        publish_approved: bool = typer.Option(
+            False,
+            "--publish-approved",
+            help="Drena aprovações do Telegram e publica os aprovados (agendado, sem bot)",
+        ),
+        list_drafts_opt: bool = typer.Option(
+            False, "--list", help="Lista drafts pendentes + aprovados com ids"
+        ),
+        approve: Optional[str] = typer.Option(
+            None, "--approve", help="Aprova um draft por id via CLI (publica depois)"
+        ),
     ):
         """Gera post autoral via LLM e envia para aprovação no Telegram."""
         set_run_context("autopost")
+
+        if list_drafts_opt:
+            list_drafts()
+            return
+        if approve:
+            approve_draft(approve)
+            return
+        if publish_approved:
+            run_async(run_publish_approved())
+            return
+
         cfg = resolve_autopost_config(
             source=source,
             topic=topic,

@@ -96,12 +96,6 @@ class BrowserTaskRunner:
 
         self._spawn_detached(lambda: run_autopost(cfg))
 
-    def launch_autopost_publish(self, draft_id: str) -> None:
-        if self.is_busy():
-            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
-            return
-        self._spawn(lambda: self._autopost_publish_async(draft_id))
-
     def launch_engage(self, max_posts: int = 3, review: bool = True) -> None:
         if self.is_busy():
             self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
@@ -182,46 +176,6 @@ class BrowserTaskRunner:
                         pass
         finally:
             _release_browser_lock(lock, "bot_apply")
-
-    async def _autopost_publish_async(self, draft_id: str) -> None:
-        from src.core.use_cases.posted_tracker import PostedTracker
-        from src.automation.pages.feed_composer_page import FeedComposerPage
-
-        tracker = PostedTracker()
-        draft = tracker.get_draft(draft_id)
-        if not draft:
-            self.client.send("⚠️ Draft não encontrado.")
-            return
-
-        lock = await acquire_browser_lock("bot_autopost")
-        try:
-            async with async_playwright() as pw:
-                context, page = await create_context(pw, force_headless=False)
-                try:
-                    ok, url = await FeedComposerPage(page).publish(draft["content"])
-                    if ok:
-                        tracker.mark_posted(
-                            draft["content"],
-                            draft["source"],
-                            draft["format"],
-                            draft["topic"],
-                            url=url,
-                            draft_id=draft_id,
-                        )
-                        self.client.send(f"✅ Post publicado!\n{url}".strip())
-                        await self._capture_ssi(page)
-                    else:
-                        self.client.send("❌ Falha ao publicar o post.")
-                except Exception as e:
-                    self.client.send(f"❌ Erro ao publicar: {e}")
-                    logger.error(f"autopost publish error: {e}")
-                finally:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
-        finally:
-            _release_browser_lock(lock, "bot_autopost")
 
     async def _engage_async(self, max_posts: int, review: bool) -> None:
         import os
