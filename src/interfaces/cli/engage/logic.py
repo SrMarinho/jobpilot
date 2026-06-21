@@ -132,6 +132,24 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
     except Exception as e:
         logger.warning(f"SSI capture failed (non-fatal): {e}")
 
+    # Capture profile-views (90d) snapshot — best-effort, once per day.
+    try:
+        from src.automation.pages.profile_views_page import ProfileViewsPage
+        from src.core.use_cases.profile_views_tracker import ProfileViewsTracker
+
+        pv_tracker = ProfileViewsTracker()
+        if pv_tracker.already_captured_today():
+            logger.info("Profile views already captured today, skipping")
+        else:
+            views = await ProfileViewsPage(page).scrape_with_goto()
+            if views is not None:
+                pv_tracker.save(views)
+                logger.info(f"Profile views captured: {views} (90d)")
+            else:
+                logger.warning("Profile-views scrape returned no data")
+    except Exception as e:
+        logger.warning(f"Profile-views capture failed (non-fatal): {e}")
+
     try:
         from src.utils.telegram import send_telegram
 

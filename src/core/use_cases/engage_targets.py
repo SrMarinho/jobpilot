@@ -5,33 +5,27 @@ comentar no feed aleatório. Aqui só persiste/serve a lista de termos-alvo
 (nomes de empresa ou pessoa); o filtro vive no EngagementManager.
 """
 
-import json
 from pathlib import Path
 
 from src.config.settings import logger
+from src.core.persistence.doc_repo import DocRepo
 
 _FILES_DIR = Path(".local") / "files"
 ENGAGE_TARGETS_FILE = _FILES_DIR / "engage_targets.json"
 
 
+def _doc() -> DocRepo:
+    return DocRepo("engage_targets", json_file=ENGAGE_TARGETS_FILE)
+
+
 def load_targets() -> list[str]:
-    if ENGAGE_TARGETS_FILE.exists():
-        try:
-            data = json.loads(ENGAGE_TARGETS_FILE.read_text(encoding="utf-8"))
-            return [t for t in data.get("targets", []) if t]
-        except Exception:
-            logger.warning(f"Could not parse {ENGAGE_TARGETS_FILE}")
-    return []
+    data = _doc().load()
+    return [t for t in data.get("targets", []) if t]
 
 
 def save_targets(targets: list[str]) -> None:
-    _FILES_DIR.mkdir(exist_ok=True, parents=True)
     clean = sorted({t.strip() for t in targets if t and t.strip()})
-    tmp = ENGAGE_TARGETS_FILE.with_suffix(".tmp")
-    tmp.write_text(
-        json.dumps({"targets": clean}, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    tmp.replace(ENGAGE_TARGETS_FILE)
+    _doc().save({"targets": clean})
     logger.info(f"Engage targets salvos: {len(clean)}")
 
 

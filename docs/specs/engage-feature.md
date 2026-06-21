@@ -77,11 +77,17 @@ Comentário:
 
 ### 2.3 Filtros de segurança
 
+Os filtros puros vivem em `src/core/use_cases/content_filters.py` (léxicos +
+funções), separados da classe `EngagementHandler` (`engagement_handler.py`).
+
 | Filtro | Regra |
 |---|---|
 | Blacklist keywords | política, eleição, religião, racismo, gun control, abortion, vacina (anti/pró), sexo, etc. → skip |
+| Post comentável | strip de URL/emoji; `is_commentable_post` exige ≥ 6 palavras de conteúdo. Post fino/só-link/só-imagem é pulado (senão o modelo inventa) |
 | Comprimento mínimo do comentário | ≥ 5 palavras (evita "👍"/"+1") |
 | Comprimento máximo do comentário | ≤ 200 chars (curto, evita parecer spam) |
+| Foreign-tech | comentário citando linguagem/framework nomeado **ausente** do post → rejeita (stack alucinado, ex: Python em post Java/Spring) |
+| **Grounding (anti-alucinação)** | `comment_is_grounded`: exige overlap léxico (prefixo 5 chars, tolera flexão) entre comentário e post. Zero overlap = fato inventado (ex: "RPA em produção" num post só com link) → rejeita. 2 tentativas; se nenhuma ancora, **não comenta** |
 | Limite diário | 5 posts/dia (hard cap) |
 | Limite semanal | 25 posts/semana (LinkedIn anti-spam) |
 | Cooldown entre ações | sleep random 30-90s entre engajamentos |

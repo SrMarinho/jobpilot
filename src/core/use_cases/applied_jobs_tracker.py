@@ -3,6 +3,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 from src.config.settings import logger
+from src.core.persistence.db import is_db_enabled
+from src.core.persistence.keyed_repo import KeyedRepo
 from src.utils.telegram import send_telegram
 
 _FILES_DIR = Path(".local") / "files"
@@ -12,10 +14,17 @@ REJECTED_JOBS_FILE = _FILES_DIR / "rejected_jobs.json"
 
 class AppliedJobsTracker:
     def __init__(self):
-        self._applied: dict = self._load(APPLIED_JOBS_FILE)
-        self._rejected: dict = self._load(REJECTED_JOBS_FILE)
+        self._ar = KeyedRepo("applied_jobs", "job_id")
+        self._rr = KeyedRepo("rejected_jobs", "job_id")
+        self._applied: dict = self._load(APPLIED_JOBS_FILE, self._ar)
+        self._rejected: dict = self._load(REJECTED_JOBS_FILE, self._rr)
 
-    def _load(self, path: Path) -> dict:
+    def _load(self, path: Path, repo: KeyedRepo) -> dict:
+        if is_db_enabled():
+            return {
+                r["job_id"]: {k: v for k, v in r.items() if k != "job_id"}
+                for r in repo.all()
+            }
         if path.exists():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -82,7 +91,10 @@ class AppliedJobsTracker:
             "site": site or "unknown",
             "contract": contract or "unknown",
         }
-        self._save_applied()
+        if is_db_enabled():
+            self._ar.upsert({"job_id": job_id, **self._applied[job_id]})
+        else:
+            self._save_applied()
         logger.info(f"Saved application: '{title}' at '{company}' (id={job_id})")
 
         salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
@@ -105,5 +117,8 @@ class AppliedJobsTracker:
             "reason": reason,
             "site": site or "unknown",
         }
-        self._save_rejected()
+        if is_db_enabled():
+            self._rr.upsert({"job_id": job_id, **self._rejected[job_id]})
+        else:
+            self._save_rejected()
         logger.debug(f"Saved rejection: '{title}' (id={job_id})")

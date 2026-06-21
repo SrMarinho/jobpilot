@@ -11,6 +11,9 @@ _log_settings = {
 
 logger = CustomLogger(_log_settings).get_logger()
 
+# Persistência: vazio => modo JSON local (.local/files). Setado => Postgres.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
 base_dir = Path("").resolve()
 files_dir = base_dir / ".local" / "files"
 files_dir.mkdir(exist_ok=True)

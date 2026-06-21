@@ -8,6 +8,8 @@ from src.interfaces.cli.report.command import register_report_command
 from src.interfaces.cli.export.command import register_export_command
 from src.interfaces.cli.searches.command import register_searches_commands
 from src.interfaces.cli.goals.command import register_goals_commands
+from src.interfaces.cli.profile_views.command import register_profile_views_commands
+from src.interfaces.cli.db.command import register_db_commands
 from src.interfaces.cli.dashboard.command import register_dashboard_command
 from src.interfaces.cli.followup.command import register_followup_command
 from src.interfaces.cli.misc.command import register_misc_commands
@@ -62,6 +64,18 @@ def register(app: typer.Typer) -> None:
         "goals",
         "Weekly goals (applications/connections/posts/comments)",
         register_goals_commands,
+    )
+    _add_group(
+        app,
+        "profile-views",
+        "Track & analyze 90-day profile views (trend + acceleration)",
+        register_profile_views_commands,
+    )
+    _add_group(
+        app,
+        "db",
+        "Postgres backend: check/init/migrate/status (no-op em modo JSON)",
+        register_db_commands,
     )
     _add_group(
         app,

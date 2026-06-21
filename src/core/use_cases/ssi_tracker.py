@@ -3,6 +3,8 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 
 from src.config.settings import logger
+from src.core.persistence.db import is_db_enabled
+from src.core.persistence.keyed_repo import KeyedRepo
 
 _FILES_DIR = Path(".local") / "files"
 SSI_HISTORY_FILE = _FILES_DIR / "ssi_history.json"
@@ -21,10 +23,14 @@ def _week_range(year: int, week: int) -> tuple[date, date]:
 class SSITracker:
     def __init__(self, path: Path = SSI_HISTORY_FILE):
         self._path = path
+        self._repo = KeyedRepo("ssi_history", "date")
         self._data: dict = self._load()
         self._data.setdefault("snapshots", [])
 
     def _load(self) -> dict:
+        if is_db_enabled():
+            rows = sorted(self._repo.all(), key=lambda r: r.get("date", ""))
+            return {"snapshots": rows}
         if self._path.exists():
             try:
                 return json.loads(self._path.read_text(encoding="utf-8"))
@@ -54,7 +60,10 @@ class SSITracker:
         ]
         self._data["snapshots"].append(snapshot)
         self._data["snapshots"].sort(key=lambda s: s.get("date", ""))
-        self._save()
+        if is_db_enabled():
+            self._repo.upsert(snapshot)
+        else:
+            self._save()
 
     @staticmethod
     def _snap_date(s: dict) -> date | None:

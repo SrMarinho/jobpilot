@@ -6,13 +6,12 @@ aprovação humana e envio vira um registro em ``sent``. Mesmo molde do
 perfil pra nunca mandar dois DMs pra mesma pessoa.
 """
 
-import json
 import uuid
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from src.config.settings import logger
+from src.core.persistence.doc_repo import DocRepo
 
 _FILES_DIR = Path(".local") / "files"
 FOLLOWUP_FILE = _FILES_DIR / "followup_dms.json"
@@ -29,29 +28,17 @@ STATUS_SKIPPED = "skipped"
 class FollowupTracker:
     def __init__(self, path: Path = FOLLOWUP_FILE):
         self._path = path
-        self._data: dict = self._load()
+        self._doc = DocRepo("followup_dms", json_file=path)
+        self._data: dict = self._doc.load()
         self._data.setdefault("drafts", [])
         self._data.setdefault("sent", [])
 
-    def _load(self) -> dict:
-        if self._path.exists():
-            try:
-                return json.loads(self._path.read_text(encoding="utf-8"))
-            except Exception:
-                logger.warning(f"Could not parse {self._path}, starting fresh")
-        return {}
-
     def _save(self):
-        _FILES_DIR.mkdir(exist_ok=True, parents=True)
         for key in ("drafts", "sent"):
             lst = self._data.get(key, [])
             if len(lst) > _HARD_CAP:
                 self._data[key] = lst[-_HARD_CAP:]
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        tmp.replace(self._path)
+        self._doc.save(self._data)
 
     # ── Dedupe ────────────────────────────────────────────────────────────────
 

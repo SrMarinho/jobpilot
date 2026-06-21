@@ -20,6 +20,10 @@ LANGCHAIN_BASE_URL=http://localhost:11434
 # Separate provider for job evaluation (fallback to LLM_PROVIDER if not set)
 LLM_PROVIDER_EVAL=langchain
 LANGCHAIN_MODEL_EVAL=deepseek-r1:14b         # smarter model for evaluation
+
+# Persistence: empty = JSON local (.local/files, default); set = remote Postgres.
+# Use the pooled endpoint (pgbouncer). See docs/persistence.md.
+DATABASE_URL=                                # postgresql://user:pass@host:6543/db
 ```
 
 ### LLM provider options

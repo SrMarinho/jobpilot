@@ -6,10 +6,10 @@ cobertura sem repetir sempre a mesma busca. Persistência atômica, mesmo
 molde dos outros trackers.
 """
 
-import json
 from pathlib import Path
 
 from src.config.settings import logger
+from src.core.persistence.doc_repo import DocRepo
 
 _FILES_DIR = Path(".local") / "files"
 SAVED_SEARCHES_FILE = _FILES_DIR / "saved_searches.json"
@@ -18,25 +18,13 @@ SAVED_SEARCHES_FILE = _FILES_DIR / "saved_searches.json"
 class SavedSearches:
     def __init__(self, path: Path = SAVED_SEARCHES_FILE):
         self._path = path
-        self._data: dict = self._load()
+        self._doc = DocRepo("saved_searches", json_file=path)
+        self._data: dict = self._doc.load()
         self._data.setdefault("searches", [])
         self._data.setdefault("cursor", {})
 
-    def _load(self) -> dict:
-        if self._path.exists():
-            try:
-                return json.loads(self._path.read_text(encoding="utf-8"))
-            except Exception:
-                logger.warning(f"Could not parse {self._path}, starting fresh")
-        return {}
-
     def _save(self) -> None:
-        _FILES_DIR.mkdir(exist_ok=True, parents=True)
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        tmp.replace(self._path)
+        self._doc.save(self._data)
 
     def list(self, task: str | None = None) -> list[dict]:
         items = self._data["searches"]

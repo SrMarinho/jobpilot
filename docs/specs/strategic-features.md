@@ -95,9 +95,29 @@ Alvos semanais; relatório avisa o que está atrás.
 - `ReportBuilder._goals_progress` cruza com o realizado da semana; `ReportFormatter._goals_block` mostra barras + "⚠️ Atrás em".
 - CLI `goals {show|set}`.
 
-## Persistence (novos arquivos, gitignored em `.local/files/`)
+## 10. Visualizações do perfil (90d) — tendência + aceleração
 
-`followup_dms.json`, `engage_targets.json`, `saved_searches.json`, `goals.json`.
+Captura diária da contagem de "visualizações do perfil" (janela 90d) e análise:
+não só "está subindo?" (1ª derivada = ritmo views/dia) mas "está **acelerando**?"
+(2ª derivada = variação do ritmo entre janelas).
+
+- `src/automation/pages/profile_views_page.py` — `ProfileViewsPage` raspa a página
+  de analytics (PT+EN, número antes/depois do rótulo). ⚠️ selectors 2026 best-effort.
+- `src/core/use_cases/profile_views_tracker.py` — `ProfileViewsTracker`: snapshot
+  diário (upsert por data) + `analyze(window)` → `trend` (subindo/caindo/estável) e
+  `pace` (acelerando/desacelerando/constante), com `rate_recent`/`rate_prior`/`accel`.
+  Como o 90d é total rolante, a variação é normalizada por dia (tolera buracos).
+- Captura plugada no fim do `engage` (best-effort, 1×/dia, espelha SSI).
+- CLI `profile-views {show [--window N]|list}`.
+
+## Persistence
+
+Camada backend-swappable por `DATABASE_URL`: vazio = **JSON** (`.local/files/`,
+default); setado = **Postgres** remoto. `KeyedRepo` (tipado) + `DocRepo` (kv JSONB)
+cobrem os 14 trackers; CLI `db {check|init|migrate|status}`. Ver `docs/persistence.md`.
+
+JSON novos (gitignored): `followup_dms.json`, `engage_targets.json`,
+`saved_searches.json`, `goals.json`, `profile_views.json`.
 `engaged_posts.json` ganhou o campo `variant`.
 
 ## Não-escopo / futuro

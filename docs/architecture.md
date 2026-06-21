@@ -67,7 +67,7 @@ Implement site-specific selectors and interaction:
 | `job_evaluator.py` | Quick rejects (title, language, tech) + AI evaluation (single LLM call) |
 | `job_application_handler.py` | LinkedIn/Glassdoor Easy Apply form filling (multi-step) |
 | `indeed_application_handler.py` | Indeed apply form filling |
-| `applied_jobs_tracker.py` | JSON-backed deduplication (applied_jobs.json, rejected_jobs.json) |
+| `applied_jobs_tracker.py` | Deduplication, backend-aware (JSON or Postgres) |
 | `skills_tracker.py` | Tracks missing skills from rejections, AI-categorizes by type and difficulty |
 | `salary_estimator.py` | AI salary estimation from job description and market data |
 | `invitation_handler.py` | LinkedIn connection invite sending |
@@ -93,6 +93,15 @@ Telegram long-polling bot. Runs the same orchestrators in background threads wit
 ### Utils (`src/utils/`)
 
 `telegram.py` — Telegram message sending helper (used by bot and report).
+
+### Persistence (`src/core/persistence/`)
+
+All 14 trackers persist through a backend-swappable layer selected by the
+`DATABASE_URL` env var: **JSON** files (`.local/files/`, default) or **Postgres**
+(managed, remote). Two primitives — `KeyedRepo` (typed tables, per-row upsert) and
+`DocRepo` (whole-doc JSONB in `kv_store`) — back every tracker; each tracker only
+swaps its `_load`/`_save`, keeping public APIs and call-sites unchanged. CLI:
+`db check|init|migrate|status`. Full details in [persistence.md](persistence.md).
 
 ## Adding a new job board
 

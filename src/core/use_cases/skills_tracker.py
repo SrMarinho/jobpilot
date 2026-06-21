@@ -5,6 +5,8 @@ from datetime import date
 from pathlib import Path
 from src.core.ai.llm_provider import get_eval_provider
 from src.config.settings import logger
+from src.core.persistence.db import is_db_enabled
+from src.core.persistence.keyed_repo import KeyedRepo
 
 _SKILLS_FILE = (
     Path(__file__).parent.parent.parent.parent / ".local" / "files" / "skills_gap.json"
@@ -13,7 +15,16 @@ _SKILLS_FILE = (
 CATEGORIES = ["python", "node", "frontend", "devops", "data", "general"]
 
 
+def _repo() -> KeyedRepo:
+    return KeyedRepo("skills_gap", "skill")
+
+
 def load_skills() -> dict:
+    if is_db_enabled():
+        return {
+            r["skill"]: {k: v for k, v in r.items() if k != "skill"}
+            for r in _repo().all()
+        }
     try:
         if _SKILLS_FILE.exists():
             with open(_SKILLS_FILE, "r", encoding="utf-8") as f:
@@ -24,6 +35,11 @@ def load_skills() -> dict:
 
 
 def save_skills(skills: dict) -> None:
+    if is_db_enabled():
+        repo = _repo()
+        for skill, rec in skills.items():
+            repo.upsert({"skill": skill, **rec})
+        return
     try:
         _SKILLS_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(_SKILLS_FILE, "w", encoding="utf-8") as f:

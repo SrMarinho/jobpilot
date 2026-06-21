@@ -4,6 +4,9 @@ from datetime import datetime, date
 from pathlib import Path
 
 from src.config.settings import logger
+from src.core.persistence.db import is_db_enabled
+from src.core.persistence.doc_repo import DocRepo
+from src.core.persistence.keyed_repo import KeyedRepo
 
 _FILES_DIR = Path(".local") / "files"
 ENGAGED_POSTS_FILE = _FILES_DIR / "engaged_posts.json"
@@ -14,10 +17,19 @@ _HARD_CAP = 500
 class EngagedPostsTracker:
     def __init__(self, path: Path = ENGAGED_POSTS_FILE):
         self._path = path
+        self._repo = KeyedRepo("engaged_posts", "urn")
+        self._meta = DocRepo("engaged_meta")  # self_author (db mode)
         self._data: dict = self._load()
         self._data.setdefault("engaged", [])
 
     def _load(self) -> dict:
+        if is_db_enabled():
+            engaged = sorted(self._repo.all(), key=lambda r: r.get("ts") or "")
+            data = {"engaged": engaged}
+            author = self._meta.load().get("self_author")
+            if author:
+                data["self_author"] = author
+            return data
         if self._path.exists():
             try:
                 return json.loads(self._path.read_text(encoding="utf-8"))
@@ -39,7 +51,10 @@ class EngagedPostsTracker:
     def self_author(self, name: str | None = None) -> str | None:
         if name is not None:
             self._data["self_author"] = name
-            self._save()
+            if is_db_enabled():
+                self._meta.save({"self_author": name})
+            else:
+                self._save()
         return self._data.get("self_author")
 
     def already_engaged(self, urn: str) -> bool:
@@ -54,20 +69,22 @@ class EngagedPostsTracker:
         variant: str = "",
     ):
         now = datetime.now()
-        self._data["engaged"].append(
-            {
-                "urn": urn,
-                "ts": now.isoformat(),
-                "author": author,
-                "actions": actions,
-                "comment": comment,
-                "variant": variant,
-                "month": now.strftime("%Y-%m"),
-                "week": now.strftime("%Y-W%W"),
-                "day": now.date().isoformat(),
-            }
-        )
-        self._save()
+        record = {
+            "urn": urn,
+            "ts": now.isoformat(),
+            "author": author,
+            "actions": actions,
+            "comment": comment,
+            "variant": variant,
+            "month": now.strftime("%Y-%m"),
+            "week": now.strftime("%Y-W%W"),
+            "day": now.date().isoformat(),
+        }
+        self._data["engaged"].append(record)
+        if is_db_enabled():
+            self._repo.upsert(record)
+        else:
+            self._save()
 
     def counts_for_week(self, week_key: str) -> dict:
         likes = comments = shares = 0

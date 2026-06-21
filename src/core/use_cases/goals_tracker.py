@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 
 from src.config.settings import logger
+from src.core.persistence.db import is_db_enabled
+from src.core.persistence.keyed_repo import KeyedRepo
 
 _FILES_DIR = Path(".local") / "files"
 GOALS_FILE = _FILES_DIR / "goals.json"
@@ -27,9 +29,12 @@ _DEFAULTS = {
 class GoalsTracker:
     def __init__(self, path: Path = GOALS_FILE):
         self._path = path
+        self._repo = KeyedRepo("goals", "metric")
         self._data: dict = self._load()
 
     def _load(self) -> dict:
+        if is_db_enabled():
+            return {r["metric"]: r["target"] for r in self._repo.all()}
         if self._path.exists():
             try:
                 return json.loads(self._path.read_text(encoding="utf-8"))
@@ -55,5 +60,8 @@ class GoalsTracker:
         if key not in GOAL_KEYS:
             raise ValueError(f"meta desconhecida: {key} (use {', '.join(GOAL_KEYS)})")
         self._data[key] = int(value)
-        self._save()
+        if is_db_enabled():
+            self._repo.upsert({"metric": key, "target": int(value)})
+        else:
+            self._save()
         logger.info(f"Meta semanal definida: {key}={value}")

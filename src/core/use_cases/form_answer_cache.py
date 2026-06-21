@@ -1,6 +1,6 @@
-import json
 from pathlib import Path
 
+from src.core.persistence.doc_repo import DocRepo
 from src.utils.text import normalize_question
 
 _QA_FILE = (
@@ -33,17 +33,13 @@ class FormAnswerCache:
 
     def __init__(self, qa_file: Path | None = None):
         self._qa_file = qa_file or _QA_FILE
+        self._doc = DocRepo("form_answers", json_file=self._qa_file)
 
     def load(self) -> dict:
-        if self._qa_file.exists():
-            return json.loads(self._qa_file.read_text(encoding="utf-8"))
-        return {}
+        return self._doc.load()
 
     def save(self, qa: dict) -> None:
-        self._qa_file.parent.mkdir(parents=True, exist_ok=True)
-        self._qa_file.write_text(
-            json.dumps(qa, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        self._doc.save(qa)
 
     def resolve(self, question: str) -> str | None:
         qa = self.load()
