@@ -27,6 +27,7 @@ class AutopostManager:
         source: str | None = None,
         topic: str | None = None,
         fmt: str | None = None,
+        recent: set[str] | None = None,
     ):
         self.drafter = PostDrafter(
             llm_provider,
@@ -37,10 +38,11 @@ class AutopostManager:
         self.source = source or default_source_for_today()
         self.topic = topic
         self.fmt = fmt or default_format_for_today()
+        self.recent = recent or set()
 
     async def generate(self) -> dict | None:
         """Resolve source → draft → validate. Returns a draft payload dict."""
-        resolved_topic, context = pick_content(self.source, self.topic)
+        resolved_topic, context = pick_content(self.source, self.topic, self.recent)
         logger.info(
             f"Autopost gerando: source={self.source} format={self.fmt} "
             f"topic={resolved_topic!r}"

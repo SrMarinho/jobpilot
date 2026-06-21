@@ -79,6 +79,7 @@ async def run_autopost(cfg: dict) -> None:
         source=cfg["source"],
         topic=cfg["topic"],
         fmt=cfg["format"],
+        recent=tracker.recent_topics(days=30),
     )
     draft = await manager.generate()
     if not draft:

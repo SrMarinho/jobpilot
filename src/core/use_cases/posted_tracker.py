@@ -94,6 +94,25 @@ class PostedTracker:
     def pending_drafts(self) -> list[dict]:
         return [d for d in self._data["drafts"] if d.get("status") == STATUS_PENDING]
 
+    def recent_topics(self, days: int = 30) -> set[str]:
+        """Tópicos (normalizados) de drafts+posts dentro da janela ``days``."""
+        cutoff = datetime.now() - timedelta(days=days)
+        topics: set[str] = set()
+        for item, ts_key in (
+            *((d, "created_at") for d in self._data["drafts"]),
+            *((p, "ts") for p in self._data["posts"]),
+        ):
+            topic = (item.get("topic") or "").strip().lower()
+            if not topic:
+                continue
+            try:
+                ts = datetime.fromisoformat(item.get(ts_key, ""))
+            except ValueError:
+                continue
+            if ts >= cutoff:
+                topics.add(topic)
+        return topics
+
     def expire_stale(self) -> int:
         now = datetime.now()
         n = 0

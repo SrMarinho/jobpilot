@@ -15,12 +15,20 @@ from src.config.settings import logger
 
 FEED_URL = "https://www.linkedin.com/feed/"
 
+# Estratégias em camadas: estrutural (mais estável) → aria-label/texto (fallback).
 _START_POST_JS = """
 () => {
     const isVisible = (b) => {
         const r = b.getBoundingClientRect();
         return r.width > 0 && r.height > 0;
     };
+    // 1) seletor estrutural do card de compose no topo do feed
+    const structural = document.querySelector(
+        ".share-box-feed-entry__trigger, button.share-box-feed-entry__trigger, "
+        + ".artdeco-card .share-box-feed-entry__top-bar button"
+    );
+    if (structural && isVisible(structural)) return structural;
+    // 2) fallback por aria-label / texto visível
     const nodes = document.querySelectorAll("button, div[role='button']");
     for (const n of nodes) {
         if (!isVisible(n)) continue;
@@ -40,7 +48,14 @@ _POST_BTN_JS = """
         const r = b.getBoundingClientRect();
         return r.width > 0 && r.height > 0;
     };
-    const btns = document.querySelectorAll('button');
+    // 1) seletor estrutural do botão publicar dentro do modal de compose
+    const scope = document.querySelector(
+        ".share-creation-state, div[class*='share-box'], div[role='dialog']"
+    ) || document;
+    const structural = scope.querySelector(".share-actions__primary-action");
+    if (structural && !structural.disabled && isVisible(structural)) return structural;
+    // 2) fallback por aria-label / texto visível
+    const btns = scope.querySelectorAll('button');
     for (const b of btns) {
         if (b.disabled || !isVisible(b)) continue;
         const al = (b.getAttribute('aria-label') || '').toLowerCase();
@@ -52,6 +67,18 @@ _POST_BTN_JS = """
     return null;
 }
 """
+
+
+def _alert(step: str) -> None:
+    """Loga erro e avisa no Telegram que um passo da publicação falhou."""
+    msg = f"publicação falhou no passo '{step}' — seletor pode ter mudado"
+    logger.error(f"Autopost: {msg}")
+    try:
+        from src.utils.telegram import send_telegram
+
+        send_telegram(f"⚠️ <b>Autopost</b>: {msg}")
+    except Exception:
+        pass
 
 
 class FeedComposerPage:
@@ -117,12 +144,13 @@ class FeedComposerPage:
 
         start_handle = await self.page.evaluate_handle(_START_POST_JS)
         if not await self._safe_click_handle(start_handle, "start-post button"):
+            _alert("abrir composer")
             return False, ""
         await self.page.wait_for_timeout(2000)
 
         editor = await self._find_editor()
         if not editor:
-            logger.warning("Composer editor not visible")
+            _alert("encontrar editor")
             return False, ""
         try:
             await editor.click()
@@ -135,6 +163,7 @@ class FeedComposerPage:
 
         post_handle = await self.page.evaluate_handle(_POST_BTN_JS)
         if not await self._safe_click_handle(post_handle, "publish button"):
+            _alert("clicar publicar")
             try:
                 await self.page.keyboard.press("Escape")
             except Exception:
@@ -143,5 +172,7 @@ class FeedComposerPage:
 
         await self.page.wait_for_timeout(3000)
         url = await self._capture_post_url()
+        if not url:
+            logger.warning("Post publicado mas URL não capturada (toast ausente?)")
         logger.info(f"Post publicado (url={url or 'desconhecida'})")
         return True, url

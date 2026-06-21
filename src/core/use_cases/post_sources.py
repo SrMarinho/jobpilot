@@ -44,6 +44,10 @@ def default_source_for_today() -> str:
     return "template"
 
 
+def _norm(s: str) -> str:
+    return s.strip().lower()
+
+
 def _commit_context() -> tuple[str, str]:
     try:
         out = subprocess.run(
@@ -62,36 +66,50 @@ def _commit_context() -> tuple[str, str]:
     return "o que construí essa semana (build-in-public)", context
 
 
-def _rss_context() -> tuple[str, str]:
+def _rss_context(recent: set[str] | None = None) -> tuple[str, str]:
     try:
         import feedparser  # optional dep
     except Exception:
         logger.warning("feedparser não instalado, caindo para template")
-        return _template_context()
+        return _template_context(recent)
+    recent = recent or set()
     feeds = (
         "https://hnrss.org/frontpage",
         "https://dev.to/feed",
     )
+    fallback: tuple[str, str] | None = None
     for url in feeds:
         try:
             parsed = feedparser.parse(url)
-            if parsed.entries:
-                entry = parsed.entries[0]
-                title = getattr(entry, "title", "").strip()
-                summary = getattr(entry, "summary", "").strip()
-                if title:
-                    return title, f"{title}\n\n{summary[:600]}"
         except Exception as e:
             logger.debug(f"RSS feed {url} failed: {e}")
             continue
-    return _template_context()
+        for entry in parsed.entries:
+            title = getattr(entry, "title", "").strip()
+            if not title:
+                continue
+            summary = getattr(entry, "summary", "").strip()
+            item = (title, f"{title}\n\n{summary[:600]}")
+            if fallback is None:
+                fallback = item
+            if _norm(title) not in recent:
+                return item
+    if fallback is not None:
+        return fallback
+    return _template_context(recent)
 
 
-def _template_context() -> tuple[str, str]:
-    return random.choice(_TOPICS), ""
+def _template_context(recent: set[str] | None = None) -> tuple[str, str]:
+    recent = recent or set()
+    pool = [t for t in _TOPICS if _norm(t) not in recent] or list(_TOPICS)
+    return random.choice(pool), ""
 
 
-def pick_content(source: str, topic: str | None = None) -> tuple[str, str]:
+def pick_content(
+    source: str,
+    topic: str | None = None,
+    recent: set[str] | None = None,
+) -> tuple[str, str]:
     """Resolve a source into ``(topic, context)`` for the drafter."""
     if source == "manual":
         if not topic:
@@ -100,8 +118,8 @@ def pick_content(source: str, topic: str | None = None) -> tuple[str, str]:
     if source == "commit":
         return _commit_context()
     if source == "rss":
-        return _rss_context()
+        return _rss_context(recent)
     # template (default)
     if topic:
         return topic, ""
-    return _template_context()
+    return _template_context(recent)
