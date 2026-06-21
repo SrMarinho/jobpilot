@@ -60,6 +60,22 @@ def build_linkedin_people_url(keywords: list[str], network: str | None = None) -
     return f"https://www.linkedin.com/search/results/people/?{urlencode(params)}"
 
 
+def build_linkedin_hired_posts_url(
+    role: str, extra_terms: list[str] | None = None
+) -> str:
+    """Busca de POSTS de anúncio de contratação recente, ordenados por data.
+
+    A data do post ≈ data da contratação → recência grátis (sem abrir perfil).
+    Validado no spike: 6 anúncios reais no 1º goto, sem checkpoint.
+    """
+    announce = '"comecei como" OR "started a new position" OR "novo cargo"'
+    terms = [f"({announce})", role]
+    if extra_terms:
+        terms.extend(extra_terms)
+    params = {"keywords": " ".join(terms), "sortBy": '"date_posted"'}
+    return f"https://www.linkedin.com/search/results/content/?{urlencode(params)}"
+
+
 def build_indeed_url(
     keywords: list[str],
     date_posted: str | None = None,

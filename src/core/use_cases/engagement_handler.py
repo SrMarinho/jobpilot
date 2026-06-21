@@ -1,5 +1,6 @@
 import os
 import random
+import re
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
@@ -9,6 +10,7 @@ from src.core.use_cases.content_filters import (
     has_tech_keyword,
     is_blacklisted,
     is_commentable_post,
+    is_trivial,
     validate_comment,
 )
 
@@ -79,15 +81,37 @@ class EngagementHandler:
     def _pick_variant(self) -> str:
         return random.choice(list(self._VARIANTS.keys()))
 
+    # Hashtags do post (#dataeng, #python). Sinalizam o tema/contexto que o
+    # autor escolheu — ajudam o modelo a ancorar melhor o comentário.
+    @staticmethod
+    def _extract_tags(post_text: str, limit: int = 8) -> list[str]:
+        tags = re.findall(r"#(\w[\w-]{1,30})", post_text or "")
+        seen: list[str] = []
+        for t in tags:
+            if t.lower() not in {x.lower() for x in seen}:
+                seen.append(t)
+            if len(seen) >= limit:
+                break
+        return seen
+
     async def generate_comment(
         self, post_text: str, author: str, variant: str | None = None
     ) -> tuple[str | None, str]:
         """Gera comentário. Retorna ``(texto|None, variant)``."""
         variant = variant or self._pick_variant()
         angle = self._VARIANTS.get(variant, self._VARIANTS["insight"])
+        tags = self._extract_tags(post_text)
+        tags_line = (
+            f"Tags do post (tema sinalizado pelo autor): {', '.join('#' + t for t in tags)}\n"
+            f"Use as tags só como contexto do tema; NÃO copie a tag literal no comentário "
+            f"nem trate tag como fato técnico do projeto.\n\n"
+            if tags
+            else ""
+        )
         prompt = (
             f"Leia o post do LinkedIn abaixo e escreva 1 comentário como peer profissional.\n\n"
             f'Post de {author}:\n"""\n{post_text[:800]}\n"""\n\n'
+            f"{tags_line}"
             f"Tarefa: comentário curto (5-15 palavras), profissional, no mesmo idioma do post.\n"
             f"Ângulo desta vez: {angle}\n\n"
             f"ANCORAGEM (essencial):\n"
@@ -106,6 +130,11 @@ class EngagementHandler:
             f"- NÃO mencione que está procurando emprego\n"
             f"- NÃO use clichês ('ótimo post!', 'concordo plenamente', 'muito bom!')\n"
             f"- NÃO seja sycophantic\n"
+            f"- NÃO faça perguntas de iniciante nem explique o básico (ex: 'o que é "
+            f"uma API?', 'como o JSON facilita a comunicação?', 'para que serve "
+            f"Docker?'). Comente como SÊNIOR: traga nuance, trade-off, experiência "
+            f"prática ou uma pergunta técnica não-óbvia.\n"
+            f"- Se só tiver algo trivial/óbvio a dizer, retorne string vazia\n"
             f"- Se não tiver algo de valor e ancorado a dizer, retorne string vazia\n\n"
             f"Retorne APENAS o comentário, sem aspas, sem preâmbulo.\n"
             f"Comentário:"
@@ -135,6 +164,12 @@ class EngagementHandler:
             if not comment_is_grounded(payload, post_text):
                 logger.info(
                     f"Comment rejected (ungrounded: nada em comum com o post) "
+                    f"tentativa {attempt + 1}: {payload!r}"
+                )
+                continue
+            if is_trivial(payload):
+                logger.info(
+                    f"Comment rejected (trivial/iniciante) "
                     f"tentativa {attempt + 1}: {payload!r}"
                 )
                 continue

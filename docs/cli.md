@@ -192,6 +192,38 @@ uv run main.py followup --max-dms 3
 
 ---
 
+## `hired`
+
+Benchmark de skills de quem foi **contratado recentemente** p/ um cargo-alvo, p/
+ajustar teu perfil. Descobre posts de anúncio ("comecei como"/"started a new
+position", ordenados por data → recência = data do post), abre cada perfil p/ as
+competências (extraídas via LLM, filtrando ruído), deduplica por perfil (janela
+de 6 meses) e agrega skill→contagem. Opcionalmente cruza com teu currículo (gap)
+e mostra tendência mês a mês.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--role` / `-r` | str | (obrigatório) | Cargo-alvo (ex: "Software Engineer") |
+| `--days` | int | 90 | Janela de recência da contratação (dias) |
+| `--max-profiles` / `-n` | int | 10 | Máx. perfis a abrir/coletar |
+| `--gap` | flag | false | Compara skills em alta com teu currículo (lacunas) |
+| `--resume` | path | auto | Currículo p/ o gap |
+| `--trend` | flag | false | Tendência das skills (subindo/caindo mês a mês; precisa ≥2 meses de coletas) |
+| `--telegram` | flag | false | Envia o relatório completo (agregado + gap + tendência) via Telegram |
+| `--out` | path | — | Exporta perfis coletados p/ CSV |
+| `--dry-run` | flag | false | Só descobre/loga anúncios; não abre perfis |
+
+Dados em `.local/files/hired_profiles.json` (dedup por `profile_url`, TTL no agregado).
+
+```bash
+uv run main.py hired --role "Desenvolvedor de Software Pleno" --gap --trend --telegram
+```
+
+> Modelo de extração: usa o `eval` provider. Pra forçar Claude só numa run sem mexer no
+> `.env`: `LLM_PROVIDER_EVAL=claude uv run main.py hired --role ...`.
+
+---
+
 ## `dashboard`
 
 Dashboard TUI ao vivo (textual): candidaturas, engagement, autopost, SSI e

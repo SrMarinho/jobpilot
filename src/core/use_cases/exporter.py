@@ -57,6 +57,37 @@ def export_applied_csv(out: Path) -> int:
     return n
 
 
+_HIRED_FIELDS = [
+    "name",
+    "headline",
+    "company",
+    "top_skills",
+    "age_days",
+    "role",
+    "source",
+    "scraped_at",
+    "profile_url",
+]
+
+
+def export_hired_profiles_csv(out: Path) -> int:
+    data = _load("hired_profiles.json")
+    profiles = data.get("profiles", []) if isinstance(data, dict) else []
+    rows = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        row = dict(profile)
+        skills = row.get("top_skills")
+        if isinstance(skills, list):
+            row["top_skills"] = "; ".join(skills)
+        rows.append(row)
+    rows.sort(key=lambda r: r.get("scraped_at", ""), reverse=True)
+    n = _write_csv(rows, _HIRED_FIELDS, out)
+    logger.info(f"Exported {n} hired profiles → {out}")
+    return n
+
+
 def export_rejected_csv(out: Path) -> int:
     data = _load("rejected_jobs.json")
     rows = [{"job_id": jid, **v} for jid, v in data.items() if isinstance(v, dict)]

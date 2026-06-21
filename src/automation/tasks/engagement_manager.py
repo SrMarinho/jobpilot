@@ -61,69 +61,134 @@ class EngagementManager:
         self.result = EngagementResult()
         self.self_author = self.tracker.self_author() or user_name or ""
 
-    async def _collect_candidates(self, target: int) -> list[tuple]:
-        """Keep scrolling/loading posts until `target` relevant ones are found
-        (or the scroll cap / no-progress limit is hit)."""
-        candidates: list[tuple] = []  # (post_handle, urn, author, text)
+    async def _select(self, post, seen_urns: set[str]):
+        """Filtra um post. Retorna (urn, author, text) se deve engajar, ``None``
+        se pular (filtrado), ou ``"dup"`` se já visto (não conta como novo)."""
+        urn = await self.feed.get_post_urn(post)
+        if not urn or urn in seen_urns:
+            return "dup"
+        seen_urns.add(urn)
+
+        if self.tracker.already_engaged(urn):
+            self.result.skipped += 1
+            return None
+        author = await self.feed.get_post_author(post)
+        if (
+            self.self_author
+            and author.strip().lower() == self.self_author.strip().lower()
+        ):
+            self.result.skipped += 1
+            return None
+        text = await self.feed.get_post_text(post)
+        if not text or len(text) < 30:
+            self.result.skipped += 1
+            return None
+        if is_blacklisted(text):
+            self.result.skipped += 1
+            return None
+        if self.targets:
+            from src.core.use_cases.engage_targets import matches_target
+
+            if not matches_target(author, text, self.targets):
+                self.result.skipped += 1
+                return None
+        if not await self.handler.is_relevant(text):
+            self.result.skipped += 1
+            return None
+        return (urn, author, text)
+
+    async def _engage_post(self, post, urn: str, author: str, text: str) -> bool:
+        """Like/comment/share num post. Retorna True se alguma ação ocorreu."""
+        actions: list[str] = []
+        comment_text = ""
+        variant = ""
+
+        if self.dry_run:
+            preview, variant = await self.handler.generate_comment(text, author)
+            if preview:
+                logger.info(f"[dry-run] Generated comment ({variant}): {preview!r}")
+                comment_text = preview
+                actions = ["like", "comment", "share"]
+            else:
+                actions = ["like", "share"]
+            self.tracker.mark_engaged(urn, author, actions, comment_text, variant)
+            self.result.liked += 1
+            if "comment" in actions:
+                self.result.commented += 1
+            self.result.shared += 1
+            return True
+
+        if self.enable_like:
+            if await self.feed.like_post(post):
+                actions.append("like")
+                self.result.liked += 1
+            await self.feed.random_pause(5, 12)
+
+        if self.enable_comment:
+            comment, variant = await self.handler.generate_comment(text, author)
+            if comment and self.comment_approver:
+                comment = await self.comment_approver(comment, author)
+            if comment:
+                if await self.feed.submit_comment(post, comment):
+                    actions.append("comment")
+                    comment_text = comment
+                    self.result.commented += 1
+                await self.feed.random_pause(5, 12)
+
+        if self.enable_share:
+            if await self.feed.share_post(post):
+                actions.append("share")
+                self.result.shared += 1
+            await self.feed.random_pause(5, 10)
+
+        await self.feed.dismiss_overlays()
+
+        if actions:
+            self.tracker.mark_engaged(urn, author, actions, comment_text, variant)
+            self.result.engaged_urns.append(urn)
+            return True
+        logger.warning(f"No actions taken for urn={urn}")
+        return False
+
+    async def run(self) -> EngagementResult:
+        """Engaja ATÉ atingir ``max_posts`` engajamentos de fato — rola o feed
+        e filtra/engaja inline. Para só ao bater a meta, esgotar o feed, ou
+        bater o cap de segurança."""
+        await self.feed.goto()
+        target = self.max_posts
         seen_urns: set[str] = set()
-        max_iterations = 20  # hard cap on scroll rounds
-        stale_rounds = 0  # consecutive rounds with no new posts seen
-        max_stale = 4
+        max_iterations = 60  # cap de segurança (rounds de scroll)
+        max_stale = 8  # rounds seguidos sem post novo => feed esgotado
+        stale_rounds = 0
+        engaged = 0
 
         await self.feed.scroll_feed(n=2, pause_ms=1500)
 
         for iteration in range(max_iterations):
-            if self.stop_event.is_set():
+            if engaged >= target or self.stop_event.is_set():
                 break
             posts = await self.feed.get_posts()
             new_this_round = 0
 
             for post in posts:
-                if self.stop_event.is_set():
+                if engaged >= target or self.stop_event.is_set():
                     break
-                urn = await self.feed.get_post_urn(post)
-                if not urn or urn in seen_urns:
+                sel = await self._select(post, seen_urns)
+                if sel == "dup":
                     continue
-                seen_urns.add(urn)
-                new_this_round += 1
+                new_this_round += 1  # post novo (engajado ou pulado)
+                if sel is None:
+                    continue
+                urn, author, text = sel
+                logger.info(f"=== Engajando {engaged + 1}/{target} — {author} ===")
+                if await self._engage_post(post, urn, author, text):
+                    engaged += 1
+                    if engaged < target:
+                        await self.feed.random_pause(30, 60)
 
-                if self.tracker.already_engaged(urn):
-                    self.result.skipped += 1
-                    continue
-                author = await self.feed.get_post_author(post)
-                if (
-                    self.self_author
-                    and author.strip().lower() == self.self_author.strip().lower()
-                ):
-                    self.result.skipped += 1
-                    continue
-                text = await self.feed.get_post_text(post)
-                if not text or len(text) < 30:
-                    self.result.skipped += 1
-                    continue
-                if is_blacklisted(text):
-                    self.result.skipped += 1
-                    continue
-                if self.targets:
-                    from src.core.use_cases.engage_targets import matches_target
-
-                    if not matches_target(author, text, self.targets):
-                        self.result.skipped += 1
-                        continue
-                logger.info(f"Evaluating relevance for author={author!r}")
-                if not await self.handler.is_relevant(text):
-                    self.result.skipped += 1
-                    continue
-                candidates.append((post, urn, author, text))
-                logger.info(f"Selected candidate {len(candidates)}/{target}: {author}")
-                if len(candidates) >= target:
-                    break
-
-            if len(candidates) >= target:
+            if engaged >= target:
                 break
 
-            # Track progress: if no new posts appear after scrolling repeatedly,
-            # the feed is exhausted — stop to avoid infinite loop.
             if new_this_round == 0:
                 stale_rounds += 1
                 logger.info(
@@ -136,83 +201,15 @@ class EngagementManager:
                 stale_rounds = 0
                 logger.info(
                     f"Round {iteration + 1}: {new_this_round} new posts, "
-                    f"{len(candidates)}/{target} relevant so far"
+                    f"{engaged}/{target} engajados"
                 )
 
             await self.feed.scroll_feed(n=2, pause_ms=1800)
 
-        return candidates[:target]
-
-    async def run(self) -> EngagementResult:
-        await self.feed.goto()
-        candidates = await self._collect_candidates(self.max_posts)
-        if not candidates:
-            logger.warning("No relevant posts found on feed")
-            return self.result
-        if len(candidates) < self.max_posts:
+        if engaged < target:
             logger.warning(
-                f"Only {len(candidates)} relevant posts found (target {self.max_posts})"
+                f"Engajou {engaged}/{target} (feed esgotado ou cap atingido)"
             )
-
-        for i, (post, urn, author, text) in enumerate(candidates, 1):
-            if self.stop_event.is_set():
-                break
-            logger.info(f"=== Post {i}/{len(candidates)} — {author} ===")
-            actions: list[str] = []
-            comment_text = ""
-            variant = ""
-
-            if self.dry_run:
-                logger.info(f"[dry-run] Would like, comment, share for urn={urn}")
-                preview, variant = await self.handler.generate_comment(text, author)
-                if preview:
-                    logger.info(f"[dry-run] Generated comment ({variant}): {preview!r}")
-                    comment_text = preview
-                    actions = ["like", "comment", "share"]
-                else:
-                    actions = ["like", "share"]
-                self.tracker.mark_engaged(urn, author, actions, comment_text, variant)
-                self.result.liked += 1
-                if "comment" in actions:
-                    self.result.commented += 1
-                self.result.shared += 1
-                continue
-
-            if self.enable_like:
-                if await self.feed.like_post(post):
-                    actions.append("like")
-                    self.result.liked += 1
-                await self.feed.random_pause(5, 12)
-
-            if self.enable_comment:
-                comment, variant = await self.handler.generate_comment(text, author)
-                if comment and self.comment_approver:
-                    comment = await self.comment_approver(comment, author)
-                if comment:
-                    if await self.feed.submit_comment(post, comment):
-                        actions.append("comment")
-                        comment_text = comment
-                        self.result.commented += 1
-                    await self.feed.random_pause(5, 12)
-
-            if self.enable_share:
-                if await self.feed.share_post(post):
-                    actions.append("share")
-                    self.result.shared += 1
-                await self.feed.random_pause(5, 10)
-
-            if actions:
-                self.tracker.mark_engaged(urn, author, actions, comment_text, variant)
-                self.result.engaged_urns.append(urn)
-            else:
-                logger.warning(f"No actions taken for urn={urn}")
-
-            # Close any lingering toast/menu before next post
-            await self.feed.dismiss_overlays()
-
-            if i < len(candidates):
-                await self.feed.random_pause(30, 60)
-
         logger.info(
             f"Engagement done. Liked: {self.result.liked} | "
             f"Commented: {self.result.commented} | Shared: {self.result.shared}"

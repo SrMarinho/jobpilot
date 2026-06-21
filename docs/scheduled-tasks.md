@@ -4,13 +4,21 @@ Automate JobPilot to run on every Windows login — no terminal visible, Chrome 
 
 ## Task overview
 
-Three scheduled tasks, all triggered at user logon:
+Four scheduled tasks, all triggered at user logon:
 
 | Task | Batch file | What it does |
 |------|-----------|-------------|
-| `JobPilot\Apply` | `local/startup_apply.bat` | Searches jobs and applies (daily) |
-| `JobPilot\Connect` | `local/startup_connect.bat` | Sends connection requests (daily, respects limits) |
-| `JobPilot\Report` | `local/startup_report.bat` | Sends monthly report via Telegram |
+| `JobPilot Apply` | `.local/startup_apply.bat` | Searches jobs and applies (daily) |
+| `JobPilot Connect` | `.local/startup_connect.bat` | Sends connection requests (daily, respects limits) |
+| `JobPilot Report` | `.local/startup_report.bat` | Sends monthly report via Telegram |
+| `JobPilot Hired` | `.local/startup_hired.bat` | Benchmark de skills de contratados recentes + gap/trend via Telegram. **Roda por último** (logon + delay de 1h) |
+
+> **Ordem "por último":** a task `Hired` usa `LogonTrigger` com `<Delay>PT1H</Delay>`, então
+> dispara 1h após o logon — depois das demais. Mesmo que coincidam, o *browser lock* serializa
+> (uma sessão Chrome por vez; quem chega depois aguarda na fila).
+>
+> **Provider:** `startup_hired.ps1` seta `LLM_PROVIDER_EVAL=claude` **apenas no escopo do processo**
+> (extração de skills melhor que o ollama local). Não altera o `.env` global.
 
 ## How hiding works
 
@@ -59,16 +67,28 @@ Edit the search parameters and resume path in each `.bat`:
 
 ### 2. Import into Task Scheduler
 
+Run **as Administrator** (schtasks requires elevation). The helper script
+`.local/reimport_tasks.ps1` deletes and recreates all four tasks:
+
+```powershell
+# PowerShell elevado, na raiz do repo:
+.\.local\reimport_tasks.ps1
+```
+
+Ou manualmente:
+
 ```powershell
 # Delete existing (if re-importing)
-schtasks /delete /tn "JobPilot\Apply" /f
-schtasks /delete /tn "JobPilot\Connect" /f
-schtasks /delete /tn "JobPilot\Report" /f
+schtasks /delete /tn "JobPilot Apply" /f
+schtasks /delete /tn "JobPilot Connect" /f
+schtasks /delete /tn "JobPilot Report" /f
+schtasks /delete /tn "JobPilot Hired" /f
 
 # Import
-schtasks /create /xml "local\jobpilot_task.xml" /tn "JobPilot\Apply"
-schtasks /create /xml "local\jobpilot_connect_task.xml" /tn "JobPilot\Connect"
-schtasks /create /xml "local\jobpilot_report_task.xml" /tn "JobPilot\Report"
+schtasks /create /xml ".local\jobpilot_task.xml" /tn "JobPilot Apply"
+schtasks /create /xml ".local\jobpilot_connect_task.xml" /tn "JobPilot Connect"
+schtasks /create /xml ".local\jobpilot_report_task.xml" /tn "JobPilot Report"
+schtasks /create /xml ".local\jobpilot_hired_task.xml" /tn "JobPilot Hired"
 ```
 
 ### 3. Verify
@@ -77,13 +97,13 @@ Open `taskschd.msc`, check under `JobPilot` folder. Right-click each task → Ru
 
 ## Task configuration details
 
-| Setting | Apply | Connect | Report |
-|---------|-------|---------|--------|
-| Trigger | Logon | Logon | Logon |
-| Time limit | 4 hours | 2 hours | 1 hour |
-| Multiple instances | Ignore | Ignore | Ignore |
-| Battery | Always run | Always run | Always run |
-| Hidden | Yes (PowerShell) | Yes | Yes |
+| Setting | Apply | Connect | Report | Hired |
+|---------|-------|---------|--------|-------|
+| Trigger | Logon | Logon | Logon | Logon + 1h delay |
+| Time limit | 4 hours | 2 hours | 1 hour | 1 hour |
+| Multiple instances | Ignore | Ignore | Ignore | Ignore |
+| Battery | Always run | Always run | Always run | Always run |
+| Hidden | Yes (PowerShell) | Yes | Yes | Yes |
 
 ## Scheduled mode flags
 

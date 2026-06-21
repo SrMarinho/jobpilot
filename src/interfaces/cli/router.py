@@ -12,6 +12,7 @@ from src.interfaces.cli.profile_views.command import register_profile_views_comm
 from src.interfaces.cli.db.command import register_db_commands
 from src.interfaces.cli.dashboard.command import register_dashboard_command
 from src.interfaces.cli.followup.command import register_followup_command
+from src.interfaces.cli.hired.command import register_hired_command
 from src.interfaces.cli.misc.command import register_misc_commands
 from src.interfaces.cli.skills.command import register_skills_commands
 from src.interfaces.cli.answers.command import register_answers_commands
@@ -48,6 +49,7 @@ def register(app: typer.Typer) -> None:
     register_engage_command(app)
     register_autopost_command(app)
     register_followup_command(app)
+    register_hired_command(app)
     register_report_command(app)
     register_export_command(app)
     register_dashboard_command(app)

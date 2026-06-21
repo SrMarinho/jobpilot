@@ -1,3 +1,4 @@
+import os
 import re
 
 
@@ -124,12 +125,18 @@ _URL_RE = re.compile(
 _EMOJI_RE = re.compile(
     r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF️‍]"
 )
+# Risada/filler de baixo esforço: "kkkk", "hahaha", "rsrs", "huehue", "ksks".
+_LAUGH_RE = re.compile(
+    r"\b(?:k{2,}|(?:ha){2,}|(?:he){2,}|(?:rs){2,}|(?:hue){2,}|(?:ks){2,}|haha\w*|kkk\w*)\b",
+    re.IGNORECASE,
+)
 
 
 def strip_noise(text: str) -> str:
-    """Remove URLs e emojis, colapsa espaços. Sobra só o texto 'real'."""
+    """Remove URLs, emojis e risada/filler; colapsa espaços. Sobra o texto 'real'."""
     text = _URL_RE.sub(" ", text)
     text = _EMOJI_RE.sub(" ", text)
+    text = _LAUGH_RE.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -206,10 +213,20 @@ def _content_tokens(text: str) -> set[str]:
     return {w for w in words if len(w) >= 4 and w not in _STOPWORDS}
 
 
+# Mínimo de palavras na legenda p/ comentar. Legenda grande = mais contexto =
+# menos alucinação. Tunável via env (ENGAGE_MIN_CAPTION_WORDS).
+_MIN_CAPTION_WORDS = int(os.getenv("ENGAGE_MIN_CAPTION_WORDS", "40"))
+
+
 def is_commentable_post(text: str) -> bool:
-    """Post fino / só-link / só-imagem não dá base p/ comentar sem inventar."""
+    """Comenta só em post de LEGENDA GRANDE e com termo tech — o bot NÃO vê imagem.
+
+    Legenda curta / dominada por risada / sem tech => contexto insuficiente (o
+    conteúdo real está na imagem ou é baixo esforço) => pula, senão o modelo
+    inventa. Limiar de palavras tunável via ENGAGE_MIN_CAPTION_WORDS.
+    """
     clean = strip_noise(text)
-    return len(_content_tokens(clean)) >= 6
+    return len(clean.split()) >= _MIN_CAPTION_WORDS and has_tech_keyword(clean)
 
 
 def comment_is_grounded(comment: str, post_text: str) -> bool:
@@ -242,6 +259,26 @@ def is_blacklisted(text: str) -> bool:
 
 def is_cliche(comment: str) -> bool:
     return bool(_CLICHE_RE.match(comment.strip()))
+
+
+# Comentário trivial/de iniciante: pergunta óbvia ("o que é X?", "como o X
+# facilita?", "para que serve?") ou definição do básico. Não passa credibilidade
+# de sênior — melhor não comentar.
+_TRIVIAL_PATTERNS = (
+    r"\bo que (é|e|sao|são)\b",
+    r"\bpara que serve\b",
+    r"\bcomo (?:o |a |os |as )?\w+ (?:funciona|funcionam|facilita|facilitam|"
+    r"ajuda|ajudam|melhora|melhoram|impacta|impactam)\b",
+    r"\bqual (?:a |o )?(?:diferença|definição|conceito) (?:de|do|da|entre)\b",
+    r"\bwhat (?:is|are)\b",
+    r"\bhow (?:do|does)\b.*\bwork\b",
+)
+_TRIVIAL_RE = re.compile("|".join(_TRIVIAL_PATTERNS), re.IGNORECASE)
+
+
+def is_trivial(comment: str) -> bool:
+    """True p/ pergunta de iniciante / explicação do óbvio."""
+    return bool(_TRIVIAL_RE.search(comment))
 
 
 # Linguagens/frameworks nomeados. Se o comentário cita um que NÃO aparece no
