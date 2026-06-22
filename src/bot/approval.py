@@ -39,7 +39,7 @@ class ApprovalGate:
         with self._lock:
             self._pending[req_id] = {"decision": None, "text": text}
         header = f"🤝 <b>Aprovar {kind}?</b>\n<i>post de {author[:60]}</i>\n\n"
-        self.client.send(header + text, buttons=self._buttons(req_id))
+        self.client.send(header + text, buttons=self._buttons(req_id), topic="engage")
 
         waited = 0.0
         while waited < self.timeout_s:
@@ -59,7 +59,7 @@ class ApprovalGate:
         with self._lock:
             self._pending.pop(req_id, None)
         logger.info(f"Aprovação {req_id} expirou; tratando como reject")
-        self.client.send("⏰ Sem resposta — comentário pulado.")
+        self.client.send("⏰ Sem resposta — comentário pulado.", topic="engage")
         return None
 
     # ── Resolvido pelo callback do Telegram (thread principal) ────────────────

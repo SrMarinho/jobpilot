@@ -17,7 +17,7 @@ def _notify(text: str) -> None:
     try:
         from src.utils.telegram import send_telegram
 
-        send_telegram(text)
+        send_telegram(text, topic="autopost")
     except Exception:
         pass
 
@@ -174,7 +174,10 @@ async def run_autopost(cfg: dict) -> None:
         try:
             from src.utils.telegram import send_telegram
 
-            send_telegram("⚠️ <b>Autopost</b>: não consegui gerar um draft válido.")
+            send_telegram(
+                "⚠️ <b>Autopost</b>: não consegui gerar um draft válido.",
+                topic="autopost",
+            )
         except Exception:
             pass
         return
@@ -201,7 +204,10 @@ async def run_autopost(cfg: dict) -> None:
         try:
             from src.utils.telegram import send_telegram
 
-            send_telegram(header + body + "\n\n<i>(dry-run — não será publicado)</i>")
+            send_telegram(
+                header + body + "\n\n<i>(dry-run — não será publicado)</i>",
+                topic="autopost",
+            )
         except Exception as e:
             logger.warning(f"dry-run telegram send failed: {e}")
         return
@@ -225,7 +231,9 @@ async def run_autopost(cfg: dict) -> None:
     try:
         from src.utils.telegram import send_telegram_buttons
 
-        send_telegram_buttons(header + body, _approval_buttons(draft_id))
+        send_telegram_buttons(
+            header + body, _approval_buttons(draft_id), topic="autopost"
+        )
         logger.info(f"Draft {draft_id} enviado para aprovação no Telegram")
     except Exception as e:
         logger.warning(f"Falha ao enviar draft para aprovação: {e}")

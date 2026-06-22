@@ -409,3 +409,23 @@ uv run main.py report --image --telegram           # envia como imagem PNG
 | `--image` | Renderiza PNG via Playwright Chromium headless (semanal) |
 | `--telegram` | Envia texto **ou** imagem (com `--image`) via Telegram |
 | `--scheduled` | Só envia se não enviou ainda na semana |
+
+## `telegram-topics`
+
+Divide o grupo Telegram em **tópicos** (sessões do modo fórum) — cada feature manda
+sua saída direto na sessão certa, navegação mais fácil. Roteamento via
+`message_thread_id`; mapa `feature → thread_id` persistido em `telegram_topics.json`.
+
+Pré-requisito: ativar **Tópicos** nas configs do grupo (vira supergrupo fórum) e o bot
+ser admin.
+
+```bash
+uv run main.py telegram-topics setup    # cria os tópicos que faltam + salva thread_ids
+uv run main.py telegram-topics list     # mostra tópicos e thread_ids configurados
+uv run main.py telegram-topics reset     # limpa o mapa (não apaga os tópicos no Telegram)
+```
+
+**Tópicos criados:** `📊 Relatórios` (report/hired), `📝 Autopost` (drafts/aprovação/falhas),
+`🤝 Engage`, `💬 Follow-up`, `🚨 Alertas` (checkpoint/CAPTCHA), `📡 Status` (candidaturas).
+
+Sem mapa configurado, tudo continua caindo no chat principal (degradação graciosa).

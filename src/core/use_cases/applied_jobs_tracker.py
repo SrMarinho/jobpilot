@@ -105,7 +105,8 @@ class AppliedJobsTracker:
         send_telegram(
             f"✅ <b>Candidatura enviada!</b>\n"
             f"📋 {title}{company_line}{site_line}{salary_line}\n"
-            f"🔗 <a href='{job_url}'>Ver vaga</a>"
+            f"🔗 <a href='{job_url}'>Ver vaga</a>",
+            topic="status",
         )
 
     def mark_rejected(self, job_url: str, title: str, reason: str = "", site: str = ""):

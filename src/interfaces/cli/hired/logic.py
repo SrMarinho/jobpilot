@@ -75,7 +75,7 @@ async def run_hired_browser(
         report = format_full_report(
             aggregate, have, missing_enriched, trend_rows, role, days
         )
-        send_telegram(report)
+        send_telegram(report, topic="report")
         logger.info("Relatório 'hired' enviado via Telegram")
 
     if out:

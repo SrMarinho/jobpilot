@@ -52,7 +52,7 @@ class ReportService:
         period = WeekPeriod.previous_of_today()
         logger.info(f"Generating weekly report for {period.key}...")
         report = self.build_weekly(period)
-        send_telegram(self.formatter.weekly(report, sections=sections))
+        send_telegram(self.formatter.weekly(report, sections=sections), topic="report")
         logger.info("Weekly report sent via Telegram")
 
     def run_scheduled(self, sections: set[str] | None = None) -> None:
@@ -63,5 +63,5 @@ class ReportService:
             return
         logger.info(f"Generating weekly report for {period.key}...")
         report = self.build_weekly(period)
-        send_telegram(self.formatter.weekly(report, sections=sections))
+        send_telegram(self.formatter.weekly(report, sections=sections), topic="report")
         logger.info("Weekly report sent via Telegram")

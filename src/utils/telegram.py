@@ -5,34 +5,50 @@ import requests
 from src.config.settings import logger
 
 
-def send_telegram(message: str) -> None:
+def _thread(topic: str | None) -> int | None:
+    from src.core.use_cases.telegram_topics import resolve_thread_id
+
+    return resolve_thread_id(topic)
+
+
+def send_telegram(message: str, topic: str | None = None) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
         return
 
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+    thread = _thread(topic)
+    if thread:
+        payload["message_thread_id"] = thread
     try:
         requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
+            json=payload,
             timeout=10,
         )
     except Exception as e:
         logger.warning(f"Telegram notification failed: {e}")
 
 
-def send_telegram_photo(path: Path, caption: str = "") -> None:
+def send_telegram_photo(
+    path: Path, caption: str = "", topic: str | None = None
+) -> None:
     """Send a photo file to TELEGRAM_CHAT_ID."""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return
+    data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+    thread = _thread(topic)
+    if thread:
+        data["message_thread_id"] = thread
     try:
         with open(path, "rb") as f:
             requests.post(
                 f"https://api.telegram.org/bot{token}/sendPhoto",
-                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                data=data,
                 files={"photo": f},
                 timeout=30,
             )
@@ -40,13 +56,21 @@ def send_telegram_photo(path: Path, caption: str = "") -> None:
         logger.warning(f"Telegram photo send failed: {e}")
 
 
-def send_telegram_buttons(message: str, buttons: list) -> int | None:
+def send_telegram_buttons(
+    message: str, buttons: list, topic: str | None = None
+) -> int | None:
     """Send a message with an inline keyboard. Returns the message_id or None.
 
     ``buttons`` is a list of rows, each row a list of ``{"text","data"}`` dicts.
+    Com ``topic``, roteia pro grupo (chat_id) na sessão; sem, mantém o DM ao admin.
     """
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID"))
+    thread = _thread(topic)
+    chat_id = (
+        os.getenv("TELEGRAM_CHAT_ID")
+        if thread
+        else os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID"))
+    )
     if not token or not chat_id:
         return None
     markup = {
@@ -55,15 +79,18 @@ def send_telegram_buttons(message: str, buttons: list) -> int | None:
             for row in buttons
         ]
     }
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "reply_markup": markup,
+    }
+    if thread:
+        payload["message_thread_id"] = thread
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "HTML",
-                "reply_markup": markup,
-            },
+            json=payload,
             timeout=10,
         )
         return resp.json().get("result", {}).get("message_id")

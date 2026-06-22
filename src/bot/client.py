@@ -23,12 +23,23 @@ class TelegramClient:
 
     # ── Outbound ──────────────────────────────────────────────────────────────
 
-    def send(self, text: str, buttons: list | None = None) -> None:
+    @staticmethod
+    def _thread(topic: str | None) -> int | None:
+        from src.core.use_cases.telegram_topics import resolve_thread_id
+
+        return resolve_thread_id(topic)
+
+    def send(
+        self, text: str, buttons: list | None = None, topic: str | None = None
+    ) -> None:
+        thread = self._thread(topic)
         payload: dict = {
-            "chat_id": self.admin_id,
+            "chat_id": self.chat_id if thread else self.admin_id,
             "text": text,
             "parse_mode": "HTML",
         }
+        if thread:
+            payload["message_thread_id"] = thread
         if buttons:
             payload["reply_markup"] = {
                 "inline_keyboard": [
@@ -41,13 +52,17 @@ class TelegramClient:
         except Exception as e:
             logger.warning(f"Failed to send Telegram message: {e}")
 
-    def send_notification(self, text: str) -> None:
+    def send_notification(self, text: str, topic: str | None = None) -> None:
+        payload: dict = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+        }
+        thread = self._thread(topic)
+        if thread:
+            payload["message_thread_id"] = thread
         try:
-            requests.post(
-                f"{self.base_url}/sendMessage",
-                json={"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"},
-                timeout=10,
-            )
+            requests.post(f"{self.base_url}/sendMessage", json=payload, timeout=10)
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
 

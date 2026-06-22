@@ -14,6 +14,9 @@ from src.interfaces.cli.dashboard.command import register_dashboard_command
 from src.interfaces.cli.followup.command import register_followup_command
 from src.interfaces.cli.hired.command import register_hired_command
 from src.interfaces.cli.misc.command import register_misc_commands
+from src.interfaces.cli.telegram_topics.command import (
+    register_telegram_topics_commands,
+)
 from src.interfaces.cli.skills.command import register_skills_commands
 from src.interfaces.cli.answers.command import register_answers_commands
 from src.interfaces.cli.provider.command import (
@@ -55,6 +58,12 @@ def register(app: typer.Typer) -> None:
     register_dashboard_command(app)
     register_misc_commands(app)
 
+    _add_group(
+        app,
+        "telegram-topics",
+        "Tópicos (sessões) do grupo Telegram: setup/list/reset",
+        register_telegram_topics_commands,
+    )
     _add_group(
         app,
         "searches",

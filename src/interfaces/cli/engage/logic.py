@@ -157,7 +157,8 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
             f"🤝 <b>Engagement</b>\n"
             f"❤️ Likes: {result.liked}\n"
             f"💬 Comments: {result.commented}\n"
-            f"🔁 Shares: {result.shared}"
+            f"🔁 Shares: {result.shared}",
+            topic="engage",
         )
     except Exception as e:
         logger.debug(f"Telegram notify failed (non-fatal): {e}")

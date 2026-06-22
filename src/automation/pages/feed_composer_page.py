@@ -37,7 +37,7 @@ def _alert(step: str) -> None:
     try:
         from src.utils.telegram import send_telegram
 
-        send_telegram(f"⚠️ <b>Autopost</b>: {msg}")
+        send_telegram(f"⚠️ <b>Autopost</b>: {msg}", topic="autopost")
     except Exception:
         pass
 

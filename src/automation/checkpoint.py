@@ -98,7 +98,8 @@ async def ensure_not_blocked(page, label: str = "task") -> None:
             f"Tarefa: <code>{label}</code>\n"
             f"Motivo: <code>{reason}</code>\n\n"
             "Abra o Chrome e resolva a verificação manualmente. "
-            "A automação foi interrompida para evitar bloqueio."
+            "A automação foi interrompida para evitar bloqueio.",
+            topic="alerts",
         )
     except Exception as e:
         logger.debug(f"Falha ao notificar checkpoint no Telegram: {e}")

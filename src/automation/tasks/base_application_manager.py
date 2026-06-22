@@ -280,7 +280,8 @@ class BaseJobApplicationManager(ABC):
             f"{company_line}"
             f"\n❌ {reason}"
             f"{salary_line}\n"
-            f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>"
+            f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>",
+            topic="status",
         )
         _manual[item.job_url] = {
             "title": item.title,

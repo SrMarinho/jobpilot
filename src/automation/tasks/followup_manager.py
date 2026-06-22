@@ -76,7 +76,9 @@ class FollowupManager:
                 f"💬 <b>Follow-up DM</b>\n<b>{name}</b>\n<i>{headline[:80]}</i>\n\n"
             )
             try:
-                send_telegram_buttons(header + content, followup_buttons(draft_id))
+                send_telegram_buttons(
+                    header + content, followup_buttons(draft_id), topic="followup"
+                )
             except Exception as e:
                 logger.warning(f"Falha ao enviar DM draft p/ aprovação: {e}")
             created += 1
@@ -86,7 +88,10 @@ class FollowupManager:
             try:
                 from src.utils.telegram import send_telegram
 
-                send_telegram("💬 <b>Follow-up</b>: nenhuma conexão nova encontrada.")
+                send_telegram(
+                    "💬 <b>Follow-up</b>: nenhuma conexão nova encontrada.",
+                    topic="followup",
+                )
             except Exception:
                 pass
         else:

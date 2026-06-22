@@ -68,7 +68,7 @@ def run_report(
         if telegram:
             from src.utils.telegram import send_telegram
 
-            send_telegram(rendered)
+            send_telegram(rendered, topic="report")
         _print(rendered)
 
 
@@ -95,7 +95,7 @@ def _send_image(report: dict, text_fallback: str, send_tg: bool) -> None:
             f"Match: {report.get('match_rate_pct', 0)}%"
         )
         if send_tg:
-            send_telegram_photo(out_path, caption)
+            send_telegram_photo(out_path, caption, topic="report")
         else:
             sys.stdout.buffer.write(
                 f"PNG gerado: {out_path}\n".encode("utf-8", "replace")
@@ -105,7 +105,7 @@ def _send_image(report: dict, text_fallback: str, send_tg: bool) -> None:
             f"Erro ao gerar imagem: {e}\n".encode("utf-8", "replace")
         )
         if send_tg:
-            send_telegram(text_fallback)
+            send_telegram(text_fallback, topic="report")
     finally:
         try:
             out_path.unlink(missing_ok=True)

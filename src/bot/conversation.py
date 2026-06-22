@@ -204,7 +204,9 @@ class ConversationFlow:
             self.client.send("⚠️ Draft não encontrado.")
             return
         header = f"💬 <b>DM editado</b> — {draft.get('name')}\n\n"
-        self.client.send(header + payload, buttons=followup_buttons(draft_id))
+        self.client.send(
+            header + payload, buttons=followup_buttons(draft_id), topic="followup"
+        )
 
     def _ask_start_page(self) -> None:
         self._step = "connect_start_page"
@@ -293,7 +295,9 @@ class ConversationFlow:
             self.client.send("⚠️ Draft não encontrado.")
             return
         header = f"📝 <b>Autopost draft (editado)</b>\n<i>{len(payload)} chars</i>\n\n"
-        self.client.send(header + payload, buttons=_approval_buttons(draft_id))
+        self.client.send(
+            header + payload, buttons=_approval_buttons(draft_id), topic="autopost"
+        )
 
     def _launch_connect(self) -> None:
         if self.runner.is_busy():
