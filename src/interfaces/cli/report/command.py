@@ -93,9 +93,13 @@ def _send_image(report: dict, text_fallback: str, send_tg: bool) -> None:
         if send_tg:
             send_telegram_photo(out_path, caption)
         else:
-            print(f"PNG gerado: {out_path}")
+            sys.stdout.buffer.write(
+                f"PNG gerado: {out_path}\n".encode("utf-8", "replace")
+            )
     except Exception as e:
-        print(f"Erro ao gerar imagem: {e}")
+        sys.stdout.buffer.write(
+            f"Erro ao gerar imagem: {e}\n".encode("utf-8", "replace")
+        )
         if send_tg:
             send_telegram(text_fallback)
     finally:
