@@ -1,5 +1,24 @@
+from __future__ import annotations
+
 _LEVEL_ORDER = ["junior", "pleno", "senior", "unknown"]
 _SITE_ORDER = ["linkedin", "indeed", "glassdoor", "unknown"]
+
+_FUNNEL_STEPS = {
+    "autopost": ["generated", "approved", "posted", "publish_fail"],
+    "engage": ["offered", "approved", "posted"],
+    "followup": ["generated", "sent"],
+    "connect": ["sent"],
+    "apply": ["submitted"],
+}
+_STEP_LABELS = {
+    "generated": "Gerados",
+    "approved": "Aprovados",
+    "posted": "Publicados",
+    "publish_fail": "Falhas pub.",
+    "offered": "Oferecidos",
+    "sent": "Enviados",
+    "submitted": "Enviados",
+}
 
 
 def _delta(current: int, previous: int | None) -> str:
@@ -17,50 +36,40 @@ def _money(value: float) -> str:
     return f"R$ {value:,.0f}".replace(",", ".")
 
 
+def _fmt_seconds(s: int) -> str:
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}min"
+    return f"{s // 3600}h{(s % 3600) // 60}min"
+
+
 class ReportFormatter:
     """Renders report dicts to Telegram-flavored HTML strings.
 
     Pure presentation — no data access, no calculations.
+
+    ``weekly(report, sections=None)`` renders only the requested section
+    names (ordered by registry order). Pass ``None`` for all sections.
     """
 
-    # ── weekly ───────────────────────────────────────────────────
-    def weekly(self, report: dict) -> str:
-        apps = report["applications"]
-        conns = report["connections"]
+    # ── section registry ─────────────────────────────────────────
+    # Each entry: (name, render_fn(report) -> str)
+    _SECTIONS: list[tuple[str, object]] = []  # populated after class body
 
-        salary_line = (
-            f"\n💰 Salário médio estimado: {_money(report['avg_salary_offered'])}"
-            if report.get("avg_salary_offered")
-            else ""
-        )
-        qa_pending = report.get("qa_pending", 0)
-        qa_line = f"\n📝 Respostas pendentes: <b>{qa_pending}</b>" if qa_pending else ""
-
-        return (
+    # ── weekly (section-aware) ───────────────────────────────────
+    def weekly(self, report: dict, sections: set[str] | None = None) -> str:
+        parts = []
+        header = (
             f"📊 <b>Relatório Semanal — {report.get('week', '')}</b>\n"
-            f"<i>{report.get('range', '')}</i>\n\n"
-            f"✅ Candidaturas enviadas: <b>{apps}</b>"
-            f"{_delta(apps, report.get('prev_applications'))}\n"
-            f"🤝 Conexões feitas: <b>{conns}</b>"
-            f"{_delta(conns, report.get('prev_connections'))}\n"
-            f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
-            f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
-            f"{salary_line}"
-            f"{qa_line}"
-            f"{self._ssi_block(report.get('ssi'))}"
-            f"{self._engagement_block(report.get('engagement'))}"
-            f"{self._autopost_block(report.get('autopost'))}"
-            f"{self._followup_block(report.get('followup'))}"
-            f"{self._goals_block(report.get('goals'))}\n\n"
-            f"🌐 <b>Por site:</b>"
-            f"{self._site_block(report, with_delta=True) or ' —'}\n\n"
-            f"🎓 <b>Candidaturas por nível:</b>"
-            f"{self._level_lines(report) or ' —'}\n\n"
-            f"📋 <b>Motivos de rejeição:</b>"
-            f"{self._breakdown_lines(report) or ' —'}\n\n"
-            f"🔥 <b>Top 3 skills mais exigidas:</b>"
-            f"{self._skills_lines(report) or ' —'}"
+            f"<i>{report.get('range', '')}</i>"
         )
+        parts.append(header)
+        for name, fn in self._SECTIONS:
+            if sections is not None and name not in sections:
+                continue
+            parts.append(fn(self, report))
+        return "\n".join(p for p in parts if p)
 
     # ── annual ───────────────────────────────────────────────────
     def annual(self, report: dict) -> str:
@@ -92,7 +101,72 @@ class ReportFormatter:
             f"{self._skills_lines(report) or ' —'}"
         )
 
-    # ── shared sections ──────────────────────────────────────────
+    # ── section renderers ────────────────────────────────────────
+
+    def _render_summary(self, report: dict) -> str:
+        apps = report["applications"]
+        conns = report["connections"]
+        salary_line = (
+            f"\n💰 Salário médio estimado: {_money(report['avg_salary_offered'])}"
+            if report.get("avg_salary_offered")
+            else ""
+        )
+        qa_pending = report.get("qa_pending", 0)
+        qa_line = f"\n📝 Respostas pendentes: <b>{qa_pending}</b>" if qa_pending else ""
+        return (
+            f"\n✅ Candidaturas enviadas: <b>{apps}</b>"
+            f"{_delta(apps, report.get('prev_applications'))}\n"
+            f"🤝 Conexões feitas: <b>{conns}</b>"
+            f"{_delta(conns, report.get('prev_connections'))}\n"
+            f"❌ Vagas rejeitadas: <b>{report['rejections']}</b>\n"
+            f"🎯 Taxa de match: <b>{report['match_rate_pct']}%</b>"
+            f"{salary_line}"
+            f"{qa_line}"
+        )
+
+    def _render_ssi(self, report: dict) -> str:
+        return self._ssi_block(report.get("ssi"))
+
+    def _render_engagement(self, report: dict) -> str:
+        return self._engagement_block(report.get("engagement"))
+
+    def _render_autopost(self, report: dict) -> str:
+        return self._autopost_block(report.get("autopost"))
+
+    def _render_followup(self, report: dict) -> str:
+        return self._followup_block(report.get("followup"))
+
+    def _render_goals(self, report: dict) -> str:
+        return self._goals_block(report.get("goals"))
+
+    def _render_site(self, report: dict) -> str:
+        block = self._site_block(report, with_delta=True)
+        return f"\n\n🌐 <b>Por site:</b>{block or ' —'}"
+
+    def _render_level(self, report: dict) -> str:
+        return (
+            f"\n\n🎓 <b>Candidaturas por nível:</b>{self._level_lines(report) or ' —'}"
+        )
+
+    def _render_rejection(self, report: dict) -> str:
+        return (
+            f"\n\n📋 <b>Motivos de rejeição:</b>{self._breakdown_lines(report) or ' —'}"
+        )
+
+    def _render_skills(self, report: dict) -> str:
+        return f"\n\n🔥 <b>Top 3 skills mais exigidas:</b>{self._skills_lines(report) or ' —'}"
+
+    def _render_failures(self, report: dict) -> str:
+        return self._failures_block(report.get("failures"))
+
+    def _render_funnels(self, report: dict) -> str:
+        return self._funnels_block(report.get("funnels"))
+
+    def _render_latency(self, report: dict) -> str:
+        return self._latency_block(report.get("latency"))
+
+    # ── shared block builders ────────────────────────────────────
+
     @staticmethod
     def _breakdown_lines(report: dict) -> str:
         breakdown = report.get("rejection_breakdown", {})
@@ -171,11 +245,12 @@ class ReportFormatter:
             f"\n    • {k}: {v}x"
             for k, v in sorted(ap.get("by_format", {}).items(), key=lambda x: -x[1])
         )
+        posted_line = f" · 📬 Status posted: {ap['posted']}" if ap.get("posted") else ""
         return (
             f"\n\n📝 <b>Autopost (semana):</b>\n"
             f"    🚀 Publicados: <b>{published}</b>\n"
             f"    🧪 Gerados: {generated} · ✅ {ap.get('approved', 0)} · "
-            f"❌ {ap.get('rejected', 0)} · ⏰ {ap.get('expired', 0)} "
+            f"❌ {ap.get('rejected', 0)} · ⏰ {ap.get('expired', 0)}{posted_line} "
             f"(aprovação {approval}%)\n"
             f"    ✍️ Média: {ap.get('avg_chars', 0)} chars"
             + (f"\n    📑 Por formato:{fmt_parts}" if fmt_parts else "")
@@ -256,6 +331,47 @@ class ReportFormatter:
             f"{rank_line}"
         )
 
+    @staticmethod
+    def _failures_block(failures: dict | None) -> str:
+        if not failures:
+            return ""
+        lines = "".join(
+            f"\n    • {feat}: {n}x"
+            for feat, n in sorted(failures.items(), key=lambda x: -x[1])
+        )
+        return f"\n\n⚠️ <b>Falhas por feature (semana):</b>{lines}"
+
+    @staticmethod
+    def _funnels_block(funnels: dict | None) -> str:
+        if not funnels:
+            return ""
+        parts = []
+        for feature, counts in funnels.items():
+            steps = _FUNNEL_STEPS.get(feature, list(counts.keys()))
+            step_strs = " → ".join(
+                f"{_STEP_LABELS.get(s, s)}: {counts.get(s, 0)}"
+                for s in steps
+                if counts.get(s, 0) or s in counts
+            )
+            if step_strs:
+                parts.append(f"\n    • <b>{feature}</b>: {step_strs}")
+        if not parts:
+            return ""
+        return f"\n\n📊 <b>Funis (semana):</b>{''.join(parts)}"
+
+    @staticmethod
+    def _latency_block(latency: dict | None) -> str:
+        if not latency:
+            return ""
+        lines = []
+        for feature, metrics in latency.items():
+            for label, avg_s in metrics.items():
+                step_label = label.replace("_avg_s", "").replace("_to_", " → ")
+                lines.append(f"\n    • {feature} {step_label}: {_fmt_seconds(avg_s)}")
+        if not lines:
+            return ""
+        return f"\n\n⏱️ <b>Latência média (semana):</b>{''.join(lines)}"
+
     # ── plaintext (CLI stdout) ───────────────────────────────────
     @staticmethod
     def to_plaintext(html: str) -> str:
@@ -265,3 +381,23 @@ class ReportFormatter:
             .replace("<i>", "")
             .replace("</i>", "")
         )
+
+
+# populate registry after class body (methods can't reference class during definition)
+ReportFormatter._SECTIONS = [
+    ("summary", ReportFormatter._render_summary),
+    ("ssi", ReportFormatter._render_ssi),
+    ("engagement", ReportFormatter._render_engagement),
+    ("autopost", ReportFormatter._render_autopost),
+    ("followup", ReportFormatter._render_followup),
+    ("goals", ReportFormatter._render_goals),
+    ("site", ReportFormatter._render_site),
+    ("level", ReportFormatter._render_level),
+    ("rejection", ReportFormatter._render_rejection),
+    ("skills", ReportFormatter._render_skills),
+    ("failures", ReportFormatter._render_failures),
+    ("funnels", ReportFormatter._render_funnels),
+    ("latency", ReportFormatter._render_latency),
+]
+
+ALL_SECTIONS: list[str] = [name for name, _ in ReportFormatter._SECTIONS]

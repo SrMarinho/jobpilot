@@ -165,13 +165,30 @@ humana antes de postar, use `/engage` no bot (human-in-loop).
 
 ## `autopost`
 
-Gera post autoral via LLM com aprovação no Telegram. Ver `docs/specs/autopost-feature.md`.
+Gera post autoral via LLM, aprova no Telegram ou CLI, publica no LinkedIn. Ver `docs/specs/autopost-feature.md`.
 
 ```bash
-uv run main.py autopost                          # weekday default
+uv run main.py autopost                           # gera draft + envia p/ Telegram
 uv run main.py autopost --source manual --topic "..." --dry-run
-uv run main.py autopost --no-telegram            # printa stdout
+uv run main.py autopost --no-telegram             # printa stdout
+uv run main.py autopost --list                    # drafts pendentes + aprovados
+uv run main.py autopost --approve <draft_id>      # aprova via CLI
+uv run main.py autopost --publish-approved        # drena aprovações Telegram + publica aprovados
 ```
+
+**Fluxo assíncrono:** `autopost` gera e sai → usuário aprova (Telegram tap **ou** `--approve`) → `--publish-approved` publica. Não precisa de bot persistente.
+
+| Flag | Descrição |
+|------|-----------|
+| `--source rss\|commit\|template\|manual` | Fonte de conteúdo |
+| `--topic "string"` | Tema custom (manual) |
+| `--format snippet\|story\|dissertativo\|contrarian` | Formato do post |
+| `--dry-run` | Gera + Telegram preview, não registra pending |
+| `--no-telegram` | Stdout apenas |
+| `--scheduled` | Respeita skip-today |
+| `--list` | Lista drafts pending + approved com IDs |
+| `--approve <id>` | Aprova draft por ID (CLI) |
+| `--publish-approved` | Drena `getUpdates` Telegram + publica todos aprovados |
 
 ---
 
@@ -369,13 +386,26 @@ uv run main.py skills clear                  # Reset tracking
 
 ## `report`
 
-Generate monthly statistics.
+Relatório semanal com candidaturas, conexões, engagement, autopost, follow-up, SSI, metas, funis de eventos e latência.
 
 ```bash
-uv run main.py report                  # Current month
-uv run main.py report --prev           # Previous month
-uv run main.py report --month 2026-03  # Specific month
-uv run main.py report --year 2026      # Annual summary
-uv run main.py report --telegram       # Send via Telegram
-uv run main.py report --scheduled      # Telegram once per month
+uv run main.py report                              # semana atual
+uv run main.py report --prev                       # semana anterior
+uv run main.py report --week 2026-W25              # semana específica
+uv run main.py report --year 2026                  # resumo anual
+uv run main.py report --telegram                   # envia via Telegram
+uv run main.py report --scheduled                  # Telegram uma vez por semana
+uv run main.py report --only summary,autopost,goals   # só essas seções
+uv run main.py report --skip ssi,latency           # omite essas seções
+uv run main.py report --image --telegram           # envia como imagem PNG
 ```
+
+**Seções disponíveis:** `summary`, `ssi`, `engagement`, `autopost`, `followup`, `goals`, `site`, `level`, `rejection`, `skills`, `failures`, `funnels`, `latency`
+
+| Flag | Descrição |
+|------|-----------|
+| `--only SECTIONS` | Inclui apenas as seções listadas (vírgula-separadas) |
+| `--skip SECTIONS` | Exclui as seções listadas |
+| `--image` | Renderiza PNG via Playwright Chromium headless (semanal) |
+| `--telegram` | Envia texto **ou** imagem (com `--image`) via Telegram |
+| `--scheduled` | Só envia se não enviou ainda na semana |

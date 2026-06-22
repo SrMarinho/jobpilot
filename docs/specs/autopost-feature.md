@@ -15,46 +15,63 @@ Modo `--dry-run` testa sem publicar.
 Distinta de `engage-feature.md` (like/comment/share em posts alheios). Esta é
 criação de conteúdo próprio.
 
-### Arquitetura publish-on-approval (decisão central)
+### Arquitetura publish-on-approval assíncrona (decisão central)
 
-Geração e publicação são **processos separados**:
+Três processos desacoplados — **não precisa de bot persistente**:
 
-- **Gerar** = só LLM, **sem browser**. O run scheduled (CLI one-shot) gera o draft,
-  registra como `pending`, manda pro Telegram com botões e **sai** (exit 0). Não
-  segura processo esperando aprovação.
-- **Publicar** = abre browser. Acontece no **bot persistente**: o callback
-  `autopost_approve:<id>` dispara o `BrowserTaskRunner`, que abre Chrome sob o
-  browser lock (serializado com apply/connect/engage) e publica.
+1. **Gerar** (`autopost`) = só LLM, sem browser. Registra draft como `pending`,
+   manda pro Telegram com botões e **sai** (exit 0).
+2. **Aprovar** = tap no botão Telegram **ou** `autopost --approve <id>` via CLI.
+   Ambos só marcam `status=approved` em `posted_history.json`; nada publica ainda.
+3. **Publicar** (`autopost --publish-approved`) = one-shot que drena `getUpdates`
+   do Telegram (via `drain_autopost_approvals()`), marca aprovados encontrados,
+   depois abre browser e publica cada draft com `status=approved`.
 
-Logo: a máquina scheduled não precisa de browser aberto na hora certa; o bot
-persistente (já rodando) é quem publica quando o humano aprova.
+`--publish-approved` é idempotente: roda no agendador (ex: a cada hora) e só
+age se houver aprovados pendentes. Remove os botões da mensagem Telegram
+(`editMessageReplyMarkup`) pra evitar toque duplo.
 
 ## 2. Comportamento
 
 ### Pipeline
 
 ```
+── FASE 1: GERAÇÃO (one-shot, sem browser) ──────────────────────────────────
 [trigger: scheduled CLI one-shot OU /autopost no bot]
        ↓
 [source pick: weekday template | rss | git log | manual topic]
+  (dedup: recent_topics(30d) filtra temas repetidos)
        ↓
 [LLM draft via LLMProvider.complete(prompt)]  (async, qwen3:8b)
        ↓
 [strip <think>…</think> + validate (80..900 chars, hashtags, placeholder, blocklist); regen 1x]
        ↓
-[add_draft(status=pending) + Telegram send com botões]
-       ↓  CLI scheduled EXIT aqui
+[add_draft(status=pending) + Telegram send com botões + record_event("generated")]
        ↓
-─── bot persistente recebe callback ───
-       ↓                 ↓                ↓                ↓
-   [Aprovar]          [Editar]        [Rejeitar]      [Regenerar]
-       ↓                 ↓                ↓                ↓
-[runner abre browser  [step=          [status=        [status=REJECTED
- sob lock, publica]    autopost_edit]  REJECTED]       + nova geração]
-       ↓                 ↓
-[mark_posted + URL]   [valida texto novo → update_content → reenvia botões]
+EXIT 0  ◄── CLI sai aqui; nenhum processo fica em espera
+
+── FASE 2: APROVAÇÃO (qualquer hora, qualquer mecanismo) ─────────────────────
+  Opção A: usuário toca [Aprovar] no Telegram
+           → bot.conversation marca status=approved + remove botões
+  Opção B: autopost --approve <id>  (CLI)
+           → logic.approve_draft() marca status=approved
+  record_event("approved")
+
+── FASE 3: PUBLICAÇÃO (--publish-approved, agendado ou manual) ───────────────
+[drain_autopost_approvals()]
+  → getUpdates(timeout=0): processa callbacks pendentes do Telegram
+  → marca approved/rejected; remove botões (editMessageReplyMarkup)
        ↓
-[best-effort SSI snapshot (SSIPage + SSITracker)]
+[approved_drafts()] → para cada draft status=approved:
+       ↓
+[publish_content(content)]  — FeedComposerPage via Playwright
+  (accessibility locators: get_by_role, shadow-DOM safe)
+       ↓           ↓
+   [ok=True]    [ok=False]
+       ↓              ↓
+[mark_posted   [record_event("publish_fail") + Telegram alert]
+ status=posted
+ record_event("posted")]
 ```
 
 Se humano não responder em **4h**, draft expira: `expire_stale()` roda no início
@@ -110,16 +127,18 @@ Strip `<think>…</think>` antes. Reject se:
 
 | Path | Função |
 |------|--------|
-| `src/automation/pages/feed_composer_page.py` | `FeedComposerPage`: abre composer, digita, publica, captura URL. ⚠️ selectors aria best-effort, não verificado ao vivo |
+| `src/automation/pages/feed_composer_page.py` | `FeedComposerPage`: abre composer, digita, publica, captura URL. Usa **accessibility locators** (`get_by_role` + regex), shadow-DOM safe. Verificado ao vivo. |
 | `src/core/use_cases/post_drafter.py` | `PostDrafter` + `validate_draft()`. Espelha `engagement_handler` |
-| `src/core/use_cases/post_sources.py` | Source pickers: template/commit/rss/manual |
-| `src/core/use_cases/posted_tracker.py` | `PostedTracker` em `posted_history.json`. Espelha `EngagedPostsTracker` |
+| `src/core/use_cases/post_sources.py` | Source pickers: template/commit/rss/manual (com dedup `recent_topics(30d)`) |
+| `src/core/use_cases/posted_tracker.py` | `PostedTracker` em `posted_history.json`. Status: `pending→approved→posted` (ou `rejected`/`expired`) |
+| `src/core/use_cases/autopost_approvals.py` | `drain_autopost_approvals()` — one-shot `getUpdates`, processa callbacks, remove botões |
 | `src/automation/tasks/autopost_manager.py` | `AutopostManager.generate()` — só LLM, sem browser |
-| `src/interfaces/cli/autopost/command.py` | `register_autopost_command(app)` |
-| `src/interfaces/cli/autopost/logic.py` | `resolve_autopost_config()` + `run_autopost()` + `_approval_buttons()` |
+| `src/automation/tasks/autopost_publisher.py` | `publish_content(content)` — abre browser e publica (usado por CLI e bot) |
+| `src/core/use_cases/events_tracker.py` | `EventsTracker` + `record_event()` — log de observabilidade cross-feature |
+| `src/interfaces/cli/autopost/command.py` | `register_autopost_command(app)` — flags: `--list`, `--approve`, `--publish-approved` |
+| `src/interfaces/cli/autopost/logic.py` | `run_autopost()` + `list_drafts()` + `approve_draft()` + `run_publish_approved()` |
 | `.local/startup_autopost.bat` + `.ps1` | Wrapper Windows (force-added, gitignored) |
 | `.local/jobpilot_autopost_task.xml` | Task Scheduler XML |
-| `scripts/inspect_linkedin_composer.py` | DOM dump util (Fase 0, opcional) ⚠️ ainda não criado |
 
 > **`feed_page.py` NÃO é novo.** Já existe (engage, read-only: like/comment/share).
 > O composer/publish é page object separado: `feed_composer_page.py`.
@@ -127,16 +146,16 @@ Strip `<think>…</think>` antes. Reject se:
 ### Arquivos modificados
 
 - `src/interfaces/cli/router.py` — `register_autopost_command(app)` (entre engage e report)
-- `src/bot/` (package refatorado) — handlers autopost:
+- `src/bot/` — handlers autopost:
   - `router.py` (`UpdateRouter`): comandos `/autopost`, `/autopost_topic`, `/autopost_format`, `/autopost_list`
-  - `conversation.py` (`ConversationFlow`): callbacks `autopost_*` + step `autopost_edit`
-  - `runner.py` (`BrowserTaskRunner`): `launch_autopost_generate` (detached, sem lock) + `launch_autopost_publish` (sob lock) + `_capture_ssi`
-  - `client.py` (`TelegramClient`): `send(text, buttons=...)`, `register_commands()`
-- **Report (package `report/`, não `monthly_report.py`)**:
-  - `repository.py` — `autopost()` carrega `posted_history.json`
-  - `metrics.py` — `MetricsCalculator.autopost(period)`
-  - `builder.py` — `ReportBuilder.weekly()` inclui `"autopost"`
-  - `formatter.py` — `_autopost_block()` (omite se sem atividade)
+  - `conversation.py` (`ConversationFlow`): callbacks `autopost_*` + step `autopost_edit`. `approve` só marca `status=approved` (publicação diferida via `--publish-approved`)
+  - `runner.py` (`BrowserTaskRunner`): `launch_autopost_generate` (detached, sem lock). `launch_autopost_publish` **removido** (publicação migrada p/ CLI)
+  - `client.py` (`TelegramClient`): `send(text, buttons=...)`, `edit_reply_markup()`, `get_updates(timeout=0)`
+- **Report (package `report/`)**:
+  - `repository.py` — `autopost()` + `events()`
+  - `metrics.py` — `autopost()` (inclui `posted` count) + `failures()` + `funnels()` + `latency()`
+  - `builder.py` — `weekly()` inclui `failures/funnels/latency`
+  - `formatter.py` — registry de seções + `weekly(sections=None)` + blocos `_failures_block`, `_funnels_block`, `_latency_block`
 - `pyproject.toml` — dep direta `feedparser>=6.0`
 - `.gitignore` — `.local/files/posted_history.json` ignorado (runtime data)
 
@@ -225,33 +244,42 @@ approved / rejected / expired / avg_chars.
 | `/autopost_list` | Últimos 5 posts publicados + contagem pending |
 
 **Callbacks** (`ConversationFlow._handle_autopost_callback`, admin-gated):
-- `autopost_approve:<id>` → `runner.launch_autopost_publish(id)` (abre browser sob lock)
+- `autopost_approve:<id>` → marca `status=approved` + remove botões (`edit_reply_markup`) + avisa "será publicado no próximo horário". **Não abre browser** — publicação diferida.
+- `autopost_reject:<id>` → `status=rejected` + remove botões
+- `autopost_regen:<id>` → `status=rejected` + `launch_autopost_generate(mesmo source/topic/format)` (detached)
 - `autopost_edit:<id>` → `_step="autopost_edit"`, aguarda texto → `validate_draft` → `update_content` → reenvia botões
-- `autopost_regen:<id>` → `status=REJECTED` + `launch_autopost_generate(mesmo source/topic/format)`
-- `autopost_reject:<id>` → `status=REJECTED`
 
 Guard: se draft não existe ou `status != pending` → "⚠️ Draft expirado ou já processado".
+
+**CLI equivalente:**
+- `autopost --approve <id>` → `approve_draft(id)` — mesmo efeito sem bot
+- `autopost --publish-approved` → drena Telegram + publica todos `status=approved`
 
 ## 8. Métricas — relatório semanal
 
 `MetricsCalculator.autopost(period)` (filtra por `period.key` = week):
-- published (total) + by_source + by_format
-- generated / approved / rejected / expired → approval rate
-- avg char count
+- `published` (total de posts) + `by_source` + `by_format`
+- `generated` / `approved` / `rejected` / `expired` / `posted` (status no draft) → approval rate
+- `avg_chars`
 
-Render: `ReportFormatter._autopost_block()` — retorna "" se sem atividade (zeros).
-Espelha `_engagement_block` / `_ssi_block`.
+Via `EventsTracker` (`events_tracker.py`):
+- `funnels["autopost"]`: `generated → approved → posted → publish_fail`
+- `latency["autopost"]`: `generated→approved` e `approved→posted` em segundos
+- `failures["autopost"]`: contagem de falhas (publish_fail)
+
+Render: `ReportFormatter` com registry de seções — `weekly(report, sections=None)`.
+Seções autopost: `autopost`, `funnels`, `failures`, `latency`.
 
 ## 9. Trade-offs & Riscos
 
 | Decisão | Por quê | Risco | Mitigação |
 |---------|---------|-------|-----------|
-| Telegram approval obrigatório | LLM hallucination = dano reputação | Atrito | Expira em 4h |
-| Gera sem browser, publica no bot | Scheduled não precisa segurar Chrome esperando humano | Bot precisa estar rodando p/ publicar | Bot é serviço persistente |
+| Telegram approval obrigatório | LLM hallucination = dano reputação | Atrito | Expira em 4h; alternativa CLI `--approve` |
+| Aprovação assíncrona (sem bot persistente) | Bot down não bloqueia publicação | `--publish-approved` precisa rodar (agendador) | Task Scheduler agenda de hora em hora |
+| `getUpdates` one-shot no drain | Sem polling contínuo | Botões ficam ativos até próximo drain | `editMessageReplyMarkup` remove na primeira leitura |
+| Accessibility locators (shadow DOM) | LinkedIn 2026 editor em shadow DOM | Nomes acessíveis PT-BR mudam com locale | Regex case-insensitive + fallback genérico |
 | 2/sem (não 5) | Algoritmo penaliza spam | SSI sobe devagar | Configurável |
-| Playwright (não API oficial) | LinkedIn API requer partner approval | DOM muda | ⚠️ selectors aria, validar ao vivo |
 | Hard cap 900 chars | Concisão (preferência user) | LLM corta mal | Regen 1x |
-| Browser lock compartilhado | Serializa com apply/connect/engage | Espera se outra task roda | Aceitável (1 task/vez) |
 
 ## 10. Fases de implementação — DONE
 

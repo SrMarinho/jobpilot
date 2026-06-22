@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from .period import WeekPeriod
 from .repository import ReportRepository
@@ -182,6 +182,7 @@ class MetricsCalculator:
             "approved": status.get("approved", 0),
             "rejected": status.get("rejected", 0),
             "expired": status.get("expired", 0),
+            "posted": status.get("posted", 0),
             "avg_chars": int(sum(chars) / len(chars)) if chars else 0,
         }
 
@@ -202,6 +203,87 @@ class MetricsCalculator:
             "sent": len(sent),
             "generated": len(drafts),
         }
+
+    # ── events-based metrics ──────────────────────────────────────
+
+    def _events_in_period(self, period: WeekPeriod) -> list[dict]:
+        return [e for e in self.repo.events() if e.get("week") == period.key]
+
+    def failures(self, period: WeekPeriod) -> dict[str, int]:
+        """Count failed events per feature in the period."""
+        counts: dict[str, int] = {}
+        for ev in self._events_in_period(period):
+            if not ev.get("ok", True):
+                feat = ev.get("feature", "?")
+                counts[feat] = counts.get(feat, 0) + 1
+        return counts
+
+    def funnels(self, period: WeekPeriod) -> dict[str, dict[str, int]]:
+        """Event counts per step per feature (generated→approved→posted, etc.)."""
+        evs = self._events_in_period(period)
+
+        def _count(feature: str, event: str) -> int:
+            return sum(
+                1
+                for e in evs
+                if e.get("feature") == feature
+                and e.get("event") == event
+                and e.get("ok", True)
+            )
+
+        feature_steps = [
+            ("autopost", ["generated", "approved", "posted", "publish_fail"]),
+            ("engage", ["offered", "approved", "posted"]),
+            ("followup", ["generated", "sent"]),
+            ("connect", ["sent"]),
+            ("apply", ["submitted"]),
+        ]
+        result: dict[str, dict[str, int]] = {}
+        for feature, steps in feature_steps:
+            counts = {step: _count(feature, step) for step in steps}
+            if any(counts.values()):
+                result[feature] = counts
+        return result
+
+    def latency(self, period: WeekPeriod) -> dict[str, dict[str, int]]:
+        """Average seconds between paired events, matched by key field."""
+        evs = self._events_in_period(period)
+        pairs = [
+            ("autopost", "generated", "approved"),
+            ("autopost", "approved", "posted"),
+        ]
+        result: dict[str, dict[str, int]] = {}
+        for feature, ev_a, ev_b in pairs:
+            a_map = {
+                e["key"]: e["ts"]
+                for e in evs
+                if e.get("feature") == feature
+                and e.get("event") == ev_a
+                and e.get("key")
+            }
+            b_map = {
+                e["key"]: e["ts"]
+                for e in evs
+                if e.get("feature") == feature
+                and e.get("event") == ev_b
+                and e.get("key")
+            }
+            deltas = []
+            for k, ts_a in a_map.items():
+                if k in b_map:
+                    try:
+                        d = (
+                            datetime.fromisoformat(b_map[k])
+                            - datetime.fromisoformat(ts_a)
+                        ).total_seconds()
+                        if d >= 0:
+                            deltas.append(d)
+                    except Exception:
+                        pass
+            if deltas:
+                label = f"{ev_a}_to_{ev_b}_avg_s"
+                result.setdefault(feature, {})[label] = int(sum(deltas) / len(deltas))
+        return result
 
     # ── SSI ──────────────────────────────────────────────────────
     def ssi(self, period: WeekPeriod) -> dict | None:

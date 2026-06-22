@@ -34,8 +34,8 @@ class ReportService:
         self.repo.save_report(report)
         return report
 
-    def format_weekly(self, report: dict) -> str:
-        return self.formatter.weekly(report)
+    def format_weekly(self, report: dict, sections: set[str] | None = None) -> str:
+        return self.formatter.weekly(report, sections=sections)
 
     # ── annual ───────────────────────────────────────────────────
     def build_annual(self, year: int) -> dict:
@@ -47,15 +47,15 @@ class ReportService:
         return self.formatter.annual(report)
 
     # ── delivery ─────────────────────────────────────────────────
-    def send_now(self) -> None:
+    def send_now(self, sections: set[str] | None = None) -> None:
         """Generate and Telegram-send the previous week's report (manual)."""
         period = WeekPeriod.previous_of_today()
         logger.info(f"Generating weekly report for {period.key}...")
         report = self.build_weekly(period)
-        send_telegram(self.formatter.weekly(report))
+        send_telegram(self.formatter.weekly(report, sections=sections))
         logger.info("Weekly report sent via Telegram")
 
-    def run_scheduled(self) -> None:
+    def run_scheduled(self, sections: set[str] | None = None) -> None:
         """Send the report only once per week (startup/scheduled use)."""
         period = WeekPeriod.previous_of_today()
         if self.repo.report_exists(period.key):
@@ -63,5 +63,5 @@ class ReportService:
             return
         logger.info(f"Generating weekly report for {period.key}...")
         report = self.build_weekly(period)
-        send_telegram(self.formatter.weekly(report))
+        send_telegram(self.formatter.weekly(report, sections=sections))
         logger.info("Weekly report sent via Telegram")

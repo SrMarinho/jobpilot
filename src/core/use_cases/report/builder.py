@@ -27,6 +27,9 @@ class ReportBuilder:
         connections = m.connections(period)
         engagement = m.engagement(period)
         autopost = m.autopost(period)
+        failures = m.failures(period)
+        funnels = m.funnels(period)
+        latency = m.latency(period)
         goals = self._goals_progress(
             applications=applications,
             connections=connections,
@@ -55,6 +58,9 @@ class ReportBuilder:
             "autopost": autopost,
             "followup": m.followup(period),
             "goals": goals,
+            "failures": failures,
+            "funnels": funnels,
+            "latency": latency,
             "ssi": m.ssi(period),
             "prev_applications": prev.get("applications") if prev else None,
             "prev_connections": prev.get("connections") if prev else None,

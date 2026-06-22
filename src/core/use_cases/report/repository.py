@@ -78,6 +78,13 @@ class ReportRepository:
             "followup_dms", json_file=self.files_dir / "followup_dms.json"
         ).load()
 
+    def events(self) -> list[dict]:
+        return (
+            DocRepo("events", json_file=self.files_dir / "events.json")
+            .load()
+            .get("events", [])
+        )
+
     # ── connections log (write) ──────────────────────────────────
     def add_connections(self, count: int) -> None:
         today = date.today().isoformat()
