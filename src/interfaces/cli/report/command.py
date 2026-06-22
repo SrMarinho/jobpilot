@@ -77,7 +77,11 @@ def _send_image(report: dict, text_fallback: str, send_tg: bool) -> None:
     import tempfile
     from pathlib import Path
     from src.core.use_cases.report.image_renderer import render_report_png
-    from src.utils.telegram import send_telegram_photo, send_telegram
+    from src.utils.telegram import send_telegram, send_telegram_photo
+
+    from src.core.use_cases.report.image_renderer import _ensure_chromium
+
+    _ensure_chromium()
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         out_path = Path(f.name)
