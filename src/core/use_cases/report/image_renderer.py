@@ -208,10 +208,28 @@ def _build_html(report: dict) -> str:
 </html>"""
 
 
+def _ensure_chromium() -> None:
+    """Instala Chromium headless do Playwright se ainda não estiver disponível."""
+    import subprocess
+    import sys
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        exec_path = pw.chromium.executable_path
+    if Path(exec_path).exists():
+        return
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        check=True,
+    )
+
+
 async def render_report_png(report: dict, out_path: Path) -> None:
     """Render report dict to PNG. Uses standalone Chromium, no LinkedIn session."""
     from playwright.async_api import async_playwright
 
+    _ensure_chromium()
     html = _build_html(report)
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
