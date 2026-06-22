@@ -1,4 +1,11 @@
+import sys
+
 import typer
+
+
+def _out(text: str) -> None:
+    """Escreve em UTF-8 direto no buffer (console cp1252 quebra com emoji/→)."""
+    sys.stdout.buffer.write((text + "\n").encode("utf-8", "replace"))
 
 
 def register_telegram_topics_commands(app: typer.Typer) -> None:
@@ -9,15 +16,15 @@ def register_telegram_topics_commands(app: typer.Typer) -> None:
 
         result = TelegramTopics().bootstrap()
         if not result:
-            print(
+            _out(
                 "Nenhum tópico criado. Verifique TELEGRAM_BOT_TOKEN/CHAT_ID e se o "
                 "grupo está em modo fórum (Tópicos ativados nas configs do grupo)."
             )
             return
-        print("Tópicos prontos:")
+        _out("Tópicos prontos:")
         for key, title, _ in TOPICS:
             tid = result.get(key)
-            print(f"  {key:10} → {title}  (thread_id={tid})")
+            _out(f"  {key:10} -> {title}  (thread_id={tid})")
 
     @app.command(name="list")
     def list_topics() -> None:
@@ -25,11 +32,11 @@ def register_telegram_topics_commands(app: typer.Typer) -> None:
         from src.core.use_cases.telegram_topics import TOPICS, TelegramTopics
 
         topics = TelegramTopics()
-        print("Tópicos:")
+        _out("Tópicos:")
         for key, title, _ in TOPICS:
             tid = topics.thread_id(key)
             mark = tid if tid else "— (não criado)"
-            print(f"  {key:10} → {title}  {mark}")
+            _out(f"  {key:10} -> {title}  {mark}")
 
     @app.command()
     def reset() -> None:
@@ -37,4 +44,4 @@ def register_telegram_topics_commands(app: typer.Typer) -> None:
         from src.core.use_cases.telegram_topics import TelegramTopics
 
         TelegramTopics().reset()
-        print("Mapa de tópicos limpo. Rode 'setup' para recriar/remapear.")
+        _out("Mapa de tópicos limpo. Rode 'setup' para recriar/remapear.")
