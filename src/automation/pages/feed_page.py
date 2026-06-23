@@ -27,6 +27,31 @@ _WALK_UP_JS = """
 }
 """
 
+_POST_URN_JS = """
+(el) => {
+    const RE = /urn:li:(activity|share|ugcPost):\\d+/;
+    const scan = (node) => {
+        if (!node || !node.getAttribute) return null;
+        for (const a of ['data-urn', 'data-id', 'data-activity-urn']) {
+            const v = node.getAttribute(a);
+            if (v) { const m = v.match(RE); if (m) return m[0]; }
+        }
+        return null;
+    };
+    let cur = el;
+    for (let i = 0; i < 20 && cur; i++) {
+        const u = scan(cur);
+        if (u) return u;
+        cur = cur.parentElement;
+    }
+    for (const n of el.querySelectorAll('[data-urn],[data-id],[data-activity-urn]')) {
+        const u = scan(n);
+        if (u) return u;
+    }
+    return null;
+}
+"""
+
 _LIKE_BTN_JS = """
 (el) => {
     const isVisible = (b) => {
@@ -107,6 +132,15 @@ class FeedPage:
         return posts
 
     async def get_post_urn(self, post: ElementHandle) -> Optional[str]:
+        # URN estável do LinkedIn (urn:li:activity/share/ugcPost) — não muda ao
+        # engajar, ao contrário do contador de reações/comentários no innerText.
+        try:
+            stable = await post.evaluate(_POST_URN_JS)
+        except Exception:
+            stable = None
+        if stable:
+            return stable
+        # Fallback: hash de conteúdo (compat com registros antigos)
         try:
             text = await post.evaluate("el => (el.innerText || '').slice(0, 500)")
         except Exception:
