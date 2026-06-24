@@ -15,6 +15,10 @@ Automated job application bot with AI-powered evaluation. Currently supports Lin
 - **Connect** — Sends LinkedIn connection requests automatically
   - Built-in search: `--keywords "tech recruiter" --network S`
   - Scheduled mode: runs once per day, respects weekly invite limits
+- **Engage** — Likes/comments/shares feed posts with senior-level, grounded comments (anti-junior/anti-hallucination filters)
+- **Autopost** — Generates authored posts via LLM, approval via Telegram, publishes with an **on-brand image card** rendered locally (HTML→PNG, no Canva needed). Batch generation (`--count`) + optional approval TTL
+- **Metrics** — Captures SSI, profile views (90d) and search appearances (7d); shown in the dashboard (`metrics` command)
+- **Persistence** — Backend-swappable via `DATABASE_URL`: JSON files (default) or remote Postgres/Supabase
 - **Search Builder** — Build LinkedIn/Indeed search URLs from CLI flags instead of pasting URLs
 - **Skills Tracker** — Identifies missing skills rejected by AI evaluations (`skills list` / `skills top`)
 - **Provider** — Switch AI backends at runtime (`provider set eval claude`)
@@ -61,7 +65,13 @@ LANGCHAIN_BASE_URL=http://localhost:11434
 # Separate provider for job evaluation (optional, falls back to LLM_PROVIDER)
 LLM_PROVIDER_EVAL=langchain
 LANGCHAIN_MODEL_EVAL=deepseek-r1:14b   # recommended local model
+
+# Persistence backend (optional). Empty = local JSON (.local/files/*.json).
+# Set = remote Postgres/Supabase. Use the pooled endpoint (pgbouncer, port 6543).
+# DATABASE_URL=postgresql://postgres.<ref>:<senha>@aws-0-<region>.pooler.supabase.com:6543/postgres
 ```
+
+> Postgres mode: `uv run main.py db check|init|migrate|status`. See `docs/persistence.md`.
 
 > Set `HEADLESS=TRUE` to run Chrome in the background (no visible window).
 
@@ -97,6 +107,10 @@ To switch accounts or clear a session, use `logout <site>`.
 | `logout <site>` | Clear saved session for a site |
 | `apply` | Apply to jobs (search by keywords or URL) |
 | `connect` | Send LinkedIn connection requests |
+| `engage` | Like/comment/share feed posts (senior-level comments) |
+| `autopost` | Generate authored post + image card, approve via Telegram |
+| `metrics` | Capture SSI + profile views + search appearances |
+| `dashboard` | Live TUI of applications, engagement, visibility, goals |
 | `test-apply <url>` | Dry-run Easy Apply on a single job (no AI evaluation) |
 | `bot` | Start Telegram bot for remote control |
 | `provider show/set` | View or change LLM backends |
