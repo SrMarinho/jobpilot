@@ -1,7 +1,14 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from src.utils.logger import CustomLogger
+
+# Carrega .env aqui (não só no main): settings é lido no import, antes do
+# load_dotenv() do main — sem isto, DATABASE_URL viria vazio. interpolate=False
+# preserva senhas com '$' (senão o dotenv expande '$VAR' e corrompe a senha).
+load_dotenv(interpolate=False)
 
 _log_settings = {
     "app_name": os.getenv("APP_NAME", "APP"),

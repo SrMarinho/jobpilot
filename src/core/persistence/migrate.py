@@ -29,6 +29,7 @@ _TYPED_TABLES = (
     "rejected_jobs",
     "engaged_posts",
     "profile_views",
+    "search_appearances",
     "ssi_history",
     "skills_gap",
     "connections_log",
@@ -72,6 +73,9 @@ def migrate_json_to_pg() -> dict[str, int]:
     )
     counts["skills_gap"] = _keyed_from_dict("skills_gap", "skill", "skills_gap.json")
     counts["profile_views"] = _snapshots("profile_views", "profile_views.json")
+    counts["search_appearances"] = _snapshots(
+        "search_appearances", "search_appearances.json"
+    )
     counts["ssi_history"] = _snapshots("ssi_history", "ssi_history.json")
 
     # connections_log: {date: count} -> linhas

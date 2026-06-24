@@ -24,12 +24,20 @@ def _get_pool():
                 "DATABASE_URL setado mas 'psycopg[binary]' não está instalado. "
                 "Rode: uv add 'psycopg[binary]' psycopg-pool"
             ) from e
+
+        # prepare_threshold=None desliga prepared statements do psycopg3. O
+        # pooler transaction (pgbouncer/6543) do Supabase reusa conexões e quebra
+        # com "prepared statement already exists" se ficarem ligados.
+        def _configure(conn):
+            conn.prepare_threshold = None
+
         _pool = ConnectionPool(
             settings.DATABASE_URL,
             min_size=1,
             max_size=4,
             open=True,
             kwargs={"sslmode": "require"},
+            configure=_configure,
         )
         logger.info("Postgres pool aberto")
     return _pool
@@ -78,6 +86,10 @@ CREATE TABLE IF NOT EXISTS engaged_posts (
 CREATE TABLE IF NOT EXISTS profile_views (
     date date PRIMARY KEY,
     views int, ts timestamptz
+);
+CREATE TABLE IF NOT EXISTS search_appearances (
+    date date PRIMARY KEY,
+    count int, ts timestamptz
 );
 CREATE TABLE IF NOT EXISTS ssi_history (
     date date PRIMARY KEY,
