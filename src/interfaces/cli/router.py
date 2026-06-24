@@ -3,6 +3,7 @@ import typer
 from src.interfaces.cli.apply.command import register_apply_command
 from src.interfaces.cli.connect.command import register_connect_command
 from src.interfaces.cli.engage.command import register_engage_command
+from src.interfaces.cli.metrics.command import register_metrics_command
 from src.interfaces.cli.autopost.command import register_autopost_command
 from src.interfaces.cli.report.command import register_report_command
 from src.interfaces.cli.export.command import register_export_command
@@ -50,6 +51,7 @@ def register(app: typer.Typer) -> None:
     register_apply_command(app)
     register_connect_command(app)
     register_engage_command(app)
+    register_metrics_command(app)
     register_autopost_command(app)
     register_followup_command(app)
     register_hired_command(app)

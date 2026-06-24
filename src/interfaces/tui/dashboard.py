@@ -61,6 +61,9 @@ class DashboardApp(App):
                 self.p_ssi = _Panel("📈 SSI")
                 yield self.p_autopost
                 yield self.p_ssi
+            with Horizontal():
+                self.p_visibility = _Panel("📊 Visibilidade")
+                yield self.p_visibility
             self.p_goals = _Panel("🎯 Metas (semana)")
             yield self.p_goals
         yield Footer()
@@ -69,6 +72,19 @@ class DashboardApp(App):
         self.title = "JobPilot Dashboard"
         self.action_refresh()
         self.set_interval(30, self.action_refresh)
+
+    @staticmethod
+    def _metric_line(m: dict) -> str:
+        """Render '<current> (<trend>)' p/ analyze de views/aparições."""
+        cur = m.get("current")
+        if cur is None:
+            return "sem captura"
+        trend = m.get("trend", "")
+        delta = m.get("delta")
+        suffix = f" {trend}" if trend and trend != "insuficiente" else ""
+        if delta:
+            suffix += f" ({delta:+d})"
+        return f"{cur}{suffix}"
 
     def action_refresh(self) -> None:
         try:
@@ -109,6 +125,14 @@ class DashboardApp(App):
             )
         else:
             self.p_ssi.body = "sem captura esta semana"
+
+        pv = s["profile_views"]
+        sa = s["search_appearances"]
+        self.p_visibility.body = (
+            f"👁️ Views (90d):  {self._metric_line(pv)}\n"
+            f"🔍 Pesquisas:    {self._metric_line(sa)}"
+        )
+
         labels = {
             "applications": "Candidaturas",
             "connections": "Conexões",
@@ -123,6 +147,7 @@ class DashboardApp(App):
             self.p_engage,
             self.p_autopost,
             self.p_ssi,
+            self.p_visibility,
             self.p_goals,
         ):
             p.refresh()

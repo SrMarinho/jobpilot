@@ -34,8 +34,14 @@ def gather_stats() -> dict:
     qa_pending = metrics.qa_pending()
 
     from src.core.use_cases.goals_tracker import GoalsTracker
+    from src.core.use_cases.profile_views_tracker import ProfileViewsTracker
+    from src.core.use_cases.search_appearances_tracker import (
+        SearchAppearancesTracker,
+    )
 
     targets = GoalsTracker().all()
+    profile_views = ProfileViewsTracker().analyze()
+    search_appearances = SearchAppearancesTracker().analyze()
     goals = {
         "applications": (apps_week, targets["applications"]),
         "connections": (connections, targets["connections"]),
@@ -55,5 +61,7 @@ def gather_stats() -> dict:
         "engagement": engagement,
         "autopost": autopost,
         "ssi": ssi.get("current") if ssi else None,
+        "profile_views": profile_views,
+        "search_appearances": search_appearances,
         "goals": goals,
     }
