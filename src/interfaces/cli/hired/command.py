@@ -42,6 +42,9 @@ def register_hired_command(app: typer.Typer) -> None:
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Só descobre/loga anúncios; não abre perfis"
         ),
+        no_dedup: bool = typer.Option(
+            False, "--no-dedup", help="Ignora dedup: re-coleta perfis já vistos"
+        ),
     ):
         """Analisa quem foi contratado recentemente p/ um cargo e agrega as skills.
 
@@ -64,6 +67,7 @@ def register_hired_command(app: typer.Typer) -> None:
                 resume,
                 trend,
                 telegram,
+                no_dedup,
             )
 
         run_async(run_browser(_work, headless=headless))

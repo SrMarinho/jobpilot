@@ -31,6 +31,7 @@ async def run_hired_browser(
     resume: str | None,
     trend: bool,
     telegram: bool,
+    no_dedup: bool = False,
 ) -> None:
     provider = None if dry_run else get_eval_provider()
     if provider:
@@ -46,6 +47,7 @@ async def run_hired_browser(
             days=days,
             max_profiles=max_profiles,
             dry_run=dry_run,
+            no_dedup=no_dedup,
         )
         tracker = await manager.run()
 

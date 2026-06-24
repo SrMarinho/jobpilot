@@ -33,6 +33,7 @@ class HiredProfileManager:
         days: int = 90,
         max_profiles: int = 10,
         dry_run: bool = False,
+        no_dedup: bool = False,
         stop_event: threading.Event | None = None,
     ):
         self.page = page
@@ -41,6 +42,7 @@ class HiredProfileManager:
         self.days = days
         self.max_profiles = max_profiles
         self.dry_run = dry_run
+        self.no_dedup = no_dedup
         self.stop_event = stop_event or threading.Event()
         self.page_obj = HiredPostPage(page)
         self.tracker = HiredSkillsTracker()
@@ -74,7 +76,7 @@ class HiredProfileManager:
                 continue
             profile_url = post["profile_url"]
             author = post.get("author", "")
-            if self.tracker.already_seen(profile_url):
+            if not self.no_dedup and self.tracker.already_seen(profile_url):
                 self.skipped_dup += 1
                 logger.info(f"[hired] dup, pulando: {author}")
                 continue
