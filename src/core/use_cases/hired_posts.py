@@ -15,9 +15,22 @@ _AGE_RE = re.compile(
 
 # Frase que caracteriza anúncio de contratação/novo cargo.
 _ANNOUNCE_RE = re.compile(
-    r"comecei como|nova posi|novo cargo|orgulho.{0,20}anunciar|"
-    r"started (a )?(new )?(position|role|job)|i('| a)m (happy|excited|thrilled|proud)|"
-    r"joined|new role|new position",
+    r"comecei como|nova posi[çc]|orgulho.{0,20}anunciar|"
+    r"estou (?:muito )?(?:feliz|animado|entusiasmado|honrado).{0,40}(?:anunciar|compartilhar)|"
+    r"started (a )?(new )?(position|role|job)|i('| a)m (happy|excited|thrilled|proud).{0,40}(join|start|announc)|"
+    r"\bjoined\b.{0,30}(as|team)|new role|new position",
+    re.IGNORECASE,
+)
+
+# Sinais de busca de emprego — exclui posts de quem QUER emprego, não anunciou.
+_SEEKING_RE = re.compile(
+    r"buscando.{0,30}(?:novo cargo|nova oportunidade|emprego|vaga)|"
+    r"em busca.{0,30}(?:novo cargo|nova oportunidade|emprego|vaga)|"
+    r"aberto a novas oportunidades|open to work|open to opportunities|"
+    r"disponível para.{0,20}(?:novo|oportunidade)|"
+    r"procurando.{0,30}(?:vaga|emprego|oportunidade)|"
+    r"alguém.{0,30}(?:vaga|oportunidade)|"
+    r"me indica|me indicar|indicação",
     re.IGNORECASE,
 )
 
@@ -44,7 +57,10 @@ def post_age_days(text: str) -> int | None:
 
 
 def is_hire_announcement(text: str) -> bool:
-    return bool(_ANNOUNCE_RE.search(text or ""))
+    t = text or ""
+    if _SEEKING_RE.search(t):
+        return False
+    return bool(_ANNOUNCE_RE.search(t))
 
 
 def _tokens(value: str) -> set[str]:
