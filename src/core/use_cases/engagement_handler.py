@@ -4,14 +4,18 @@ import re
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
-from src.core.use_cases.content_filters import (
+from src.core.use_cases.comment_filters import (
     comment_is_grounded,
     foreign_tech_in_comment,
+    is_junior_tone,
+    is_refusal,
+    is_trivial,
+    validate_comment,
+)
+from src.core.use_cases.content_filters import (
     has_tech_keyword,
     is_blacklisted,
     is_commentable_post,
-    is_trivial,
-    validate_comment,
 )
 
 
@@ -70,16 +74,47 @@ class EngagementHandler:
         )
         return result
 
-    # Variantes A/B: dois ângulos de comentário. O variant usado é gravado no
-    # tracker p/ o relatório cruzar qual estilo aparece mais (conversão real
-    # depende de tracking de respostas — futuro).
+    # Variantes A/B: ângulos de comentário, cada um com seu tamanho-alvo. O
+    # variant usado é gravado no tracker p/ o relatório cruzar qual estilo
+    # aparece mais (conversão real depende de tracking de respostas — futuro).
     _VARIANTS = {
-        "insight": "Traga 1 insight técnico concreto ou uma observação que agregue.",
-        "pergunta": "Faça 1 pergunta específica e relevante que convide ao diálogo.",
+        "insight": {
+            "angle": "Traga 1 insight técnico concreto ou uma observação que agregue.",
+            "min_words": 5,
+            "max_words": 15,
+        },
+        "tecnico": {
+            "angle": (
+                "Faça um diagnóstico técnico e traga o COMO: mecanismo, config, "
+                "padrão ou trade-off concreto — não só o QUE. Densidade de quem já "
+                "levou isso para produção."
+            ),
+            "min_words": 15,
+            "max_words": 30,
+        },
+        "pergunta": {
+            "angle": (
+                "Faça 1 pergunta específica e não-óbvia que convide ao diálogo — "
+                "nível sênior, sobre trade-off/operação/edge-case real do post."
+            ),
+            "min_words": 8,
+            "max_words": 18,
+        },
     }
 
     def _pick_variant(self) -> str:
         return random.choice(list(self._VARIANTS.keys()))
+
+    # Post que termina em '?' ou tem interrogativo: o autor pede uma resposta.
+    # Responder (em vez de afirmação lateral) aumenta credibilidade/engajamento.
+    @staticmethod
+    def _post_asks_question(post_text: str) -> bool:
+        t = (post_text or "").strip().lower()
+        if "?" in t:
+            return True
+        return bool(
+            re.search(r"\b(qual|quais|como|quando|em qual|o que|por que|porque)\b", t)
+        )
 
     # Hashtags do post (#dataeng, #python). Sinalizam o tema/contexto que o
     # autor escolheu — ajudam o modelo a ancorar melhor o comentário.
@@ -99,7 +134,9 @@ class EngagementHandler:
     ) -> tuple[str | None, str]:
         """Gera comentário. Retorna ``(texto|None, variant)``."""
         variant = variant or self._pick_variant()
-        angle = self._VARIANTS.get(variant, self._VARIANTS["insight"])
+        spec = self._VARIANTS.get(variant, self._VARIANTS["insight"])
+        angle = spec["angle"]
+        min_words, max_words = spec["min_words"], spec["max_words"]
         tags = self._extract_tags(post_text)
         tags_line = (
             f"Tags do post (tema sinalizado pelo autor): {', '.join('#' + t for t in tags)}\n"
@@ -108,12 +145,30 @@ class EngagementHandler:
             if tags
             else ""
         )
+        question_block = (
+            "O post FAZ uma pergunta. Responda-a diretamente com experiência "
+            "concreta (situação real + o que aconteceu) e então adicione 1 "
+            "nuance/trade-off. NÃO responda com outra pergunta genérica.\n\n"
+            if self._post_asks_question(post_text)
+            else ""
+        )
         prompt = (
             f"Leia o post do LinkedIn abaixo e escreva 1 comentário como peer profissional.\n\n"
             f'Post de {author}:\n"""\n{post_text[:800]}\n"""\n\n'
             f"{tags_line}"
-            f"Tarefa: comentário curto (5-15 palavras), profissional, no mesmo idioma do post.\n"
+            f"Você é {self.user_headline}, engenheiro experiente. Escreva com a "
+            f"densidade de quem já levou isso para produção — mecanismo, trade-off "
+            f"ou número, não entusiasmo.\n\n"
+            f"Tarefa: comentário de {min_words}-{max_words} palavras, profissional, "
+            f"no mesmo idioma do post.\n"
             f"Ângulo desta vez: {angle}\n\n"
+            f"{question_block}"
+            f"EXEMPLOS:\n"
+            f"- BOM: 'Uso pra fan-out de I/O independente; o que mais pega é "
+            f"context propagation — MDC some ao trocar de thread. Resolvi com "
+            f"taskDecorator copiando o contexto pro pool.'\n"
+            f"- RUIM (NÃO faça): 'Muito bom, vou estudar isso!', 'Alguém pode "
+            f"explicar melhor?', 'Salvando para depois', 'Boa dica!'.\n\n"
             f"ANCORAGEM (essencial):\n"
             f"- Comente APENAS sobre o que o post realmente diz. Use os termos, a "
             f"tecnologia e o stack que o PRÓPRIO post menciona.\n"
@@ -145,7 +200,14 @@ class EngagementHandler:
             except Exception as e:
                 logger.warning(f"generate_comment LLM call failed: {e}")
                 return None, variant
-            ok, payload = validate_comment(raw)
+            # Modelo explicou por que não comenta em vez de devolver vazio:
+            # é ≈ string vazia. Para já (retry só repetiria a recusa).
+            if is_refusal(raw):
+                logger.info(f"Comment skip (modelo recusou, ≈ vazio): {raw!r}")
+                return None, variant
+            ok, payload = validate_comment(
+                raw, min_words=min_words, max_words=max_words
+            )
             if not ok:
                 logger.info(
                     f"Comment rejected ({payload}) tentativa {attempt + 1}: {raw!r}"
@@ -170,6 +232,12 @@ class EngagementHandler:
             if is_trivial(payload):
                 logger.info(
                     f"Comment rejected (trivial/iniciante) "
+                    f"tentativa {attempt + 1}: {payload!r}"
+                )
+                continue
+            if is_junior_tone(payload):
+                logger.info(
+                    f"Comment rejected (tom junior) "
                     f"tentativa {attempt + 1}: {payload!r}"
                 )
                 continue
