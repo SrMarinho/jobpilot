@@ -34,7 +34,23 @@ class ProfileViewsPage:
     async def goto(self) -> None:
         logger.info(f"Opening profile-views page: {self.url}")
         await self.page.goto(self.url, wait_until="domcontentloaded")
-        await self.page.wait_for_timeout(6000)
+        await self._wait_for_content()
+
+    async def _wait_for_content(self, timeout_ms: int = 30000) -> None:
+        # Conteúdo é renderizado via JS após o domcontentloaded; espera o rótulo
+        # aparecer em vez de sleep fixo. Faz scroll para forçar lazy-render.
+        try:
+            await self.page.wait_for_function(
+                """() => {
+                    const t = (document.body.innerText || '').toLowerCase();
+                    return t.includes('visualiza') || t.includes('profile views');
+                }""",
+                timeout=timeout_ms,
+            )
+        except Exception:
+            logger.warning("Profile-views content wait timed out; scraping anyway")
+        # margem para o número assentar após o rótulo aparecer
+        await self.page.wait_for_timeout(1500)
 
     async def scrape_with_goto(self) -> int | None:
         await self.goto()

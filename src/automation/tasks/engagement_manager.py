@@ -3,6 +3,10 @@ from dataclasses import dataclass, field
 
 from playwright.async_api import Page
 
+# TargetClosedError não é reexportado em async_api (só Error/TimeoutError); vem
+# do módulo interno. Subclasse de async_api.Error — "página/browser fechou".
+from playwright._impl._errors import TargetClosedError
+
 from src.automation.pages import FeedPage
 from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.engagement_handler import EngagementHandler
@@ -164,47 +168,56 @@ class EngagementManager:
 
         await self.feed.scroll_feed(n=2, pause_ms=1500)
 
-        for iteration in range(max_iterations):
-            if engaged >= target or self.stop_event.is_set():
-                break
-            posts = await self.feed.get_posts()
-            new_this_round = 0
-
-            for post in posts:
+        try:
+            for iteration in range(max_iterations):
                 if engaged >= target or self.stop_event.is_set():
                     break
-                sel = await self._select(post, seen_urns)
-                if sel == "dup":
-                    continue
-                new_this_round += 1  # post novo (engajado ou pulado)
-                if sel is None:
-                    continue
-                urn, author, text = sel
-                logger.info(f"=== Engajando {engaged + 1}/{target} — {author} ===")
-                if await self._engage_post(post, urn, author, text):
-                    engaged += 1
-                    if engaged < target:
-                        await self.feed.random_pause(30, 60)
+                posts = await self.feed.get_posts()
+                new_this_round = 0
 
-            if engaged >= target:
-                break
+                for post in posts:
+                    if engaged >= target or self.stop_event.is_set():
+                        break
+                    sel = await self._select(post, seen_urns)
+                    if sel == "dup":
+                        continue
+                    new_this_round += 1  # post novo (engajado ou pulado)
+                    if sel is None:
+                        continue
+                    urn, author, text = sel
+                    logger.info(f"=== Engajando {engaged + 1}/{target} — {author} ===")
+                    if await self._engage_post(post, urn, author, text):
+                        engaged += 1
+                        if engaged < target:
+                            await self.feed.random_pause(30, 60)
 
-            if new_this_round == 0:
-                stale_rounds += 1
-                logger.info(
-                    f"No new posts this round ({stale_rounds}/{max_stale} stale)"
-                )
-                if stale_rounds >= max_stale:
-                    logger.warning("Feed exhausted — no more new posts loading")
+                if engaged >= target:
                     break
-            else:
-                stale_rounds = 0
-                logger.info(
-                    f"Round {iteration + 1}: {new_this_round} new posts, "
-                    f"{engaged}/{target} engajados"
-                )
 
-            await self.feed.scroll_feed(n=2, pause_ms=1800)
+                if new_this_round == 0:
+                    stale_rounds += 1
+                    logger.info(
+                        f"No new posts this round ({stale_rounds}/{max_stale} stale)"
+                    )
+                    if stale_rounds >= max_stale:
+                        logger.warning("Feed exhausted — no more new posts loading")
+                        break
+                else:
+                    stale_rounds = 0
+                    logger.info(
+                        f"Round {iteration + 1}: {new_this_round} new posts, "
+                        f"{engaged}/{target} engajados"
+                    )
+
+                await self.feed.scroll_feed(n=2, pause_ms=1800)
+        except TargetClosedError:
+            # Página/browser fechou no meio (usuário fechou janela, LinkedIn
+            # derrubou o contexto). Encerra limpo com o progresso já feito.
+            logger.warning(
+                f"Browser/página fechou durante o engage — encerrando com "
+                f"{engaged}/{target} engajados (progresso salvo)"
+            )
+            return self.result
 
         if engaged < target:
             logger.warning(
