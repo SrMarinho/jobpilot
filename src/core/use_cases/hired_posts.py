@@ -15,7 +15,7 @@ _AGE_RE = re.compile(
 
 # Frase que caracteriza anúncio de contratação/novo cargo.
 _ANNOUNCE_RE = re.compile(
-    r"comecei como|nova posi[çc]|orgulho.{0,20}anunciar|"
+    r"comecei como|nova posi[çc]|novo cargo|orgulho.{0,20}anunciar|"
     r"estou (?:muito )?(?:feliz|animado|entusiasmado|honrado).{0,40}(?:anunciar|compartilhar)|"
     r"started (a )?(new )?(position|role|job)|i('| a)m (happy|excited|thrilled|proud).{0,40}(join|start|announc)|"
     r"\bjoined\b.{0,30}(as|team)|new role|new position",
