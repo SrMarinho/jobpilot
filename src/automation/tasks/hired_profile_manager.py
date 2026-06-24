@@ -13,7 +13,7 @@ from playwright.async_api import Page
 
 from src.config.settings import logger
 from src.automation.pages import HiredPostPage
-from src.automation.url_builder import build_linkedin_hired_posts_url
+from src.automation.url_builder import build_linkedin_hired_posts_urls
 from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.hired_posts import (
     is_hire_announcement,
@@ -57,11 +57,26 @@ class HiredProfileManager:
                 return headline.split(sep, 1)[1].strip()[:80]
         return ""
 
+    async def _collect_posts(self) -> list[dict]:
+        """Busca posts em URLs separadas por termo de anúncio, dedup por profile_url."""
+        urls = build_linkedin_hired_posts_urls(self.role)
+        seen_urls: set[str] = set()
+        all_posts: list[dict] = []
+        for url in urls:
+            if self.stop_event.is_set() or self.collected >= self.max_profiles:
+                break
+            logger.info(f"[hired] busca: {url}")
+            posts = await self.page_obj.scrape_posts(url, limit=self.max_profiles * 3)
+            logger.info(f"[hired] Posts encontrados: {len(posts)}")
+            for post in posts:
+                purl = post.get("profile_url", "")
+                if purl and purl not in seen_urls:
+                    seen_urls.add(purl)
+                    all_posts.append(post)
+        return all_posts
+
     async def run(self) -> HiredSkillsTracker:
-        url = build_linkedin_hired_posts_url(self.role)
-        logger.info(f"[hired] busca: {url}")
-        # pega mais posts do que o cap p/ compensar os filtrados
-        posts = await self.page_obj.scrape_posts(url, limit=self.max_profiles * 3)
+        posts = await self._collect_posts()
 
         for post in posts:
             if self.stop_event.is_set() or self.collected >= self.max_profiles:

@@ -60,20 +60,36 @@ def build_linkedin_people_url(keywords: list[str], network: str | None = None) -
     return f"https://www.linkedin.com/search/results/people/?{urlencode(params)}"
 
 
+_HIRED_ANNOUNCE_TERMS = [
+    '"comecei como"',
+    '"novo cargo"',
+    '"nova posição"',
+    '"iniciei como"',
+    '"orgulho de anunciar"',
+    '"started a new position"',
+]
+
+
 def build_linkedin_hired_posts_url(
-    role: str, extra_terms: list[str] | None = None
+    role: str, announce_term: str | None = None
 ) -> str:
     """Busca de POSTS de anúncio de contratação recente, ordenados por data.
 
-    A data do post ≈ data da contratação → recência grátis (sem abrir perfil).
-    Validado no spike: 6 anúncios reais no 1º goto, sem checkpoint.
+    ``announce_term`` = frase exata entre aspas (ex: '"comecei como"').
+    Sem ele usa o conjunto padrão via OR (3 termos curtos).
     """
-    announce = '"comecei como" OR "started a new position" OR "novo cargo"'
-    terms = [f"({announce})", role]
-    if extra_terms:
-        terms.extend(extra_terms)
-    params = {"keywords": " ".join(terms), "sortBy": '"date_posted"'}
+    if announce_term:
+        keyword = f"{announce_term} {role}"
+    else:
+        announce = '"comecei como" OR "started a new position" OR "novo cargo"'
+        keyword = f"({announce}) {role}"
+    params = {"keywords": keyword, "sortBy": '"date_posted"'}
     return f"https://www.linkedin.com/search/results/content/?{urlencode(params)}"
+
+
+def build_linkedin_hired_posts_urls(role: str) -> list[str]:
+    """Uma URL por termo de anúncio — evita query OR longa que LinkedIn rejeita."""
+    return [build_linkedin_hired_posts_url(role, t) for t in _HIRED_ANNOUNCE_TERMS]
 
 
 def build_indeed_url(
