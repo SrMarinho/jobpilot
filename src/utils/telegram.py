@@ -56,6 +56,50 @@ def send_telegram_photo(
         logger.warning(f"Telegram photo send failed: {e}")
 
 
+def send_telegram_photo_buttons(
+    path: Path, caption: str, buttons: list, topic: str | None = None
+) -> int | None:
+    """sendPhoto com teclado inline (aprovação com imagem). Returns message_id."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    thread = _thread(topic)
+    chat_id = (
+        os.getenv("TELEGRAM_CHAT_ID")
+        if thread
+        else os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID"))
+    )
+    if not token or not chat_id:
+        return None
+    import json as _json
+
+    markup = {
+        "inline_keyboard": [
+            [{"text": b["text"], "callback_data": b["data"]} for b in row]
+            for row in buttons
+        ]
+    }
+    data = {
+        "chat_id": chat_id,
+        "caption": caption,
+        "parse_mode": "HTML",
+        # sendPhoto é multipart: reply_markup vai como string JSON.
+        "reply_markup": _json.dumps(markup),
+    }
+    if thread:
+        data["message_thread_id"] = thread
+    try:
+        with open(path, "rb") as f:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendPhoto",
+                data=data,
+                files={"photo": f},
+                timeout=30,
+            )
+        return resp.json().get("result", {}).get("message_id")
+    except Exception as e:
+        logger.warning(f"Telegram photo+buttons send failed: {e}")
+        return None
+
+
 def send_telegram_buttons(
     message: str, buttons: list, topic: str | None = None
 ) -> int | None:

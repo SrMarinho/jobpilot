@@ -30,6 +30,8 @@ def resolve_autopost_config(
     no_telegram: bool,
     scheduled: bool,
     force: bool,
+    count: int = 1,
+    expires_hours: int = 0,
 ) -> dict | None:
     """Returns config dict or None if scheduled run should skip."""
     if scheduled and not force:
@@ -51,6 +53,8 @@ def resolve_autopost_config(
         "format": fmt,
         "dry_run": dry_run,
         "no_telegram": no_telegram,
+        "count": max(1, int(count or 1)),
+        "expires_hours": int(expires_hours or 0),
         "user_name": os.getenv("USER_NAME", "Matheus Marinho"),
         "user_headline": os.getenv(
             "USER_HEADLINE", "Software Engineer focado em Python e Node.js"
@@ -128,7 +132,7 @@ async def run_publish_approved() -> None:
     for draft in approved:
         logger.info(f"Publicando draft {draft['id']} (topic={draft.get('topic')!r})")
         try:
-            ok, url = await publish_content(draft["content"])
+            ok, url = await publish_content(draft["content"], draft.get("image_path"))
         except Exception as e:
             logger.error(f"Erro ao publicar draft {draft['id']}: {e}")
             _notify(f"❌ <b>Autopost</b>: erro ao publicar draft aprovado: {e}")
@@ -150,7 +154,11 @@ async def run_publish_approved() -> None:
 
 
 async def run_autopost(cfg: dict) -> None:
-    """Generate a draft and route it (print / dry-run preview / approval)."""
+    """Gera 1+ drafts (batch) e roteia cada um (print / dry-run / aprovação).
+
+    Em batch, faz dedup entre os drafts do próprio run (acumula tópicos vistos)
+    além do dedup de 30 dias já existente.
+    """
     os.environ.setdefault("LLM_PROVIDER_EVAL", "langchain")
     provider = get_eval_provider()
     logger.info(f"Using LLM for autopost: {provider.describe()}")
@@ -158,19 +166,32 @@ async def run_autopost(cfg: dict) -> None:
     tracker = PostedTracker()
     tracker.expire_stale()
 
-    manager = AutopostManager(
-        provider,
-        resume_path=cfg["resume_path"],
-        user_name=cfg["user_name"],
-        user_headline=cfg["user_headline"],
-        source=cfg["source"],
-        topic=cfg["topic"],
-        fmt=cfg["format"],
-        recent=tracker.recent_topics(days=30),
-    )
-    draft = await manager.generate()
-    if not draft:
-        logger.warning("Autopost: sem draft para enviar")
+    count = cfg.get("count", 1)
+    base_recent = tracker.recent_topics(days=30)
+    seen: set[str] = set()
+    made = 0
+
+    for i in range(count):
+        manager = AutopostManager(
+            provider,
+            resume_path=cfg["resume_path"],
+            user_name=cfg["user_name"],
+            user_headline=cfg["user_headline"],
+            source=cfg["source"],
+            topic=cfg["topic"],
+            fmt=cfg["format"],
+            recent=base_recent | seen,
+        )
+        draft = await manager.generate()
+        if not draft:
+            logger.warning(f"Autopost: sem draft no item {i + 1}/{count}")
+            continue
+        seen.add((draft.get("topic") or "").strip().lower())
+        await _route_draft(draft, cfg, tracker)
+        made += 1
+
+    logger.info(f"Autopost batch: {made}/{count} draft(s) gerado(s)")
+    if made == 0:
         try:
             from src.utils.telegram import send_telegram
 
@@ -180,8 +201,10 @@ async def run_autopost(cfg: dict) -> None:
             )
         except Exception:
             pass
-        return
 
+
+async def _route_draft(draft: dict, cfg: dict, tracker) -> None:
+    """Roteia um draft: stdout (no_telegram) / preview (dry_run) / aprovação."""
     header = (
         f"📝 <b>Autopost draft</b>\n"
         f"<i>source={draft['source']} · format={draft['format']} · "
@@ -201,13 +224,15 @@ async def run_autopost(cfg: dict) -> None:
         return
 
     if cfg["dry_run"]:
+        caption = header + body + "\n\n<i>(dry-run — não será publicado)</i>"
+        image_path = await _render_draft_card(draft, "dryrun")
         try:
-            from src.utils.telegram import send_telegram
+            from src.utils.telegram import send_telegram, send_telegram_photo
 
-            send_telegram(
-                header + body + "\n\n<i>(dry-run — não será publicado)</i>",
-                topic="autopost",
-            )
+            if image_path:
+                send_telegram_photo(image_path, caption, topic="autopost")
+            else:
+                send_telegram(caption, topic="autopost")
         except Exception as e:
             logger.warning(f"dry-run telegram send failed: {e}")
         return
@@ -218,6 +243,7 @@ async def run_autopost(cfg: dict) -> None:
         source=draft["source"],
         fmt=draft["format"],
         topic=draft["topic"],
+        expires_hours=cfg.get("expires_hours") or None,  # 0/None = sem expirar
     )
     from src.core.use_cases.events_tracker import record_event
 
@@ -228,12 +254,46 @@ async def run_autopost(cfg: dict) -> None:
         detail=draft["source"],
         fmt=draft["format"],
     )
-    try:
-        from src.utils.telegram import send_telegram_buttons
 
-        send_telegram_buttons(
-            header + body, _approval_buttons(draft_id), topic="autopost"
+    # Card de imagem (best-effort): gera PNG on-brand do tópico e anexa ao draft.
+    image_path = await _render_draft_card(draft, draft_id)
+    if image_path:
+        tracker.set_image(draft_id, image_path)
+
+    try:
+        from src.utils.telegram import (
+            send_telegram_buttons,
+            send_telegram_photo_buttons,
         )
+
+        buttons = _approval_buttons(draft_id)
+        if image_path:
+            msg_id = send_telegram_photo_buttons(
+                image_path, header + body, buttons, topic="autopost"
+            )
+        else:
+            msg_id = send_telegram_buttons(header + body, buttons, topic="autopost")
+        # guarda o message_id p/ remover os botões ao aprovar/rejeitar
+        if msg_id:
+            tracker.set_telegram_msg_id(draft_id, msg_id)
         logger.info(f"Draft {draft_id} enviado para aprovação no Telegram")
     except Exception as e:
         logger.warning(f"Falha ao enviar draft para aprovação: {e}")
+
+
+async def _render_draft_card(draft: dict, draft_id: str) -> str | None:
+    """Renderiza o card PNG do draft. Best-effort: erro não quebra o autopost."""
+    try:
+        from src.core.use_cases.post_image import derive_card_copy, render_card_png
+
+        copy = derive_card_copy(
+            draft.get("topic", ""), draft.get("content", ""), draft.get("format", "")
+        )
+        out = f".local/files/post_images/{draft_id}.png"
+        await render_card_png(
+            copy["title"], copy["subtitle"], out, kicker=copy["kicker"]
+        )
+        return out
+    except Exception as e:
+        logger.warning(f"Falha ao gerar card do draft {draft_id} (segue sem): {e}")
+        return None

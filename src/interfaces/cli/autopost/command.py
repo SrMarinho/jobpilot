@@ -48,6 +48,14 @@ def register_autopost_command(app: typer.Typer) -> None:
         approve: Optional[str] = typer.Option(
             None, "--approve", help="Aprova um draft por id via CLI (publica depois)"
         ),
+        count: int = typer.Option(
+            1, "--count", help="Quantos drafts gerar no run (batch, dedup entre eles)"
+        ),
+        expires_hours: int = typer.Option(
+            0,
+            "--expires-hours",
+            help="Janela de aprovação em horas (0 = sem expirar)",
+        ),
     ):
         """Gera post autoral via LLM e envia para aprovação no Telegram."""
         set_run_context("autopost")
@@ -70,6 +78,8 @@ def register_autopost_command(app: typer.Typer) -> None:
             no_telegram=no_telegram,
             scheduled=scheduled,
             force=force,
+            count=count,
+            expires_hours=expires_hours,
         )
         if cfg is None:
             return  # skip-today exit 0

@@ -14,8 +14,10 @@ from src.interfaces.cli.browser import (
 from src.automation.pages.feed_composer_page import FeedComposerPage
 
 
-async def publish_content(content: str) -> tuple[bool, str]:
-    """Abre o composer sob o browser lock e publica ``content``.
+async def publish_content(
+    content: str, image_path: str | None = None
+) -> tuple[bool, str]:
+    """Abre o composer sob o browser lock e publica ``content`` (+ imagem opcional).
 
     Returns ``(ok, url)``.
     """
@@ -24,7 +26,7 @@ async def publish_content(content: str) -> tuple[bool, str]:
         async with async_playwright() as pw:
             context, page = await create_context(pw, force_headless=False)
             try:
-                return await FeedComposerPage(page).publish(content)
+                return await FeedComposerPage(page).publish(content, image_path)
             finally:
                 try:
                     await context.close()

@@ -50,21 +50,29 @@ class PostedTracker:
         fmt: str,
         topic: str,
         telegram_msg_id: int | None = None,
-        expires_hours: int = 4,
+        image_path: str | None = None,
+        expires_hours: int | None = None,
     ) -> str:
         now = datetime.now()
         draft_id = uuid.uuid4().hex[:12]
+        # expires_hours None/0 => sem expiração (fila persiste até aprovar/rejeitar)
+        expires_at = (
+            (now + timedelta(hours=expires_hours)).isoformat()
+            if expires_hours
+            else None
+        )
         self._data["drafts"].append(
             {
                 "id": draft_id,
                 "created_at": now.isoformat(),
-                "expires_at": (now + timedelta(hours=expires_hours)).isoformat(),
+                "expires_at": expires_at,
                 "status": STATUS_PENDING,
                 "source": source,
                 "format": fmt,
                 "topic": topic,
                 "content": content,
                 "chars": len(content),
+                "image_path": image_path,
                 "telegram_msg_id": telegram_msg_id,
                 "week": now.strftime("%Y-W%W"),
                 "month": now.strftime("%Y-%m"),
@@ -81,6 +89,22 @@ class PostedTracker:
         draft = self.get_draft(draft_id)
         if draft:
             draft["status"] = status
+            self._save()
+        return draft
+
+    def set_telegram_msg_id(self, draft_id: str, msg_id: int) -> dict | None:
+        """Guarda o message_id do Telegram (p/ remover os botões depois)."""
+        draft = self.get_draft(draft_id)
+        if draft:
+            draft["telegram_msg_id"] = msg_id
+            self._save()
+        return draft
+
+    def set_image(self, draft_id: str, image_path: str | None) -> dict | None:
+        """Grava o caminho da imagem (card PNG) do draft."""
+        draft = self.get_draft(draft_id)
+        if draft:
+            draft["image_path"] = image_path
             self._save()
         return draft
 
@@ -124,9 +148,12 @@ class PostedTracker:
         for d in self._data["drafts"]:
             if d.get("status") != STATUS_PENDING:
                 continue
+            exp_str = d.get("expires_at")
+            if not exp_str:  # sem expiração configurada
+                continue
             try:
-                exp = datetime.fromisoformat(d.get("expires_at", ""))
-            except ValueError:
+                exp = datetime.fromisoformat(exp_str)
+            except (ValueError, TypeError):
                 continue
             if now > exp:
                 d["status"] = STATUS_EXPIRED

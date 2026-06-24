@@ -22,6 +22,10 @@ FEED_URL = "https://www.linkedin.com/feed/"
 _START_RE = re.compile(r"come[çc]ar publica|start a post|criar publica", re.I)
 _EDITOR_RE = re.compile(r"editor de texto|text editor", re.I)
 _PUBLISH_RE = re.compile(r"^(publicar|post)$", re.I)
+_MEDIA_RE = re.compile(
+    r"adicionar (m[íi]dia|foto|imagem)|add (media|a photo|photo)|m[íi]dia", re.I
+)
+_DONE_RE = re.compile(r"^(concluído|concluir|avançar|next|done|pronto)$", re.I)
 
 
 def _alert(step: str) -> None:
@@ -69,8 +73,51 @@ class FeedComposerPage:
         except Exception:
             return ""
 
-    async def publish(self, text: str) -> tuple[bool, str]:
-        """Abre o composer, digita ``text``, publica. Returns ``(ok, url)``."""
+    async def _attach_image(self, image_path: str) -> bool:
+        """Anexa uma imagem ao composer. Best-effort; não levanta exceção.
+
+        Clica o botão de mídia, seta o arquivo no input[type=file] (mesmo oculto)
+        e confirma o diálogo. Selectors LinkedIn 2026 best-effort: qualquer falha
+        loga alerta e devolve False (o publish segue só com texto).
+        """
+        from pathlib import Path
+
+        if not Path(image_path).exists():
+            logger.warning(f"Imagem não encontrada, publicando sem ela: {image_path}")
+            return False
+        try:
+            btn = self.page.get_by_role("button", name=_MEDIA_RE).first
+            if await btn.count():
+                await btn.click(timeout=6000)
+                await self.page.wait_for_timeout(1200)
+
+            file_input = self.page.locator('input[type="file"]').first
+            await file_input.set_input_files(image_path, timeout=8000)
+            await self.page.wait_for_timeout(2500)  # upload/preview
+
+            # confirma o diálogo de mídia se houver (Concluído/Avançar/Next)
+            done = self.page.get_by_role("button", name=_DONE_RE).first
+            if await done.count() and not await done.is_disabled():
+                await done.click(timeout=6000)
+                await self.page.wait_for_timeout(1200)
+            logger.info("Imagem anexada ao post")
+            return True
+        except Exception as e:
+            logger.warning(f"Falha ao anexar imagem (segue só texto): {e}")
+            _alert("anexar imagem")
+            try:
+                await self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+            return False
+
+    async def publish(
+        self, text: str, image_path: str | None = None
+    ) -> tuple[bool, str]:
+        """Abre o composer, digita ``text``, anexa imagem opcional, publica.
+
+        Returns ``(ok, url)``. Falha ao anexar imagem NÃO aborta: publica só texto.
+        """
         await self.goto()
 
         # 1) abrir composer
@@ -96,6 +143,10 @@ class FeedComposerPage:
             _alert("encontrar editor")
             return False, ""
         await self.page.wait_for_timeout(1000)
+
+        # 2.5) anexar imagem (best-effort — se falhar, segue só com texto)
+        if image_path:
+            await self._attach_image(image_path)
 
         # 3) publicar — espera o botão habilitar (texto digitado habilita)
         btn = self.page.get_by_role("button", name=_PUBLISH_RE).first
