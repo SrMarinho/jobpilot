@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS goals (
     metric text PRIMARY KEY,
     target int
 );
+CREATE TABLE IF NOT EXISTS hired_profiles (
+    profile_url text PRIMARY KEY,
+    name text, headline text, company text,
+    top_skills jsonb, age_days int, role text,
+    source text, scraped_at timestamptz
+);
 CREATE TABLE IF NOT EXISTS kv_store (
     ns text, key text, val jsonb, updated_at timestamptz DEFAULT now(),
     PRIMARY KEY (ns, key)
