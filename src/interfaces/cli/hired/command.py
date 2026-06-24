@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -12,8 +12,11 @@ def register_hired_command(app: typer.Typer) -> None:
     @app.command()
     def hired(
         ctx: typer.Context,
-        role: str = typer.Option(
-            ..., "--role", "-r", help="Cargo-alvo (ex: 'Software Engineer')"
+        role: List[str] = typer.Option(
+            ...,
+            "--role",
+            "-r",
+            help="Cargo-alvo (repetível: -r 'Software Engineer' -r 'Backend')",
         ),
         days: int = typer.Option(
             90, "--days", help="Janela de recência da contratação (dias, default 90)"
@@ -52,7 +55,7 @@ def register_hired_command(app: typer.Typer) -> None:
         async def _work(page):
             await run_hired_browser(
                 page,
-                role,
+                list(role),
                 days,
                 max_profiles,
                 dry_run,

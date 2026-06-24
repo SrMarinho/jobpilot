@@ -22,7 +22,7 @@ def _strip_html(text: str) -> str:
 
 async def run_hired_browser(
     page,
-    role: str,
+    roles: list[str],
     days: int,
     max_profiles: int,
     dry_run: bool,
@@ -35,17 +35,22 @@ async def run_hired_browser(
     provider = None if dry_run else get_eval_provider()
     if provider:
         logger.info(f"Using LLM for skill extraction: {provider.describe()}")
-    manager = HiredProfileManager(
-        page,
-        role=role,
-        llm_provider=provider,
-        days=days,
-        max_profiles=max_profiles,
-        dry_run=dry_run,
-    )
-    tracker = await manager.run()
 
-    aggregate = tracker.aggregate(role=role, window_days=days)
+    tracker = None
+    for role in roles:
+        logger.info(f"[hired] coletando role: {role!r}")
+        manager = HiredProfileManager(
+            page,
+            role=role,
+            llm_provider=provider,
+            days=days,
+            max_profiles=max_profiles,
+            dry_run=dry_run,
+        )
+        tracker = await manager.run()
+
+    role_label = ", ".join(roles)
+    aggregate = tracker.aggregate(role=roles, window_days=days)
 
     # ── gap vs currículo (computado uma vez) ──
     have: list[tuple[str, int]] = []
@@ -59,10 +64,10 @@ async def run_hired_browser(
         missing_enriched = await enrich_missing(missing)
 
     # ── tendência (computada uma vez) ──
-    trend_rows = tracker.trend(role=role) if trend else []
+    trend_rows = tracker.trend(role=roles) if trend else []
 
     # ── saída console ──
-    print("\n" + _strip_html(format_aggregate(aggregate, role, days)))
+    print("\n" + _strip_html(format_aggregate(aggregate, role_label, days)))
     if gap:
         print("\n" + _strip_html(format_gap(have, missing_enriched)))
     if trend:
@@ -73,7 +78,7 @@ async def run_hired_browser(
         from src.utils.telegram import send_telegram
 
         report = format_full_report(
-            aggregate, have, missing_enriched, trend_rows, role, days
+            aggregate, have, missing_enriched, trend_rows, role_label, days
         )
         send_telegram(report, topic="report")
         logger.info("Relatório 'hired' enviado via Telegram")

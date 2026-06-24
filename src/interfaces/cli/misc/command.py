@@ -12,6 +12,8 @@ from src.automation.tasks.test_apply import run_test_apply
 
 
 def register_misc_commands(app: typer.Typer) -> None:
+    """Registers top-level utility commands: login, logout, bot."""
+
     @app.command()
     def login(site: SiteName):
         """Open browser to log in to a job site (linkedin, glassdoor, indeed)."""
@@ -21,6 +23,22 @@ def register_misc_commands(app: typer.Typer) -> None:
     def logout(site: SiteName):
         """Clear saved session for a site."""
         run_async(run_logout(site.value))
+
+    @app.command()
+    def bot(
+        resume: str = typer.Option(
+            _find_resume(), "--resume", help="Path to resume file"
+        ),
+    ):
+        """Start Telegram bot to control JobPilot remotely."""
+        set_run_context("bot")
+        from src.bot.telegram_bot import TelegramBot
+
+        TelegramBot(resume_path=resume).run()
+
+
+def register_test_apply_command(app: typer.Typer) -> None:
+    """Registers the test-apply command under any given Typer app."""
 
     @app.command("test-apply")
     def test_apply(
@@ -51,15 +69,3 @@ def register_misc_commands(app: typer.Typer) -> None:
             print("Dry run complete — form was filled but not submitted.")
         else:
             print(f"Result: {'SUCCESS' if result['success'] else 'FAILED'}")
-
-    @app.command()
-    def bot(
-        resume: str = typer.Option(
-            _find_resume(), "--resume", help="Path to resume file"
-        ),
-    ):
-        """Start Telegram bot to control JobPilot remotely."""
-        set_run_context("bot")
-        from src.bot.telegram_bot import TelegramBot
-
-        TelegramBot(resume_path=resume).run()

@@ -129,74 +129,85 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
         logger.debug(f"Telegram notify failed (non-fatal): {e}")
 
 
-async def capture_metrics(page: Page, force: bool = False) -> dict:
-    """Captura snapshots de métricas do perfil (SSI + profile-views 90d).
+_ALL_METRICS = frozenset({"ssi", "views", "appearances"})
 
-    Best-effort: cada captura é independente e nunca quebra o fluxo. Once-per-day
-    — pula se já capturado hoje (``force=True`` recaptura no mesmo dia). Browser
-    deve estar logado. Retorna o que coletou.
+
+async def capture_metrics(
+    page: Page,
+    force: bool = False,
+    targets: frozenset[str] | None = None,
+) -> dict:
+    """Captura snapshots de métricas do perfil LinkedIn.
+
+    ``targets`` filtra quais métricas capturar: ``{"ssi", "views", "appearances"}``.
+    ``None`` (padrão) captura todas. Best-effort: falhas são não-fatais.
+    Once-per-day por métrica (``force=True`` recaptura no mesmo dia).
     """
+    active = targets if targets is not None else _ALL_METRICS
     captured: dict = {}
 
     # SSI (Social Selling Index, 0-100).
-    try:
-        from src.automation.pages.ssi_page import SSIPage
-        from src.core.use_cases.ssi_tracker import SSITracker
+    if "ssi" in active:
+        try:
+            from src.automation.pages.ssi_page import SSIPage
+            from src.core.use_cases.ssi_tracker import SSITracker
 
-        ssi_tracker = SSITracker()
-        if not force and ssi_tracker.already_captured_today():
-            logger.info("SSI already captured today, skipping")
-        else:
-            snap = await SSIPage(page).scrape_with_goto()
-            if snap:
-                ssi_tracker.save(snap)
-                captured["ssi"] = snap
-                logger.info(f"SSI captured: total={snap['total']}/100")
+            ssi_tracker = SSITracker()
+            if not force and ssi_tracker.already_captured_today():
+                logger.info("SSI already captured today, skipping")
             else:
-                logger.warning("SSI scrape returned no data")
-    except Exception as e:
-        logger.warning(f"SSI capture failed (non-fatal): {e}")
+                snap = await SSIPage(page).scrape_with_goto()
+                if snap:
+                    ssi_tracker.save(snap)
+                    captured["ssi"] = snap
+                    logger.info(f"SSI captured: total={snap['total']}/100")
+                else:
+                    logger.warning("SSI scrape returned no data")
+        except Exception as e:
+            logger.warning(f"SSI capture failed (non-fatal): {e}")
 
     # Profile-views (90 dias).
-    try:
-        from src.automation.pages.profile_views_page import ProfileViewsPage
-        from src.core.use_cases.profile_views_tracker import ProfileViewsTracker
+    if "views" in active:
+        try:
+            from src.automation.pages.profile_views_page import ProfileViewsPage
+            from src.core.use_cases.profile_views_tracker import ProfileViewsTracker
 
-        pv_tracker = ProfileViewsTracker()
-        if not force and pv_tracker.already_captured_today():
-            logger.info("Profile views already captured today, skipping")
-        else:
-            views = await ProfileViewsPage(page).scrape_with_goto()
-            if views is not None:
-                pv_tracker.save(views)
-                captured["views"] = views
-                logger.info(f"Profile views captured: {views} (90d)")
+            pv_tracker = ProfileViewsTracker()
+            if not force and pv_tracker.already_captured_today():
+                logger.info("Profile views already captured today, skipping")
             else:
-                logger.warning("Profile-views scrape returned no data")
-    except Exception as e:
-        logger.warning(f"Profile-views capture failed (non-fatal): {e}")
+                views = await ProfileViewsPage(page).scrape_with_goto()
+                if views is not None:
+                    pv_tracker.save(views)
+                    captured["views"] = views
+                    logger.info(f"Profile views captured: {views} (90d)")
+                else:
+                    logger.warning("Profile-views scrape returned no data")
+        except Exception as e:
+            logger.warning(f"Profile-views capture failed (non-fatal): {e}")
 
     # Aparições em pesquisas (janela ~1 semana).
-    try:
-        from src.automation.pages.search_appearances_page import (
-            SearchAppearancesPage,
-        )
-        from src.core.use_cases.search_appearances_tracker import (
-            SearchAppearancesTracker,
-        )
+    if "appearances" in active:
+        try:
+            from src.automation.pages.search_appearances_page import (
+                SearchAppearancesPage,
+            )
+            from src.core.use_cases.search_appearances_tracker import (
+                SearchAppearancesTracker,
+            )
 
-        sa_tracker = SearchAppearancesTracker()
-        if not force and sa_tracker.already_captured_today():
-            logger.info("Search appearances already captured today, skipping")
-        else:
-            appearances = await SearchAppearancesPage(page).scrape_with_goto()
-            if appearances is not None:
-                sa_tracker.save(appearances)
-                captured["search_appearances"] = appearances
-                logger.info(f"Search appearances captured: {appearances}")
+            sa_tracker = SearchAppearancesTracker()
+            if not force and sa_tracker.already_captured_today():
+                logger.info("Search appearances already captured today, skipping")
             else:
-                logger.warning("Search-appearances scrape returned no data")
-    except Exception as e:
-        logger.warning(f"Search-appearances capture failed (non-fatal): {e}")
+                appearances = await SearchAppearancesPage(page).scrape_with_goto()
+                if appearances is not None:
+                    sa_tracker.save(appearances)
+                    captured["search_appearances"] = appearances
+                    logger.info(f"Search appearances captured: {appearances}")
+                else:
+                    logger.warning("Search-appearances scrape returned no data")
+        except Exception as e:
+            logger.warning(f"Search-appearances capture failed (non-fatal): {e}")
 
     return captured

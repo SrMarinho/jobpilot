@@ -121,13 +121,27 @@ class HiredSkillsTracker:
                 fresh.append(profile)
         return fresh
 
+    @staticmethod
+    def _role_filter(role: str | list[str] | None) -> set[str] | None:
+        """Normaliza role(s) para um set lowercased, ou None (sem filtro)."""
+        if not role:
+            return None
+        roles = [role] if isinstance(role, str) else role
+        return {r.lower() for r in roles if r}
+
     def aggregate(
-        self, role: str | None = None, window_days: int = _DEFAULT_WINDOW_DAYS
+        self,
+        role: str | list[str] | None = None,
+        window_days: int = _DEFAULT_WINDOW_DAYS,
     ) -> list[tuple[str, int]]:
-        """Ranking skill→contagem entre contratados recentes (≤ window)."""
+        """Ranking skill→contagem entre contratados recentes (≤ window).
+
+        ``role`` aceita uma string, uma lista de cargos ou None (todos).
+        """
+        wanted = self._role_filter(role)
         skill_counts: Counter = Counter()
         for profile in self._fresh(window_days):
-            if role and (profile.get("role") or "").lower() != role.lower():
+            if wanted and (profile.get("role") or "").lower() not in wanted:
                 continue
             for skill in profile.get("top_skills") or []:
                 canonical = _canonical_skill(skill)
@@ -147,12 +161,15 @@ class HiredSkillsTracker:
         except ValueError:
             return None
 
-    def _skill_counts_by_month(self, role: str | None) -> dict[str, Counter]:
+    def _skill_counts_by_month(
+        self, role: str | list[str] | None
+    ) -> dict[str, Counter]:
         """{ 'YYYY-MM': Counter(skill->n) } a partir do mês em que cada perfil
         foi coletado (`scraped_at`). Base p/ tendência subindo/caindo."""
+        wanted = self._role_filter(role)
         by_month: dict[str, Counter] = {}
         for profile in self._data["profiles"]:
-            if role and (profile.get("role") or "").lower() != role.lower():
+            if wanted and (profile.get("role") or "").lower() not in wanted:
                 continue
             month = self._month_of(profile)
             if not month:
@@ -165,7 +182,10 @@ class HiredSkillsTracker:
         return by_month
 
     def trend(
-        self, role: str | None = None, recent_months: int = 1, prior_months: int = 2
+        self,
+        role: str | list[str] | None = None,
+        recent_months: int = 1,
+        prior_months: int = 2,
     ) -> list[dict]:
         """Tendência por skill: contagem na janela recente vs janela anterior.
 

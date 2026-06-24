@@ -6,6 +6,7 @@ JobPilot follows a layered architecture with clear separation between CLI, orche
 
 ```
 CLI (main.py, Typer)
+  ├─ profile capture/skills/views/ssi/appearances  ← profile group
   └─ Orchestration (src/automation/tasks/)
        ├─ Site pages (src/automation/pages/)
        └─ Business logic (src/core/use_cases/)
@@ -52,6 +53,10 @@ Implement site-specific selectors and interaction:
 | `glassdoor_jobs_page.py` | Glassdoor | Same interface + `close_modal`, `get_card_job_id`, `next_page_url` |
 | `indeed_jobs_page.py` | Indeed | Same + `get_card_job_url`, `next_page_url` |
 | `people_search_page.py` | LinkedIn people | `get_connections_btn`, `send_without_note` |
+| `linkedin_skills_page.py` | LinkedIn profile | `list_skills`, `add_skill`, `delete_skill` |
+| `profile_views_page.py` | LinkedIn analytics | `scrape_with_goto` → int (90d views) |
+| `search_appearances_page.py` | LinkedIn analytics | `scrape_with_goto` → int (weekly count) |
+| `ssi_page.py` | LinkedIn SSI | `scrape_with_goto` → dict (total + 4 pillars + ranks) |
 
 ### Orchestration (`src/automation/tasks/`)
 
@@ -59,6 +64,7 @@ Implement site-specific selectors and interaction:
 |------|---------------|
 | `job_application_manager.py` | Page/card loop, site detection, pagination, lifecycle |
 | `connection_manager.py` | People search page loop, invite lifecycle |
+| `linkedin_skills_manager.py` | Add/delete/sync LinkedIn profile skills (wraps `LinkedInSkillsPage`) |
 
 ### Business logic (`src/core/use_cases/`)
 
@@ -69,6 +75,10 @@ Implement site-specific selectors and interaction:
 | `indeed_application_handler.py` | Indeed apply form filling |
 | `applied_jobs_tracker.py` | Deduplication, backend-aware (JSON or Postgres) |
 | `skills_tracker.py` | Tracks missing skills from rejections, AI-categorizes by type and difficulty |
+| `linkedin_profile_skills.py` | Desired LinkedIn profile skills: load/save/diff + `from_skills_tracker()` |
+| `ssi_tracker.py` | Daily SSI snapshots (JSON or Postgres); weekly lookup for report |
+| `profile_views_tracker.py` | Daily profile-views snapshots; trend + acceleration analysis |
+| `search_appearances_tracker.py` | Daily search-appearance snapshots; trend delta |
 | `salary_estimator.py` | AI salary estimation from job description and market data |
 | `invitation_handler.py` | LinkedIn connection invite sending |
 | `monthly_report.py` | Aggregates applied/rejected/connections per month |
