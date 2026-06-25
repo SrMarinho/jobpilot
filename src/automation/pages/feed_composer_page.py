@@ -111,6 +111,26 @@ class FeedComposerPage:
                 pass
             return False
 
+    async def _open_composer(self) -> bool:
+        """Clica em 'Começar publicação'. LinkedIn 2026: é um <a>/<div>, não
+        ``role=button`` — então tenta várias estratégias em ordem.
+        """
+        candidates = [
+            self.page.get_by_role("button", name=_START_RE),
+            self.page.locator("a, div[role=button], button").filter(has_text=_START_RE),
+            self.page.locator("[aria-label]").filter(has_text=_START_RE),
+            self.page.get_by_text(_START_RE),
+        ]
+        for loc in candidates:
+            try:
+                if await loc.count():
+                    await loc.first.click(timeout=6000)
+                    return True
+            except Exception as e:
+                logger.warning(f"open-composer candidate falhou: {e}")
+                continue
+        return False
+
     async def publish(
         self, text: str, image_path: str | None = None
     ) -> tuple[bool, str]:
@@ -121,12 +141,8 @@ class FeedComposerPage:
         await self.goto()
 
         # 1) abrir composer
-        try:
-            await self.page.get_by_role("button", name=_START_RE).first.click(
-                timeout=8000
-            )
-        except Exception as e:
-            logger.warning(f"start-post click failed: {e}")
+        if not await self._open_composer():
+            logger.warning("start-post click failed: nenhum seletor encontrou o botão")
             _alert("abrir composer")
             return False, ""
         await self.page.wait_for_timeout(1500)
