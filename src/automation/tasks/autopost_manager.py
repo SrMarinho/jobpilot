@@ -28,12 +28,14 @@ class AutopostManager:
         topic: str | None = None,
         fmt: str | None = None,
         recent: set[str] | None = None,
+        reviewer: LLMProvider | None = None,
     ):
         self.drafter = PostDrafter(
             llm_provider,
             load_resume_text(resume_path),
             user_name=user_name,
             user_headline=user_headline,
+            reviewer=reviewer,
         )
         self.source = source or default_source_for_today()
         self.topic = topic
