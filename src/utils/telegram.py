@@ -56,6 +56,52 @@ def send_telegram_photo(
         logger.warning(f"Telegram photo send failed: {e}")
 
 
+def send_telegram_media_group(
+    paths: list, caption: str = "", topic: str | None = None
+) -> None:
+    """Envia várias fotos como um álbum único (sendMediaGroup). Até 10 imagens.
+
+    A ``caption`` (HTML) vai na primeira foto. ``topic`` roteia pro tópico certo.
+    """
+    import json as _json
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    paths = list(paths)[:10]
+    if not paths:
+        return
+    media, files = [], {}
+    for i, p in enumerate(paths):
+        attach = f"photo{i}"
+        item = {"type": "photo", "media": f"attach://{attach}"}
+        if i == 0 and caption:
+            item["caption"] = caption
+            item["parse_mode"] = "HTML"
+        media.append(item)
+        files[attach] = open(p, "rb")
+    data = {"chat_id": chat_id, "media": _json.dumps(media)}
+    thread = _thread(topic)
+    if thread:
+        data["message_thread_id"] = thread
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMediaGroup",
+            data=data,
+            files=files,
+            timeout=60,
+        )
+    except Exception as e:
+        logger.warning(f"Telegram media group send failed: {e}")
+    finally:
+        for f in files.values():
+            try:
+                f.close()
+            except Exception:
+                pass
+
+
 def send_telegram_photo_buttons(
     path: Path, caption: str, buttons: list, topic: str | None = None
 ) -> int | None:
