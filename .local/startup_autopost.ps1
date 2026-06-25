@@ -27,7 +27,9 @@ $MaxRetries = 5
 $BaseDelay = 30
 
 for ($i = 0; $i -lt $MaxRetries; $i++) {
-    & $UvPath run main.py autopost --scheduled
+    # Orquestrador diario: skip se ja postou hoje; senao publica aprovado (FIFO),
+    # avisa se so ha pendente, ou gera novo e manda p/ aprovacao se fila vazia.
+    & $UvPath run main.py --headless content autopost --daily
     $exitCode = $LASTEXITCODE
 
     if ($exitCode -eq 0) {
