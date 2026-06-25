@@ -93,6 +93,18 @@ def list_drafts() -> None:
     print("===========================")
 
 
+def list_posted() -> None:
+    """Lista drafts que já foram publicados (status posted), com ids."""
+    tracker = PostedTracker()
+    posted = tracker.posted_drafts()
+    posted.sort(key=lambda d: d.get("created_at", ""))
+    print("\n===== AUTOPOST POSTADOS =====")
+    print(f"Publicados ({len(posted)}):")
+    for d in posted:
+        print(f"  [{d['id']}] {d.get('topic', '?')}  (em {d.get('day', '?')})")
+    print("=============================")
+
+
 def approve_draft(draft_id: str) -> None:
     """Aprova um draft via CLI (será publicado no próximo --publish-approved)."""
     tracker = PostedTracker()
@@ -128,29 +140,156 @@ async def run_publish_approved() -> None:
         logger.info("Autopost: nenhum draft aprovado para publicar")
         return
 
-    logger.info(f"Autopost: publicando {len(approved)} draft(s) aprovado(s)")
-    for draft in approved:
-        logger.info(f"Publicando draft {draft['id']} (topic={draft.get('topic')!r})")
-        try:
-            ok, url = await publish_content(draft["content"], draft.get("image_path"))
-        except Exception as e:
-            logger.error(f"Erro ao publicar draft {draft['id']}: {e}")
-            _notify(f"❌ <b>Autopost</b>: erro ao publicar draft aprovado: {e}")
-            continue
-        if ok:
-            tracker.mark_posted(
-                draft["content"],
-                draft["source"],
-                draft["format"],
-                draft["topic"],
-                url=url,
-                draft_id=draft["id"],
-            )
-            record_event("autopost", "posted", key=draft["id"], detail=url or "")
-            _notify(f"✅ <b>Autopost</b>: post publicado!\n{url}".strip())
-        else:
-            # falha já registrada com o passo exato por _alert no composer
-            _notify("❌ <b>Autopost</b>: falha ao publicar draft aprovado.")
+    # FIFO: publica só o draft mais antigo da fila por execução; o resto
+    # permanece 'approved' e sai um por vez nos próximos runs.
+    approved.sort(key=lambda d: d.get("created_at", ""))
+    draft = approved[0]
+    remaining = len(approved) - 1
+    logger.info(
+        f"Autopost: fila com {len(approved)} aprovado(s); publicando 1 (FIFO): "
+        f"{draft['id']} (topic={draft.get('topic')!r}); {remaining} ficam na fila"
+    )
+    try:
+        ok, url = await publish_content(draft["content"], draft.get("image_path"))
+    except Exception as e:
+        logger.error(f"Erro ao publicar draft {draft['id']}: {e}")
+        _notify(f"❌ <b>Autopost</b>: erro ao publicar draft aprovado: {e}")
+        return
+    if ok:
+        tracker.mark_posted(
+            draft["content"],
+            draft["source"],
+            draft["format"],
+            draft["topic"],
+            url=url,
+            draft_id=draft["id"],
+        )
+        record_event("autopost", "posted", key=draft["id"], detail=url or "")
+        tail = f" ({remaining} na fila)" if remaining else ""
+        _notify(f"✅ <b>Autopost</b>: post publicado!{tail}\n{url}".strip())
+    else:
+        # falha já registrada com o passo exato por _alert no composer
+        _notify("❌ <b>Autopost</b>: falha ao publicar draft aprovado.")
+
+
+async def run_regen_image(draft_id: str) -> None:
+    """Regera a imagem (card local on-brand) de um draft por id e re-anexa.
+
+    Usa o ``card_renderer`` (HTML→PNG via Playwright) — acentos PT-BR corretos.
+    O Canva é só via agente; este comando é o caminho autônomo do app.
+    """
+    tracker = PostedTracker()
+    draft = tracker.get_draft(draft_id)
+    if not draft:
+        print(f"[ERRO] Draft {draft_id} nao encontrado.")
+        return
+    img = await _render_draft_card(draft, draft_id)
+    if img:
+        tracker.set_image(draft_id, img)
+        logger.info(f"Imagem regerada p/ draft {draft_id}: {img}")
+        print(f"[OK] Imagem regerada (card local on-brand): {img}")
+    else:
+        print("[ERRO] Falha ao gerar a imagem (ver logs).")
+
+
+async def run_daily(force: bool = False) -> None:
+    """Orquestrador diário (logon): no máximo 1 post/dia.
+
+    - Já publicou hoje e sem ``force`` → skip.
+    - Tem aprovado na fila → publica o mais antigo (FIFO).
+    - Sem aprovado mas há pendente(s) → avisa no Telegram (precisa aprovar).
+    - Fila vazia → gera 1 draft novo e manda p/ aprovação no Telegram.
+    """
+    from datetime import date
+
+    tracker = PostedTracker()
+    tracker.expire_stale()
+
+    today = date.today().isoformat()
+    if tracker.has_posted_on(today) and not force:
+        logger.info(f"Autopost daily: já publicado em {today}, skip (use --force)")
+        return
+
+    approved = tracker.approved_drafts()
+    if approved:
+        approved.sort(key=lambda d: d.get("created_at", ""))
+        draft_id = approved[0]["id"]
+        logger.info(f"Autopost daily: publicando aprovado mais antigo {draft_id}")
+        await run_publish_one(draft_id)
+        return
+
+    pending = tracker.pending_drafts()
+    if pending:
+        logger.info(f"Autopost daily: {len(pending)} pendente(s), nada aprovado")
+        _notify(
+            f"📋 <b>Autopost</b>: nada aprovado p/ publicar hoje, mas há "
+            f"{len(pending)} draft(s) na fila de aprovação. Aprova um no Telegram."
+        )
+        return
+
+    # Fila vazia: gera um novo draft e manda p/ aprovação.
+    logger.info("Autopost daily: fila vazia, gerando novo draft")
+    cfg = resolve_autopost_config(
+        source=None,
+        topic=None,
+        fmt=None,
+        dry_run=False,
+        no_telegram=False,
+        scheduled=False,
+        force=True,
+        count=1,
+        expires_hours=0,
+    )
+    if cfg:
+        await run_autopost(cfg)
+
+
+async def run_publish_one(draft_id: str) -> None:
+    """Publica UM draft aprovado por id e marca como postado."""
+    from src.automation.tasks.autopost_publisher import publish_content
+    from src.core.use_cases.events_tracker import record_event
+    from src.core.use_cases.posted_tracker import STATUS_POSTED
+
+    tracker = PostedTracker()
+    draft = tracker.get_draft(draft_id)
+    if not draft:
+        logger.error(f"Autopost: draft {draft_id} nao encontrado")
+        print(f"[ERRO] Draft {draft_id} nao encontrado.")
+        return
+    status = draft.get("status")
+    if status == STATUS_POSTED:
+        print(f"[ERRO] Draft {draft_id} ja foi publicado.")
+        return
+    if status != STATUS_APPROVED:
+        print(
+            f"[ERRO] Draft {draft_id} esta '{status}'; so publica aprovado "
+            f"(use --approve {draft_id} primeiro)."
+        )
+        return
+
+    logger.info(f"Autopost: publicando draft {draft_id} (topic={draft.get('topic')!r})")
+    try:
+        ok, url = await publish_content(draft["content"], draft.get("image_path"))
+    except Exception as e:
+        logger.error(f"Erro ao publicar draft {draft_id}: {e}")
+        _notify(f"❌ <b>Autopost</b>: erro ao publicar draft {draft_id}: {e}")
+        print(f"[ERRO] Falha ao publicar: {e}")
+        return
+    if ok:
+        tracker.mark_posted(
+            draft["content"],
+            draft["source"],
+            draft["format"],
+            draft["topic"],
+            url=url,
+            draft_id=draft_id,
+        )
+        record_event("autopost", "posted", key=draft_id, detail=url or "")
+        _notify(f"✅ <b>Autopost</b>: post publicado!\n{url}".strip())
+        print(f"[OK] Draft {draft_id} publicado e marcado como postado. {url}".strip())
+    else:
+        _notify("❌ <b>Autopost</b>: falha ao publicar draft.")
+        print("[ERRO] Publicacao falhou (composer/seletor). Draft segue aprovado.")
 
 
 async def run_autopost(cfg: dict) -> None:

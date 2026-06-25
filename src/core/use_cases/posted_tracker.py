@@ -123,6 +123,14 @@ class PostedTracker:
         """Drafts aprovados aguardando publicação (não publicados ainda)."""
         return [d for d in self._data["drafts"] if d.get("status") == STATUS_APPROVED]
 
+    def posted_drafts(self) -> list[dict]:
+        """Drafts que já foram publicados (status posted)."""
+        return [d for d in self._data["drafts"] if d.get("status") == STATUS_POSTED]
+
+    def has_posted_on(self, day: str) -> bool:
+        """True se algum post foi publicado no dia ``day`` (YYYY-MM-DD)."""
+        return any(p.get("day") == day for p in self._data["posts"])
+
     def recent_topics(self, days: int = 30) -> set[str]:
         """Tópicos (normalizados) de drafts+posts dentro da janela ``days``."""
         cutoff = datetime.now() - timedelta(days=days)
