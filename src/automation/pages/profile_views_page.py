@@ -37,19 +37,28 @@ class ProfileViewsPage:
         await self._wait_for_content()
 
     async def _wait_for_content(self, timeout_ms: int = 30000) -> None:
-        # Conteúdo é renderizado via JS após o domcontentloaded; espera o rótulo
-        # aparecer em vez de sleep fixo. Faz scroll para forçar lazy-render.
-        try:
-            await self.page.wait_for_function(
+        # Conteúdo é renderizado via JS após o domcontentloaded; o rótulo só
+        # monta quando o bloco entra na viewport. Faz scroll progressivo
+        # enquanto espera o rótulo aparecer (lazy-render), em vez de sleep fixo.
+        deadline = timeout_ms
+        step = 600
+        found = False
+        while deadline > 0:
+            found = await self.page.evaluate(
                 """() => {
                     const t = (document.body.innerText || '').toLowerCase();
                     return t.includes('visualiza') || t.includes('profile views');
-                }""",
-                timeout=timeout_ms,
+                }"""
             )
-        except Exception:
+            if found:
+                break
+            await self.page.evaluate("() => window.scrollBy(0, window.innerHeight)")
+            await self.page.wait_for_timeout(step)
+            deadline -= step
+        if not found:
             logger.warning("Profile-views content wait timed out; scraping anyway")
-        # margem para o número assentar após o rótulo aparecer
+        # volta ao topo (números principais ficam no topo) e deixa assentar
+        await self.page.evaluate("() => window.scrollTo(0, 0)")
         await self.page.wait_for_timeout(1500)
 
     async def scrape_with_goto(self) -> int | None:
@@ -65,7 +74,16 @@ class ProfileViewsPage:
             return None
         low = text.lower()
         if "visualizaç" not in low and "profile views" not in low:
-            logger.warning("Profile-views page did not load expected content")
+            # diagnóstico: revela redirect/paywall/wording novo na próxima run
+            try:
+                cur = self.page.url
+            except Exception:
+                cur = "?"
+            snippet = re.sub(r"\s+", " ", text).strip()[:300]
+            logger.warning(
+                f"Profile-views page did not load expected content "
+                f"(url={cur}); text head: {snippet!r}"
+            )
             return None
         for pat in _PATTERNS:
             m = re.search(pat, low)
