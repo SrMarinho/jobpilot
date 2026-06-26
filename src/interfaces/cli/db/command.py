@@ -45,6 +45,21 @@ def register_db_commands(app: typer.Typer) -> None:
         for name, n in counts.items():
             print(f"  • {name}: {n}")
 
+    @app.command("pull")
+    def pull():
+        """Puxa o Postgres de volta pros .local/files/*.json (reverso de migrate).
+
+        Sobrescreve os arquivos locais com o conteúdo do banco.
+        """
+        if not _require_url():
+            raise typer.Exit(1)
+        from src.core.persistence.migrate import migrate_pg_to_json
+
+        counts = migrate_pg_to_json()
+        print("[OK] Pull DB->local concluido:")
+        for name, n in counts.items():
+            print(f"  - {name}: {n}")
+
     @app.command("status")
     def status():
         """Conta linhas por tabela no Postgres."""
