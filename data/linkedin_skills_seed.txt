@@ -1,0 +1,176 @@
+# Seed de competências do perfil LinkedIn (idempotente).
+# Uma skill por linha. Linhas em branco e iniciadas por '#' são ignoradas.
+# ORDEM = PRIORIDADE: as primeiras entram primeiro. Se bater no limite do
+# LinkedIn, as do topo vencem. Variantes PT ficam logo após a EN equivalente.
+# Consumido por: `uv run main.py profile skills seed`
+
+# ── Tier 1: linguagens & core ───────────────────────────────────────
+Python
+JavaScript
+TypeScript
+Dart
+SQL
+NoSQL
+HTML5
+CSS3
+Bash
+PowerShell
+
+# ── Front-End ───────────────────────────────────────────────────────
+Vue.js
+React
+Vue Router
+Pinia
+Vuex
+Tailwind CSS
+Vite
+Three.js
+Front-End Development
+Desenvolvimento Front-End
+Single Page Applications
+SPA
+Responsive Web Design
+Design Responsivo
+Component-Based Architecture
+Arquitetura Baseada em Componentes
+State Management
+Gerenciamento de Estado
+UI/UX
+Web Development
+Desenvolvimento Web
+
+# ── Back-End ────────────────────────────────────────────────────────
+FastAPI
+Flask
+Node.js
+Pydantic
+Back-End Development
+Desenvolvimento Back-End
+Server-Side Development
+Desenvolvimento Server-Side
+Full-Stack Development
+Desenvolvimento Full-Stack
+Microservices
+Microsserviços
+API
+REST APIs
+REST API Design
+APIs REST
+Design de API REST
+WebSocket
+HTTP
+JSON
+Authentication
+Autenticação
+JWT
+OAuth
+Requests (HTTP)
+
+# ── Bancos de dados ─────────────────────────────────────────────────
+PostgreSQL
+MySQL
+Redis
+MongoDB
+DuckDB
+ORM
+SQLAlchemy
+Relational Databases
+Bancos de Dados Relacionais
+Database Integration
+Integração de Bancos de Dados
+SQL Queries
+Consultas SQL
+Data Migration
+Migração de Dados
+ETL
+
+# ── Automação / RPA ─────────────────────────────────────────────────
+RPA
+Playwright
+Web Scraping
+OCR
+Process Automation
+Automação de Processos
+ERP Integration
+Integração com ERP
+ERP
+Terminal Server
+
+# ── Mobile ──────────────────────────────────────────────────────────
+Flutter
+Mobile Development
+Desenvolvimento Mobile
+
+# ── CLI / Sistemas ──────────────────────────────────────────────────
+CLI
+TUI
+Textual
+Terminal Applications
+Aplicações de Terminal
+Systems Programming
+Programação de Sistemas
+Linux
+
+# ── Conceitos de programação ────────────────────────────────────────
+OOP
+Asynchronous Programming
+Programação Assíncrona
+Concurrent Programming
+Programação Concorrente
+Data Structures
+Estruturas de Dados
+Algorithms
+Algoritmos
+Programming Logic
+Lógica de Programação
+
+# ── Práticas de engenharia ──────────────────────────────────────────
+Software Architecture
+Arquitetura de Software
+Design Patterns
+Padrões de Projeto
+Clean Code
+Refactoring
+Refatoração
+Automated Testing
+Testes Automatizados
+Pytest
+Debugging
+Depuração
+Technical Documentation
+Documentação Técnica
+Problem Solving
+Resolução de Problemas
+
+# ── Tooling / DevOps ────────────────────────────────────────────────
+Git
+GitHub
+Version Control
+Controle de Versão
+CI/CD
+Release Management
+Gerenciamento de Releases
+NPM
+Virtual Environments
+Ambientes Virtuais
+SDLC
+
+# ── Metodologias / integração ───────────────────────────────────────
+System Integration
+Integração de Sistemas
+Agile Methodologies
+Metodologias Ágeis
+Scrum
+Technical English
+Inglês Técnico
+
+# ── Redes / misc ────────────────────────────────────────────────────
+Networking
+Redes
+Cryptography
+Criptografia
+Multiplayer
+
+# ── Tier 3: nicho (desativado por padrão; descomente p/ incluir) ─────
+# Computer Graphics
+# Shaders

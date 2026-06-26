@@ -32,11 +32,27 @@ def _print_results(label: str, results: dict[str, bool]) -> None:
         return
     typer.echo(f"\n{label}:")
     for skill, ok in results.items():
-        typer.echo(f"  {'✓' if ok else '✗'} {skill}")
+        typer.echo(f"  {'[ok]' if ok else '[x] '} {skill}")
+
+
+def _print_add_outcome(out: dict) -> None:
+    """Imprime o resultado de add_skills: adicionadas, puladas (já existem) e limite."""
+    skipped = out.get("skipped", [])
+    if skipped:
+        typer.echo("\nJa existiam (puladas):")
+        for skill in skipped:
+            typer.echo(f"  - ja existe (skip): {skill}")
+    _print_results("Added", out.get("added", {}))
+    if out.get("limit_reached"):
+        typer.echo(
+            "\n[!] Limite de competencias do LinkedIn atingido - "
+            "as restantes nao foram adicionadas."
+        )
+    if not skipped and not out.get("added"):
+        typer.echo("Nada a fazer.")
 
 
 def register_profile_skills_commands(app: typer.Typer) -> None:
-
     # ── B: args diretos ──────────────────────────────────────────────
 
     @app.command("list")
@@ -47,7 +63,10 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         result: dict = {}
 
         async def _work(page):
-            from src.automation.tasks.linkedin_skills_manager import LinkedInSkillsManager
+            from src.automation.tasks.linkedin_skills_manager import (
+                LinkedInSkillsManager,
+            )
+
             mgr = LinkedInSkillsManager(page, slug)
             result["skills"] = await mgr.list_skills()
 
@@ -59,25 +78,33 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             return
         typer.echo(f"Profile skills ({len(skills)}):")
         for s in skills:
-            typer.echo(f"  • {s}")
+            typer.echo(f"  - {s}")
 
     @app.command("add")
     def cmd_add(
         ctx: typer.Context,
         skills: List[str] = typer.Argument(..., help="Competências a adicionar"),
+        force: bool = typer.Option(
+            False,
+            "--force",
+            help="Readiciona mesmo se já existir (default: pula existentes)",
+        ),
     ):
-        """Adiciona uma ou mais competências diretamente ao perfil LinkedIn."""
+        """Adiciona competências ao perfil LinkedIn. Idempotente: pula as que já existem."""
         slug = _require_profile_slug()
         headless = ctx.obj.get("headless", False)
         result: dict = {}
 
         async def _work(page):
-            from src.automation.tasks.linkedin_skills_manager import LinkedInSkillsManager
+            from src.automation.tasks.linkedin_skills_manager import (
+                LinkedInSkillsManager,
+            )
+
             mgr = LinkedInSkillsManager(page, slug)
-            result["added"] = await mgr.add_skills(list(skills))
+            result["out"] = await mgr.add_skills(list(skills), force=force)
 
         run_async(run_browser(_work, headless=headless))
-        _print_results("Added", result.get("added", {}))
+        _print_add_outcome(result.get("out", {}))
 
     @app.command("delete")
     def cmd_delete(
@@ -90,7 +117,10 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         result: dict = {}
 
         async def _work(page):
-            from src.automation.tasks.linkedin_skills_manager import LinkedInSkillsManager
+            from src.automation.tasks.linkedin_skills_manager import (
+                LinkedInSkillsManager,
+            )
+
             mgr = LinkedInSkillsManager(page, slug)
             result["deleted"] = await mgr.delete_skills(list(skills))
 
@@ -108,7 +138,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         store.save(list(skills))
         typer.echo(f"Saved {len(skills)} desired skills:")
         for s in skills:
-            typer.echo(f"  • {s}")
+            typer.echo(f"  - {s}")
 
     @app.command("show-desired")
     def cmd_show_desired():
@@ -116,11 +146,13 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         store = LinkedInProfileSkills()
         skills = store.load()
         if not skills:
-            typer.echo("No desired skills configured. Use `profile skills set <skills...>`.")
+            typer.echo(
+                "No desired skills configured. Use `profile skills set <skills...>`."
+            )
             return
         typer.echo(f"Desired skills ({len(skills)}):")
         for s in skills:
-            typer.echo(f"  • {s}")
+            typer.echo(f"  - {s}")
 
     @app.command("sync")
     def cmd_sync(ctx: typer.Context):
@@ -143,7 +175,10 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         result: dict = {}
 
         async def _work(page):
-            from src.automation.tasks.linkedin_skills_manager import LinkedInSkillsManager
+            from src.automation.tasks.linkedin_skills_manager import (
+                LinkedInSkillsManager,
+            )
+
             mgr = LinkedInSkillsManager(page, slug)
             result["sync"] = await mgr.sync_skills(desired)
 
@@ -162,7 +197,9 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
     def cmd_sync_from_tracker(
         ctx: typer.Context,
         top_n: int = typer.Option(20, "--top", "-n", help="Top N skills do tracker"),
-        dry_run: bool = typer.Option(False, "--dry-run", help="Só mostra o que seria feito"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Só mostra o que seria feito"
+        ),
     ):
         """Sincroniza perfil com as top-N skills mais demandadas nos jobs avaliados.
 
@@ -176,7 +213,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
 
         typer.echo(f"Top {len(from_tracker)} skills from tracker:")
         for s in from_tracker:
-            typer.echo(f"  • {s}")
+            typer.echo(f"  - {s}")
 
         if dry_run:
             typer.echo("\n[dry-run] Would sync these to LinkedIn profile.")
@@ -187,7 +224,10 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         result: dict = {}
 
         async def _work(page):
-            from src.automation.tasks.linkedin_skills_manager import LinkedInSkillsManager
+            from src.automation.tasks.linkedin_skills_manager import (
+                LinkedInSkillsManager,
+            )
+
             mgr = LinkedInSkillsManager(page, slug)
             result["sync"] = await mgr.sync_skills(from_tracker)
 
@@ -199,3 +239,75 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         _print_results("Added", sync.get("added", {}))
         if not sync.get("deleted") and not sync.get("added"):
             typer.echo("Profile already matches tracker skills. Nothing to do.")
+
+    # ── D: seed file versionado ──────────────────────────────────────
+
+    @app.command("seed")
+    def cmd_seed(
+        ctx: typer.Context,
+        from_file: Optional[str] = typer.Option(
+            None,
+            "--from-file",
+            help="Seed alternativo (default: data/linkedin_skills_seed.txt)",
+        ),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Só mostra a lista (sem browser)"
+        ),
+        add_only: bool = typer.Option(
+            False, "--add-only", help="Só adiciona faltantes (não deleta nada)"
+        ),
+        limit: int = typer.Option(
+            0,
+            "--limit",
+            help="Trunca nas N primeiras (0 = sem cap, LinkedIn dita o teto)",
+        ),
+    ):
+        """Sincroniza o perfil com o seed versionado de competências.
+
+        Default = sync (perfil = seed: deleta fora da lista + adiciona faltantes).
+        --add-only nunca deleta. Idempotente: rerun não duplica.
+        """
+        from pathlib import Path
+
+        path = Path(from_file) if from_file else None
+        desired = LinkedInProfileSkills.from_seed_file(path)
+        if not desired:
+            typer.echo("Seed vazio ou não encontrado.")
+            raise typer.Exit(1)
+
+        if limit > 0:
+            desired = desired[:limit]
+
+        typer.echo(f"Seed: {len(desired)} competências (normalizadas, dedupe).")
+        for s in desired:
+            typer.echo(f"  - {s}")
+
+        if dry_run:
+            mode = (
+                "add-only (sem deletar)" if add_only else "sync (deleta fora da lista)"
+            )
+            typer.echo(f"\n[dry-run] Modo: {mode}. Nada foi alterado.")
+            return
+
+        slug = _require_profile_slug()
+        headless = ctx.obj.get("headless", False)
+        result: dict = {}
+
+        async def _work(page):
+            from src.automation.tasks.linkedin_skills_manager import (
+                LinkedInSkillsManager,
+            )
+
+            mgr = LinkedInSkillsManager(page, slug)
+            if add_only:
+                result["out"] = await mgr.add_missing(desired)
+            else:
+                result["out"] = await mgr.sync_skills(desired)
+
+        run_async(run_browser(_work, headless=headless))
+
+        out = result.get("out", {})
+        if "current" in out:  # sync
+            typer.echo(f"\nProfile had {len(out.get('current', []))} skills.")
+            _print_results("Deleted", out.get("deleted", {}))
+        _print_add_outcome(out)

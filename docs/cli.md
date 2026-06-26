@@ -339,8 +339,9 @@ Gerencia competências do perfil LinkedIn. Três modos: args diretos, config loc
 # Listar competências atuais (abre browser)
 uv run main.py profile skills list
 
-# Modo B: args diretos
+# Modo B: args diretos (add é idempotente: pula as que já existem)
 uv run main.py profile skills add "Python" "AWS" "Docker"
+uv run main.py profile skills add "Python" --force      # readiciona mesmo se já existir
 uv run main.py profile skills delete "Java"
 
 # Modo A: config local (set + sync)
@@ -351,7 +352,19 @@ uv run main.py profile skills sync           # deleta não-desejadas, adiciona f
 # Modo C: top skills dos jobs avaliados
 uv run main.py profile skills sync-from-tracker --top 15 --dry-run
 uv run main.py profile skills sync-from-tracker
+
+# Modo D: seed versionado (data/linkedin_skills_seed.txt)
+uv run main.py profile skills seed --dry-run        # lista normalizada, sem browser
+uv run main.py profile skills seed                  # sync: perfil = seed (deleta fora da lista)
+uv run main.py profile skills seed --add-only       # só adiciona faltantes (não deleta)
+uv run main.py profile skills seed --limit 100      # trunca nas 100 primeiras (prioridade = ordem)
+uv run main.py profile skills seed --from-file outro.txt
 ```
+
+Seed (`data/linkedin_skills_seed.txt`): 1 skill/linha, `#` = comentário; ordem =
+prioridade. Normalizado (trim + dedupe case-insensitive) ao carregar. `add`/`seed`
+param sozinhos ao detectar o limite de competências do LinkedIn (log
+`LinkedIn skill limit reached at N`). Rode com `HEADLESS=FALSE` para acompanhar.
 
 > Seletores best-effort (DOM obfuscado). Se retornar `✗`, rode sem `--headless` para inspecionar.
 
