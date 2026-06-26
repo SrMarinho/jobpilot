@@ -320,6 +320,7 @@ async def run_autopost(cfg: dict) -> None:
             topic=cfg["topic"],
             fmt=cfg["format"],
             recent=base_recent | seen,
+            reviewer=provider,  # critic loop (auto-crítica): gera → review → reescreve
         )
         draft = await manager.generate()
         if not draft:

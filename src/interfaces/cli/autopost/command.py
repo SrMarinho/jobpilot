@@ -63,6 +63,11 @@ def register_autopost_command(app: typer.Typer) -> None:
             help="Publica: SEM valor = drena Telegram + FIFO 1 aprovado; "
             "COM <id> = publica esse draft e marca postado",
         ),
+        drain: bool = typer.Option(
+            False,
+            "--drain",
+            help="Só drena aprovações/rejeições do Telegram p/ o banco (NÃO publica)",
+        ),
         regen_image: Optional[str] = typer.Option(
             None,
             "--regen-image",
@@ -91,6 +96,15 @@ def register_autopost_command(app: typer.Typer) -> None:
             return
         if approve:
             approve_draft(approve)
+            return
+        if drain:
+            from src.core.use_cases.autopost_approvals import drain_autopost_approvals
+
+            counts = drain_autopost_approvals()
+            print(
+                f"Drain Telegram: {counts['approved']} aprovado(s), "
+                f"{counts['rejected']} rejeitado(s) atualizados no banco."
+            )
             return
         if regen_image:
             run_async(run_regen_image(regen_image))

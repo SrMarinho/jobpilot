@@ -44,8 +44,56 @@ def default_source_for_today() -> str:
     return "template"
 
 
+# Stack do autor — RSS só entra se o item bater com isto (evita tema off-stack,
+# tipo Rust/Go, que viraria post sem autenticidade). Alinhado ao currículo/seed.
+_STACK_KEYWORDS = (
+    "python",
+    "javascript",
+    "typescript",
+    "node",
+    "vue",
+    "react",
+    "three.js",
+    "tailwind",
+    "vite",
+    "dart",
+    "flutter",
+    "fastapi",
+    "flask",
+    "pydantic",
+    "sqlalchemy",
+    "postgres",
+    "mysql",
+    "duckdb",
+    "mongodb",
+    "redis",
+    "sql",
+    "orm",
+    "playwright",
+    "scraping",
+    "rpa",
+    "ocr",
+    "etl",
+    "automation",
+    "automação",
+    "rest api",
+    "websocket",
+    "oauth",
+    "jwt",
+    "microservi",
+    "pytest",
+    "async",
+    "web scraping",
+)
+
+
 def _norm(s: str) -> str:
     return s.strip().lower()
+
+
+def _is_on_stack(text: str) -> bool:
+    low = text.lower()
+    return any(kw in low for kw in _STACK_KEYWORDS)
 
 
 def _commit_context() -> tuple[str, str]:
@@ -89,6 +137,9 @@ def _rss_context(recent: set[str] | None = None) -> tuple[str, str]:
             if not title:
                 continue
             summary = getattr(entry, "summary", "").strip()
+            # só temas dentro do stack do autor (evita Rust/Go/etc off-stack)
+            if not _is_on_stack(f"{title} {summary}"):
+                continue
             item = (title, f"{title}\n\n{summary[:600]}")
             if fallback is None:
                 fallback = item
@@ -96,6 +147,7 @@ def _rss_context(recent: set[str] | None = None) -> tuple[str, str]:
                 return item
     if fallback is not None:
         return fallback
+    # nenhum item on-stack nos feeds → tema evergreen do template
     return _template_context(recent)
 
 
