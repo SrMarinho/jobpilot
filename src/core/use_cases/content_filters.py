@@ -153,6 +153,69 @@ def has_tech_keyword(text: str) -> bool:
     return any(kw in low for kw in _TECH_KEYWORDS)
 
 
+# Cargos/headline que marcam autor da área de software. Filtro barato (sem LLM):
+# olha o headline de quem postou e só engaja quem é dev/eng/tech.
+_DEV_ROLE_KEYWORDS = (
+    "desenvolvedor",
+    "desenvolvedora",
+    "developer",
+    "programador",
+    "programadora",
+    "programmer",
+    "software",
+    "engenheiro de software",
+    "engenheira de software",
+    "software engineer",
+    "engenheiro de dados",
+    "data engineer",
+    "engenheiro de machine learning",
+    "ml engineer",
+    "machine learning engineer",
+    "backend",
+    "back-end",
+    "frontend",
+    "front-end",
+    "full stack",
+    "full-stack",
+    "fullstack",
+    "devops",
+    "sre",
+    "tech lead",
+    "engineering manager",
+    "arquiteto de software",
+    "software architect",
+    "cientista de dados",
+    "data scientist",
+    "qa engineer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    " dev ",
+    ".dev",
+    "engineer",
+)
+
+
+def post_asks_question(post_text: str) -> bool:
+    """True se o post faz uma pergunta (tem '?' ou interrogativo). Post-pergunta
+    é o caso mais fácil de comentar: o autor já pediu uma resposta."""
+    t = (post_text or "").strip().lower()
+    if "?" in t:
+        return True
+    return bool(
+        re.search(r"\b(qual|quais|como|quando|em qual|o que|por que|porque)\b", t)
+    )
+
+
+def author_is_dev(headline: str) -> bool:
+    """True se o headline do autor indica cargo de software/dev. Heurística
+    barata (sem LLM) p/ filtrar quem posta fora da área de programação."""
+    if not headline:
+        return False
+    low = f" {headline.lower()} "
+    return any(kw in low for kw in _DEV_ROLE_KEYWORDS)
+
+
 # Palavras-função PT/EN ignoradas no grounding (não ancoram nada).
 _STOPWORDS = {
     "para",

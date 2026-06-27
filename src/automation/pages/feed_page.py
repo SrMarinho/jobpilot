@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import random
+import re
 from typing import Optional
 
 from playwright.async_api import Page, ElementHandle
@@ -246,6 +247,25 @@ class FeedPage:
                 continue
             return line
         return "unknown"
+
+    async def get_post_author_headline(self, post: ElementHandle) -> str:
+        # Headline = linha logo após o autor (ex: "Software Engineer | Python").
+        # Pula timestamps ("2 h", "1 sem", "Editado") e o grau de conexão.
+        nonskip = [
+            line
+            for line in await self._post_lines(post)
+            if not self._is_skip_line(line)
+        ]
+        for line in nonskip[1:4]:  # autor = [0]; headline vem logo depois
+            low = line.lower()
+            # timestamp/idade do post: "2 h", "3 d", "1 sem", "5 min", "agora"
+            if re.match(r"^\d+\s*(h|d|sem|min|mês|meses|mo|w|m|a)\b", low):
+                continue
+            if low in ("editado", "edited", "agora", "now"):
+                continue
+            if "|" in line or "•" in line or len(line) > 12:
+                return line
+        return ""
 
     async def get_post_text(self, post: ElementHandle) -> str:
         lines = await self._post_lines(post)

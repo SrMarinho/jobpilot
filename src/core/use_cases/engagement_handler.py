@@ -16,6 +16,7 @@ from src.core.use_cases.content_filters import (
     has_tech_keyword,
     is_blacklisted,
     is_commentable_post,
+    post_asks_question,
 )
 
 
@@ -105,17 +106,6 @@ class EngagementHandler:
     def _pick_variant(self) -> str:
         return random.choice(list(self._VARIANTS.keys()))
 
-    # Post que termina em '?' ou tem interrogativo: o autor pede uma resposta.
-    # Responder (em vez de afirmação lateral) aumenta credibilidade/engajamento.
-    @staticmethod
-    def _post_asks_question(post_text: str) -> bool:
-        t = (post_text or "").strip().lower()
-        if "?" in t:
-            return True
-        return bool(
-            re.search(r"\b(qual|quais|como|quando|em qual|o que|por que|porque)\b", t)
-        )
-
     # Hashtags do post (#dataeng, #python). Sinalizam o tema/contexto que o
     # autor escolheu — ajudam o modelo a ancorar melhor o comentário.
     @staticmethod
@@ -149,7 +139,7 @@ class EngagementHandler:
             "O post FAZ uma pergunta. Responda-a diretamente com experiência "
             "concreta (situação real + o que aconteceu) e então adicione 1 "
             "nuance/trade-off. NÃO responda com outra pergunta genérica.\n\n"
-            if self._post_asks_question(post_text)
+            if post_asks_question(post_text)
             else ""
         )
         prompt = (

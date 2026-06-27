@@ -1,3 +1,4 @@
+import os
 import threading
 from dataclasses import dataclass, field
 
@@ -10,10 +11,20 @@ from playwright._impl._errors import TargetClosedError
 from src.automation.pages import FeedPage
 from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.engagement_handler import EngagementHandler
-from src.core.use_cases.content_filters import is_blacklisted
+from src.core.use_cases.content_filters import (
+    author_is_dev,
+    is_blacklisted,
+    post_asks_question,
+)
 from src.core.use_cases.resume_loader import load_resume_text
 from src.core.use_cases.engaged_posts_tracker import EngagedPostsTracker
 from src.config.settings import logger
+
+
+# Filtros baratos pré-LLM (tunáveis via env). Default ligado: só engaja post de
+# autor da área de software E que faz uma pergunta (caso fácil de comentar).
+_DEV_ONLY = os.getenv("ENGAGE_AUTHOR_DEV_ONLY", "1") == "1"
+_QUESTION_ONLY = os.getenv("ENGAGE_QUESTION_ONLY", "1") == "1"
 
 
 @dataclass
@@ -83,8 +94,21 @@ class EngagementManager:
         ):
             self.result.skipped += 1
             return None
+        # Filtro barato por cargo do autor: só engaja quem é da área de software.
+        # Headline ausente (parse falhou) => não bloqueia, deixa a relevância decidir.
+        if _DEV_ONLY:
+            headline = await self.feed.get_post_author_headline(post)
+            if headline and not author_is_dev(headline):
+                logger.info(f"Skip: autor fora da área (headline={headline!r})")
+                self.result.skipped += 1
+                return None
         text = await self.feed.get_post_text(post)
         if not text or len(text) < 30:
+            self.result.skipped += 1
+            return None
+        # Só responde post que faz pergunta: caso mais fácil de comentar com valor.
+        if _QUESTION_ONLY and not post_asks_question(text):
+            logger.info("Skip: post não faz pergunta (ENGAGE_QUESTION_ONLY)")
             self.result.skipped += 1
             return None
         if is_blacklisted(text):
