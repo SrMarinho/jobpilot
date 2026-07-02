@@ -256,12 +256,24 @@ class FeedPage:
             for line in await self._post_lines(post)
             if not self._is_skip_line(line)
         ]
-        for line in nonskip[1:4]:  # autor = [0]; headline vem logo depois
-            low = line.lower()
+        author = (await self.get_post_author(post) or "").strip().lower()
+        for line in nonskip[1:5]:  # autor = [0]; headline vem logo depois
+            low = line.strip().lower()
             # timestamp/idade do post: "2 h", "3 d", "1 sem", "5 min", "agora"
             if re.match(r"^\d+\s*(h|d|sem|min|mês|meses|mo|w|m|a)\b", low):
                 continue
             if low in ("editado", "edited", "agora", "now"):
+                continue
+            # Falsos-headline vistos nos logs (bloqueavam tudo via author_is_dev):
+            # nome do autor repetido, contagem de seguidores, grau de conexão,
+            # CTA de perfil e conteúdo promovido.
+            if author != "unknown" and low == author:
+                continue
+            if re.search(r"\d[\d.,]*\s*(mil|mi|k|m)?\s*(seguidores|followers)", low):
+                continue
+            if re.search(r"•\s*\d+º", line) or re.match(r"^\d+º\b", low):
+                continue
+            if low.startswith(("conheça", "promovido", "promoted", "patrocinado")):
                 continue
             if "|" in line or "•" in line or len(line) > 12:
                 return line

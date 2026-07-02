@@ -4,6 +4,7 @@ import re
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
+from src.core.use_cases.comment_pipeline import CommentPipeline
 from src.core.use_cases.comment_filters import (
     comment_is_grounded,
     foreign_tech_in_comment,
@@ -33,6 +34,13 @@ class EngagementHandler:
         self.user_name = user_name or "profissional de tecnologia"
         self.user_headline = (
             user_headline or "Software Engineer focado em Python e Node.js"
+        )
+        # Pipeline multi-modelo (Sonnet gera → Fable revisa → Haiku comprime).
+        # ENGAGE_CLAUDE_PIPELINE=0 desliga e volta ao provider único (self.llm).
+        self.pipeline: CommentPipeline | None = (
+            CommentPipeline()
+            if os.getenv("ENGAGE_CLAUDE_PIPELINE", "1") == "1"
+            else None
         )
 
     async def is_relevant(self, post_text: str) -> bool:
@@ -119,14 +127,14 @@ class EngagementHandler:
                 break
         return seen
 
-    async def generate_comment(
-        self, post_text: str, author: str, variant: str | None = None
-    ) -> tuple[str | None, str]:
-        """Gera comentário. Retorna ``(texto|None, variant)``."""
-        variant = variant or self._pick_variant()
-        spec = self._VARIANTS.get(variant, self._VARIANTS["insight"])
-        angle = spec["angle"]
-        min_words, max_words = spec["min_words"], spec["max_words"]
+    def _build_prompt(
+        self,
+        post_text: str,
+        author: str,
+        angle: str,
+        min_words: int,
+        max_words: int,
+    ) -> str:
         tags = self._extract_tags(post_text)
         tags_line = (
             f"Tags do post (tema sinalizado pelo autor): {', '.join('#' + t for t in tags)}\n"
@@ -136,21 +144,24 @@ class EngagementHandler:
             else ""
         )
         question_block = (
-            "O post FAZ uma pergunta. Responda-a diretamente com experiência "
-            "concreta (situação real + o que aconteceu) e então adicione 1 "
-            "nuance/trade-off. NÃO responda com outra pergunta genérica.\n\n"
+            "O post FAZ uma pergunta — ela é o seu gancho. Responda-a "
+            "DIRETAMENTE na primeira frase, com experiência concreta (situação "
+            "real + o que aconteceu), e então adicione 1 nuance/trade-off. NÃO "
+            "responda com outra pergunta genérica.\n\n"
             if post_asks_question(post_text)
             else ""
         )
-        prompt = (
+        return (
             f"Leia o post do LinkedIn abaixo e escreva 1 comentário como peer profissional.\n\n"
             f'Post de {author}:\n"""\n{post_text[:800]}\n"""\n\n'
             f"{tags_line}"
             f"Você é {self.user_headline}, engenheiro experiente. Escreva com a "
             f"densidade de quem já levou isso para produção — mecanismo, trade-off "
             f"ou número, não entusiasmo.\n\n"
-            f"Tarefa: comentário de {min_words}-{max_words} palavras, profissional, "
-            f"no mesmo idioma do post.\n"
+            f"LIMITE DURO DE TAMANHO: entre {min_words} e {max_words} palavras. "
+            f"Antes de responder, CONTE as palavras do comentário; se passar de "
+            f"{max_words}, corte o menos essencial até caber. Comentário longo "
+            f"será descartado.\n"
             f"Ângulo desta vez: {angle}\n\n"
             f"{question_block}"
             f"EXEMPLOS:\n"
@@ -184,12 +195,65 @@ class EngagementHandler:
             f"Retorne APENAS o comentário, sem aspas, sem preâmbulo.\n"
             f"Comentário:"
         )
+
+    def _check_filters(self, payload: str, post_text: str, attempt: int) -> bool:
+        """Filtros de qualidade pós-geração. True se o comentário passa."""
+        if is_blacklisted(payload):
+            logger.info("Comment rejected (blacklisted content)")
+            return False
+        foreign = foreign_tech_in_comment(payload, post_text)
+        if foreign:
+            logger.info(
+                f"Comment rejected (stack alucinado: {foreign!r} ausente do post) "
+                f"tentativa {attempt}: {payload!r}"
+            )
+            return False
+        if not comment_is_grounded(payload, post_text):
+            logger.info(
+                f"Comment rejected (ungrounded: nada em comum com o post) "
+                f"tentativa {attempt}: {payload!r}"
+            )
+            return False
+        if is_trivial(payload):
+            logger.info(
+                f"Comment rejected (trivial/iniciante) tentativa {attempt}: {payload!r}"
+            )
+            return False
+        if is_junior_tone(payload):
+            logger.info(
+                f"Comment rejected (tom junior) tentativa {attempt}: {payload!r}"
+            )
+            return False
+        return True
+
+    async def generate_comment(
+        self, post_text: str, author: str, variant: str | None = None
+    ) -> tuple[str | None, str]:
+        """Gera comentário. Retorna ``(texto|None, variant)``.
+
+        Com pipeline ativo (default): Sonnet gera → Fable revisa (pontos
+        objetivos) → Sonnet regera → contagem de palavras em Python → Haiku
+        comprime se estourar. Sem pipeline: provider único (self.llm).
+        """
+        variant = variant or self._pick_variant()
+        spec = self._VARIANTS.get(variant, self._VARIANTS["insight"])
+        min_words, max_words = spec["min_words"], spec["max_words"]
+        prompt = self._build_prompt(
+            post_text, author, spec["angle"], min_words, max_words
+        )
         for attempt in range(2):  # 1 tentativa + 1 retry
-            try:
-                raw = await self.llm.complete(prompt)
-            except Exception as e:
-                logger.warning(f"generate_comment LLM call failed: {e}")
-                return None, variant
+            if self.pipeline:
+                raw = await self.pipeline.generate(
+                    prompt, post_text, min_words=min_words, max_words=max_words
+                )
+                if raw is None:
+                    return None, variant
+            else:
+                try:
+                    raw = await self.llm.complete(prompt)
+                except Exception as e:
+                    logger.warning(f"generate_comment LLM call failed: {e}")
+                    return None, variant
             # Modelo explicou por que não comenta em vez de devolver vazio:
             # é ≈ string vazia. Para já (retry só repetiria a recusa).
             if is_refusal(raw):
@@ -203,33 +267,7 @@ class EngagementHandler:
                     f"Comment rejected ({payload}) tentativa {attempt + 1}: {raw!r}"
                 )
                 continue
-            if is_blacklisted(payload):
-                logger.info("Comment rejected (blacklisted content)")
-                continue
-            foreign = foreign_tech_in_comment(payload, post_text)
-            if foreign:
-                logger.info(
-                    f"Comment rejected (stack alucinado: {foreign!r} ausente do post) "
-                    f"tentativa {attempt + 1}: {payload!r}"
-                )
-                continue
-            if not comment_is_grounded(payload, post_text):
-                logger.info(
-                    f"Comment rejected (ungrounded: nada em comum com o post) "
-                    f"tentativa {attempt + 1}: {payload!r}"
-                )
-                continue
-            if is_trivial(payload):
-                logger.info(
-                    f"Comment rejected (trivial/iniciante) "
-                    f"tentativa {attempt + 1}: {payload!r}"
-                )
-                continue
-            if is_junior_tone(payload):
-                logger.info(
-                    f"Comment rejected (tom junior) "
-                    f"tentativa {attempt + 1}: {payload!r}"
-                )
+            if not self._check_filters(payload, post_text, attempt + 1):
                 continue
             return payload, variant
         return None, variant
