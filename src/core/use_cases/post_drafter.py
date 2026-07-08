@@ -148,6 +148,19 @@ class PostDrafter:
             + "Retorne APENAS o post reescrito, sem preâmbulo, sem aspas.\nPost:"
         )
 
+    def _shrink_prompt(self, text: str) -> str:
+        # Modelo não conta caracteres: retry cego regera outro texto longo.
+        # Comprimir o texto que já existe converge (mesmo padrão do
+        # comment_pipeline, que conta em Python e delega só o corte).
+        return (
+            f"O post de LinkedIn abaixo tem {len(text)} caracteres; o limite "
+            f"duro é {_HARD_CAP_CHARS}. Reescreva-o com NO MÁXIMO 700 "
+            "caracteres. Mantenha o hook, a substância técnica e as hashtags; "
+            "corte o menos essencial. NÃO adicione nada novo.\n\n"
+            f'"""\n{text}\n"""\n\n'
+            "Retorne APENAS o post reescrito, sem preâmbulo, sem aspas.\nPost:"
+        )
+
     async def _complete_valid(self, prompt: str, fmt: str, retries: int) -> str | None:
         """Chama o gerador, limpa <think>, valida. Retorna texto ou None."""
         for attempt in range(retries + 1):
@@ -164,6 +177,8 @@ class PostDrafter:
             logger.info(
                 f"Draft rejeitado ({payload}) tentativa {attempt + 1}/{retries + 1}"
             )
+            if payload.startswith("too long") and raw:
+                prompt = self._shrink_prompt(raw)
         return None
 
     async def generate_draft(
