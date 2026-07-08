@@ -69,10 +69,18 @@ class PostDrafter:
             user_headline or "Software Engineer focado em Python e Node.js"
         )
 
-    def _build_prompt(self, topic: str, fmt: str, context: str) -> str:
+    def _build_prompt(self, topic: str, fmt: str, context: str, brief: str = "") -> str:
         guide = _FORMAT_GUIDE.get(fmt, _FORMAT_GUIDE["dissertativo"])
         ctx_block = (
             f'\nMaterial de apoio:\n"""\n{context[:800]}\n"""\n' if context else ""
+        )
+        # Direção livre do autor: tema + detalhes/ângulo que o post deve seguir.
+        # Tem prioridade sobre o tema genérico — é a intenção explícita do autor.
+        brief_block = (
+            f'\nDireção do autor (SIGA esta orientação, ela tem prioridade):\n"""\n'
+            f'{brief[:2000]}\n"""\n'
+            if brief
+            else ""
         )
         return (
             f"Você é {self.user_name}, {self.user_headline}.\n"
@@ -80,6 +88,7 @@ class PostDrafter:
             f"Currículo completo (use para dar autenticidade):\n{self.resume}\n\n"
             f"Tema: {topic}\n"
             f"Formato: {fmt} — {guide}\n"
+            f"{brief_block}"
             f"{ctx_block}\n"
             f"Público: engenheiros sêniores. Assuma que já sabem o básico — "
             f"NÃO explique conceitos elementares nem defina termos.\n\n"
@@ -120,9 +129,15 @@ class PostDrafter:
         )
 
     def _rewrite_prompt(
-        self, topic: str, fmt: str, context: str, prev: str, feedback: str
+        self,
+        topic: str,
+        fmt: str,
+        context: str,
+        prev: str,
+        feedback: str,
+        brief: str = "",
     ) -> str:
-        base = self._build_prompt(topic, fmt, context).rsplit("Post:", 1)[0]
+        base = self._build_prompt(topic, fmt, context, brief).rsplit("Post:", 1)[0]
         return (
             base
             + "Versão anterior do post:\n"
@@ -152,11 +167,16 @@ class PostDrafter:
         return None
 
     async def generate_draft(
-        self, topic: str, fmt: str, context: str = "", retries: int = 1
+        self,
+        topic: str,
+        fmt: str,
+        context: str = "",
+        retries: int = 1,
+        brief: str = "",
     ) -> str | None:
         # 1) gera
         draft = await self._complete_valid(
-            self._build_prompt(topic, fmt, context), fmt, retries
+            self._build_prompt(topic, fmt, context, brief), fmt, retries
         )
         if not draft:
             return None
@@ -177,7 +197,7 @@ class PostDrafter:
             if feedback and feedback.strip().upper() != "OK":
                 logger.info(f"Review apontou ajustes:\n{feedback}")
                 rewritten = await self._complete_valid(
-                    self._rewrite_prompt(topic, fmt, context, draft, feedback),
+                    self._rewrite_prompt(topic, fmt, context, draft, feedback, brief),
                     fmt,
                     retries,
                 )

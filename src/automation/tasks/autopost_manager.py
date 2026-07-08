@@ -29,6 +29,7 @@ class AutopostManager:
         fmt: str | None = None,
         recent: set[str] | None = None,
         reviewer: LLMProvider | None = None,
+        brief: str = "",
     ):
         self.drafter = PostDrafter(
             llm_provider,
@@ -41,6 +42,8 @@ class AutopostManager:
         self.topic = topic
         self.fmt = fmt or default_format_for_today()
         self.recent = recent or set()
+        # Direção livre do autor (tema + detalhes/ângulo); vai direto ao prompt.
+        self.brief = brief or ""
 
     async def generate(self) -> dict | None:
         """Resolve source → draft → validate. Returns a draft payload dict."""
@@ -49,7 +52,9 @@ class AutopostManager:
             f"Autopost gerando: source={self.source} format={self.fmt} "
             f"topic={resolved_topic!r}"
         )
-        content = await self.drafter.generate_draft(resolved_topic, self.fmt, context)
+        content = await self.drafter.generate_draft(
+            resolved_topic, self.fmt, context, brief=self.brief
+        )
         if not content:
             logger.warning("Autopost: nenhum draft válido gerado")
             return None

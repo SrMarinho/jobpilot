@@ -26,6 +26,12 @@ def register_autopost_command(app: typer.Typer) -> None:
         topic: Optional[str] = typer.Option(
             None, "--topic", help="Tema custom (obrigatório se --source manual)"
         ),
+        brief: Optional[str] = typer.Option(
+            None,
+            "--brief",
+            help="Tema/direção livre do autor (texto curto ou longo, com "
+            "detalhes/ângulo). Implica --source manual se não especificado",
+        ),
         fmt: Optional[str] = typer.Option(
             None, "--format", help="snippet|story|dissertativo|contrarian"
         ),
@@ -129,6 +135,7 @@ def register_autopost_command(app: typer.Typer) -> None:
             force=force,
             count=count,
             expires_hours=expires_hours,
+            brief=brief,
         )
         if cfg is None:
             return  # skip-today exit 0
