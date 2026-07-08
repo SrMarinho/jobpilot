@@ -118,13 +118,24 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
     try:
         from src.utils.telegram import send_telegram
 
-        send_telegram(
-            f"🤝 <b>Engagement</b>\n"
-            f"❤️ Likes: {result.liked}\n"
-            f"💬 Comments: {result.commented}\n"
-            f"🔁 Shares: {result.shared}",
-            topic="engage",
-        )
+        total = result.liked + result.commented + result.shared
+        if total == 0:
+            # 0 engajados com exit 0 passa batido no agendamento — já ficou
+            # 12 dias mudo por filtro quebrado. Alerta explícito.
+            send_telegram(
+                "⚠️ <b>Engagement</b>: 0 engajados neste run "
+                f"({result.skipped} filtrados). Feed esgotado ou filtros "
+                "bloqueando tudo — verificar log.",
+                topic="engage",
+            )
+        else:
+            send_telegram(
+                f"🤝 <b>Engagement</b>\n"
+                f"❤️ Likes: {result.liked}\n"
+                f"💬 Comments: {result.commented}\n"
+                f"🔁 Shares: {result.shared}",
+                topic="engage",
+            )
     except Exception as e:
         logger.debug(f"Telegram notify failed (non-fatal): {e}")
 
