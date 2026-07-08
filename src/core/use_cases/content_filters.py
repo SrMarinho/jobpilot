@@ -193,6 +193,16 @@ _DEV_ROLE_KEYWORDS = (
     " dev ",
     ".dev",
     "engineer",
+    "cto",
+    "founder",
+    "co-founder",
+    "cofounder",
+    "head of engineering",
+    "vp of engineering",
+    "staff engineer",
+    "principal engineer",
+    "arquiteto de soluções",
+    "solutions architect",
 )
 
 
@@ -213,7 +223,30 @@ def author_is_dev(headline: str) -> bool:
     if not headline:
         return False
     low = f" {headline.lower()} "
-    return any(kw in low for kw in _DEV_ROLE_KEYWORDS)
+    if any(kw in low for kw in _DEV_ROLE_KEYWORDS):
+        return True
+    # Stack técnico no headline ("CTO @ X | Node.js | Python") também conta.
+    return has_tech_keyword(headline)
+
+
+# Nome próprio: 1-5 palavras capitalizadas ("Daniel Moraes", "NVIDIA Brasil").
+_NAME_LINE_RE = re.compile(r"^[A-ZÀ-Ý][\w.'\-]*(\s+[A-ZÀ-Ý][\w.'\-]*){0,4}$")
+
+
+def headline_is_junk(headline: str, author: str = "") -> bool:
+    """True se o 'headline' parseado parece lixo de UI, não um cargo: nome do
+    autor repetido, linha de perfil/premium, ou só um nome próprio. Lixo deve
+    ser tratado como headline ausente (não bloqueia o filtro de cargo)."""
+    h = (headline or "").strip()
+    if not h:
+        return True
+    if author and h.lower() == author.strip().lower():
+        return True
+    if re.search(r"\bperfil\b|\bpremium\b|\d+º", h.lower()):
+        return True
+    if "|" not in h and "•" not in h and _NAME_LINE_RE.match(h):
+        return True
+    return False
 
 
 # Palavras-função PT/EN ignoradas no grounding (não ancoram nada).

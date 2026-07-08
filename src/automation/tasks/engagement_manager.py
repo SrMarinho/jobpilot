@@ -13,6 +13,7 @@ from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.engagement_handler import EngagementHandler
 from src.core.use_cases.content_filters import (
     author_is_dev,
+    headline_is_junk,
     is_blacklisted,
     post_asks_question,
 )
@@ -98,6 +99,10 @@ class EngagementManager:
         # Headline ausente (parse falhou) => não bloqueia, deixa a relevância decidir.
         if _DEV_ONLY:
             headline = await self.feed.get_post_author_headline(post)
+            # Parse lixo (nome repetido, linha de UI) = headline ausente:
+            # não bloqueia, deixa a relevância do LLM decidir.
+            if headline_is_junk(headline, author):
+                headline = ""
             if headline and not author_is_dev(headline):
                 logger.info(f"Skip: autor fora da área (headline={headline!r})")
                 self.result.skipped += 1
