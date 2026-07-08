@@ -96,6 +96,11 @@ class PostDrafter:
             f"- Curto e objetivo. Alvo 400-700 caracteres, MÁXIMO 900.\n"
             f"- Primeira linha = hook forte (contrarian, número, vulnerabilidade ou pergunta).\n"
             f"- Toda frase carrega peso. Zero filler.\n"
+            f"- UMA ideia central, desenvolvida com fio condutor: cada frase "
+            f"decorre da anterior. Explicar 1 mecanismo bem > citar 3 por alto.\n"
+            f"- Jargão não substitui explicação: ao nomear um conceito, mostre "
+            f"em palavras simples o que ele faz na prática. Nada de lista de "
+            f"termos técnicos soltos.\n"
             f"- Quebras de linha frequentes (mobile-first).\n"
             f"- Encerre com uma pergunta ou CTA curto.\n"
             f"- 2-4 hashtags relevantes e específicas (nada genérico como #Engenharia).\n"
@@ -121,6 +126,9 @@ class PostDrafter:
             "- Profundidade real (mecanismo, trade-off), não slogan nem o básico.\n"
             "- Não sinaliza status ('isso me fez sênior', 'júnior faz X').\n"
             "- Hook forte, frases com peso, mobile-first, CTA genuíno.\n"
+            "- FIO CONDUTOR: uma ideia desenvolvida de ponta a ponta, frases "
+            "conectadas causalmente. Post que vira lista de termos técnicos "
+            "soltos e desconectados é defeito grave — aponte.\n"
             "- 2-4 hashtags específicas. Deve sobreviver ao 'well, actually' de um sênior.\n\n"
             f'Post:\n"""\n{post}\n"""\n\n'
             "Se já está excelente, responda APENAS: OK\n"
@@ -144,7 +152,10 @@ class PostDrafter:
             + prev
             + "\n\nFeedback do editor (incorpore TUDO):\n"
             + feedback
-            + "\n\nReescreva o post incorporando o feedback. "
+            + "\n\nReescreva o post incorporando o feedback. Se o feedback pede "
+            + "mais profundidade do que cabe no limite, CORTE ideias inteiras e "
+            + "desenvolva menos pontos melhor — NÃO esprema tudo em frases "
+            + "telegráficas desconectadas. "
             + "Retorne APENAS o post reescrito, sem preâmbulo, sem aspas.\nPost:"
         )
 
@@ -156,7 +167,9 @@ class PostDrafter:
             f"O post de LinkedIn abaixo tem {len(text)} caracteres; o limite "
             f"duro é {_HARD_CAP_CHARS}. Reescreva-o com NO MÁXIMO 700 "
             "caracteres. Mantenha o hook, a substância técnica e as hashtags; "
-            "corte o menos essencial. NÃO adicione nada novo.\n\n"
+            "corte IDEIAS inteiras, não as conexões entre frases — o texto "
+            "final deve continuar fluido, não telegráfico. NÃO adicione nada "
+            "novo.\n\n"
             f'"""\n{text}\n"""\n\n'
             "Retorne APENAS o post reescrito, sem preâmbulo, sem aspas.\nPost:"
         )
