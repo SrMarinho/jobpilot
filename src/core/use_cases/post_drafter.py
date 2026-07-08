@@ -24,13 +24,29 @@ _PLACEHOLDER_RE = re.compile(r"\bTODO\b|\bFIXME\b|(?i:<\.\.\.>|<placeholder>)")
 _HASHTAG_RE = re.compile(r"#\w+")
 
 _FORMAT_GUIDE = {
-    "snippet": "1 dica técnica em poucas linhas. Direto ao ponto, quase um código comentado em prosa. Formato naturalmente CURTO.",
-    "story": "situação → ação → lição, conciso. Tom de build-in-public. Formato de tamanho médio.",
-    "dissertativo": "tese + argumento desenvolvido + conclusão. Opinião técnica fundamentada, com espaço pra explicar o mecanismo. Formato que sustenta mais desenvolvimento.",
+    "snippet": (
+        "1 dica técnica em poucas linhas, direto ao ponto, quase um código "
+        "comentado em prosa. Naturalmente CURTO — idealmente cabe antes da "
+        "dobra do 'ver mais'. Boas práticas: 1 problema → 1 solução aplicável "
+        "hoje; zero contexto desnecessário."
+    ),
+    "story": (
+        "situação → ação → lição, tom de build-in-public. Tamanho médio. "
+        "Boas práticas: abra no conflito (não no contexto), inclua 1 detalhe "
+        "concreto que dá veracidade, e a lição decorre da história — nada de "
+        "moral genérica."
+    ),
+    "dissertativo": (
+        "tese + argumento desenvolvido + conclusão. Sustenta mais "
+        "desenvolvimento: espaço pra explicar o mecanismo de ponta a ponta. "
+        "Boas práticas: tese na primeira linha, cada parágrafo avança o "
+        "argumento, explique o COMO antes de concluir."
+    ),
     "contrarian": (
         "uma tese não-óbvia e PRECISA (não slogan, não absolutismo) + o reasoning "
         "+ a condição em que vale E a exceção em que não vale + convite ao debate "
-        "técnico. Deve sobreviver ao 'well, actually' de um sênior."
+        "técnico. Tamanho médio-longo. Deve sobreviver ao 'well, actually' de um "
+        "sênior."
     ),
 }
 
@@ -101,11 +117,9 @@ class PostDrafter:
             f"NÃO explique conceitos elementares nem defina termos.\n\n"
             f"Regras estritas:\n"
             f"- Isto é um post {fmt} para o {self.platform}: aplique as "
-            f"convenções da plataforma PARA esse tipo de post (tamanho "
-            f"natural do formato, dobra do 'ver mais', formatação que "
-            f"performa lá). Um snippet é curto; um dissertativo sustenta "
-            f"mais desenvolvimento. Longo o bastante pra explicar bem, "
-            f"curto o bastante pra ser lido até o fim.\n"
+            f"convenções da plataforma para esse tipo de post — o tamanho "
+            f"natural do formato está na descrição acima. Longo o bastante "
+            f"pra explicar bem, curto o bastante pra ser lido até o fim.\n"
             f"- Primeira linha = hook forte (contrarian, número, vulnerabilidade ou pergunta).\n"
             f"- Toda frase carrega peso. Zero filler.\n"
             f"- UMA ideia central, desenvolvida com fio condutor: cada frase "
