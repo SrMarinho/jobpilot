@@ -13,9 +13,10 @@ from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.content_filters import is_blacklisted
 
 _MIN_CHARS = 80
-# 1500 dá espaço p/ explicar o mecanismo com fio condutor (900 espremia o
-# post em frases telegráficas). LinkedIn aceita 3000; dobra "ver mais" ~210.
-_HARD_CAP_CHARS = 1500
+# Só o limite real da plataforma (LinkedIn = 3000). O tamanho ideal não é
+# ditado em número: o prompt declara a plataforma e o modelo aplica as
+# convenções dela (dobra "ver mais", mobile-first etc).
+_HARD_CAP_CHARS = 3000
 # TODO/FIXME são marcadores de código → match SÓ em maiúsculas (case-sensitive),
 # senão a palavra PT-BR "todo"/"toda" (= "all") derruba posts legítimos. Os
 # placeholders em <> ficam case-insensitive.
@@ -23,9 +24,9 @@ _PLACEHOLDER_RE = re.compile(r"\bTODO\b|\bFIXME\b|(?i:<\.\.\.>|<placeholder>)")
 _HASHTAG_RE = re.compile(r"#\w+")
 
 _FORMAT_GUIDE = {
-    "snippet": "1 dica técnica em 3-5 linhas. Direto ao ponto, quase um código comentado em prosa.",
-    "story": "situação → ação → lição, em no máximo 6 linhas. Tom de build-in-public.",
-    "dissertativo": "tese + argumento curto + conclusão. Opinião técnica fundamentada.",
+    "snippet": "1 dica técnica em poucas linhas. Direto ao ponto, quase um código comentado em prosa. Formato naturalmente CURTO.",
+    "story": "situação → ação → lição, conciso. Tom de build-in-public. Formato de tamanho médio.",
+    "dissertativo": "tese + argumento desenvolvido + conclusão. Opinião técnica fundamentada, com espaço pra explicar o mecanismo. Formato que sustenta mais desenvolvimento.",
     "contrarian": (
         "uma tese não-óbvia e PRECISA (não slogan, não absolutismo) + o reasoning "
         "+ a condição em que vale E a exceção em que não vale + convite ao debate "
@@ -59,6 +60,7 @@ class PostDrafter:
         user_name: str = "",
         user_headline: str = "",
         reviewer: LLMProvider | None = None,
+        platform: str = "LinkedIn",
     ):
         self.llm = llm_provider
         # Revisor opcional (critic loop): gera → review → reescreve. Em LLM local
@@ -70,6 +72,9 @@ class PostDrafter:
         self.user_headline = (
             user_headline or "Software Engineer focado em Python e Node.js"
         )
+        # Plataforma-alvo: o prompt declara onde o post vai ser publicado e o
+        # modelo aplica as convenções (tamanho, formatação, hashtags) sozinho.
+        self.platform = platform or "LinkedIn"
 
     def _build_prompt(self, topic: str, fmt: str, context: str, brief: str = "") -> str:
         guide = _FORMAT_GUIDE.get(fmt, _FORMAT_GUIDE["dissertativo"])
@@ -86,7 +91,7 @@ class PostDrafter:
         )
         return (
             f"Você é {self.user_name}, {self.user_headline}.\n"
-            f"Escreva um post autoral para o LinkedIn, em primeira pessoa.\n\n"
+            f"Escreva um post autoral para o {self.platform}, em primeira pessoa.\n\n"
             f"Currículo completo (use para dar autenticidade):\n{self.resume}\n\n"
             f"Tema: {topic}\n"
             f"Formato: {fmt} — {guide}\n"
@@ -95,8 +100,12 @@ class PostDrafter:
             f"Público: engenheiros sêniores. Assuma que já sabem o básico — "
             f"NÃO explique conceitos elementares nem defina termos.\n\n"
             f"Regras estritas:\n"
-            f"- Objetivo, mas com espaço pra explicar. Alvo 700-1200 "
-            f"caracteres, MÁXIMO {_HARD_CAP_CHARS}.\n"
+            f"- Isto é um post {fmt} para o {self.platform}: aplique as "
+            f"convenções da plataforma PARA esse tipo de post (tamanho "
+            f"natural do formato, dobra do 'ver mais', formatação que "
+            f"performa lá). Um snippet é curto; um dissertativo sustenta "
+            f"mais desenvolvimento. Longo o bastante pra explicar bem, "
+            f"curto o bastante pra ser lido até o fim.\n"
             f"- Primeira linha = hook forte (contrarian, número, vulnerabilidade ou pergunta).\n"
             f"- Toda frase carrega peso. Zero filler.\n"
             f"- UMA ideia central, desenvolvida com fio condutor: cada frase "
@@ -121,10 +130,12 @@ class PostDrafter:
 
     def _review_prompt(self, post: str, topic: str, fmt: str) -> str:
         return (
-            "Você é um editor técnico sênior de conteúdo para LinkedIn.\n"
+            f"Você é um editor técnico sênior de conteúdo para {self.platform}.\n"
             "Critique o post abaixo para um público de engenheiros SÊNIORES.\n\n"
             f"Tema: {topic}\nFormato: {fmt}\n\n"
-            "Critérios:\n"
+            f"Critérios:\n"
+            f"- Tamanho adequado: é um post {fmt} para o {self.platform} — o "
+            f"formato define o tamanho natural.\n"
             "- Sem absolutismo/clickbait: tese forte vem com condição e exceção.\n"
             "- Profundidade real (mecanismo, trade-off), não slogan nem o básico.\n"
             "- Não sinaliza status ('isso me fez sênior', 'júnior faz X').\n"
@@ -167,8 +178,9 @@ class PostDrafter:
         # Comprimir o texto que já existe converge (mesmo padrão do
         # comment_pipeline, que conta em Python e delega só o corte).
         return (
-            f"O post de LinkedIn abaixo tem {len(text)} caracteres; o limite "
-            f"duro é {_HARD_CAP_CHARS}. Reescreva-o com NO MÁXIMO 1200 "
+            f"O post de {self.platform} abaixo tem {len(text)} caracteres; o "
+            f"limite duro da plataforma é {_HARD_CAP_CHARS}. Reescreva-o com "
+            f"NO MÁXIMO {_HARD_CAP_CHARS - 500} "
             "caracteres. Mantenha o hook, a substância técnica e as hashtags; "
             "corte IDEIAS inteiras, não as conexões entre frases — o texto "
             "final deve continuar fluido, não telegráfico. NÃO adicione nada "
