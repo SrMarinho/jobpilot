@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Optional
 
 from src.config.settings import logger
@@ -42,8 +43,14 @@ def resolve_autopost_config(
         if not source:
             source = "manual"
         if not topic:
+            # Tópico = primeira sentença do brief; se ainda longo, corta em
+            # limite de palavra (corte seco no meio da palavra vaza no header
+            # da mensagem de aprovação do Telegram).
             first_line = brief.splitlines()[0].strip()
-            topic = first_line[:100] or "post autoral"
+            sentence = re.split(r"(?<=[.!?:])\s", first_line)[0].rstrip(".!?:")
+            if len(sentence) > 100:
+                sentence = sentence[:100].rsplit(" ", 1)[0] + "…"
+            topic = sentence or "post autoral"
     if scheduled and not force:
         if is_already_ran_today("autopost"):
             logger.info("Autopost já rodou hoje. Skipping (exit 0).")
