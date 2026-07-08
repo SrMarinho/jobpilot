@@ -77,6 +77,7 @@ class PostDrafter:
         user_headline: str = "",
         reviewer: LLMProvider | None = None,
         platform: str = "LinkedIn",
+        avoid_examples: list[str] | None = None,
     ):
         self.llm = llm_provider
         # Revisor opcional (critic loop): gera → review → reescreve. Em LLM local
@@ -91,6 +92,10 @@ class PostDrafter:
         # Plataforma-alvo: o prompt declara onde o post vai ser publicado e o
         # modelo aplica as convenções (tamanho, formatação, hashtags) sozinho.
         self.platform = platform or "LinkedIn"
+        # Posts que o autor rejeitou na aprovação: entram no prompt como
+        # exemplo negativo (o motivo da rejeição não é capturado; o texto
+        # inteiro serve de anti-padrão de estilo).
+        self.avoid_examples = [e for e in (avoid_examples or []) if e][:2]
 
     def _build_prompt(self, topic: str, fmt: str, context: str, brief: str = "") -> str:
         guide = _FORMAT_GUIDE.get(fmt, _FORMAT_GUIDE["dissertativo"])
@@ -105,6 +110,13 @@ class PostDrafter:
             if brief
             else ""
         )
+        avoid_block = ""
+        if self.avoid_examples:
+            joined = "\n---\n".join(e[:300] for e in self.avoid_examples)
+            avoid_block = (
+                f"\nPosts anteriores REJEITADOS pelo autor — NÃO repita esse "
+                f'estilo:\n"""\n{joined}\n"""\n'
+            )
         return (
             f"Você é {self.user_name}, {self.user_headline}.\n"
             f"Escreva um post autoral para o {self.platform}, em primeira pessoa.\n\n"
@@ -112,7 +124,8 @@ class PostDrafter:
             f"Tema: {topic}\n"
             f"Formato: {fmt} — {guide}\n"
             f"{brief_block}"
-            f"{ctx_block}\n"
+            f"{ctx_block}"
+            f"{avoid_block}\n"
             f"Público: engenheiros sêniores. Assuma que já sabem o básico — "
             f"NÃO explique conceitos elementares nem defina termos.\n\n"
             f"Regras estritas:\n"
@@ -142,12 +155,27 @@ class PostDrafter:
             f"Post:"
         )
 
-    def _review_prompt(self, post: str, topic: str, fmt: str) -> str:
+    def _review_prompt(self, post: str, topic: str, fmt: str, brief: str = "") -> str:
+        # Sem o brief o revisor pode "corrigir" o post pra longe da direção
+        # pedida pelo autor — a direção é critério, não ruído.
+        brief_block = (
+            f'\nDireção do autor (o post DEVE seguir isto):\n"""\n{brief[:2000]}\n"""\n'
+            if brief
+            else ""
+        )
+        brief_criterion = (
+            "- O post segue a direção do autor acima? Fugir dela é defeito "
+            "grave, mesmo que o resultado seja tecnicamente bom.\n"
+            if brief
+            else ""
+        )
         return (
             f"Você é um editor técnico sênior de conteúdo para {self.platform}.\n"
             "Critique o post abaixo para um público de engenheiros SÊNIORES.\n\n"
-            f"Tema: {topic}\nFormato: {fmt}\n\n"
+            f"Tema: {topic}\nFormato: {fmt}\n"
+            f"{brief_block}\n"
             f"Critérios:\n"
+            f"{brief_criterion}"
             f"- Tamanho adequado: é um post {fmt} para o {self.platform} — o "
             f"formato define o tamanho natural.\n"
             "- Sem absolutismo/clickbait: tese forte vem com condição e exceção.\n"
@@ -243,7 +271,9 @@ class PostDrafter:
         if self.reviewer is not None:
             try:
                 feedback = (
-                    await self.reviewer.complete(self._review_prompt(draft, topic, fmt))
+                    await self.reviewer.complete(
+                        self._review_prompt(draft, topic, fmt, brief)
+                    )
                 ) or ""
                 feedback = re.sub(
                     r"<think>.*?</think>", "", feedback, flags=re.DOTALL

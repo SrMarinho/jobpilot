@@ -127,6 +127,23 @@ class PostedTracker:
         """Drafts que já foram publicados (status posted)."""
         return [d for d in self._data["drafts"] if d.get("status") == STATUS_POSTED]
 
+    def rejected_drafts(self, days: int = 30, limit: int = 3) -> list[dict]:
+        """Últimos drafts rejeitados na janela ``days`` (mais recentes primeiro).
+        Usados como exemplo negativo no prompt de geração."""
+        cutoff = datetime.now() - timedelta(days=days)
+        out = []
+        for d in self._data["drafts"]:
+            if d.get("status") != STATUS_REJECTED:
+                continue
+            try:
+                if datetime.fromisoformat(d.get("created_at", "")) < cutoff:
+                    continue
+            except ValueError:
+                continue
+            out.append(d)
+        out.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        return out[:limit]
+
     def has_posted_on(self, day: str) -> bool:
         """True se algum post foi publicado no dia ``day`` (YYYY-MM-DD)."""
         return any(p.get("day") == day for p in self._data["posts"])

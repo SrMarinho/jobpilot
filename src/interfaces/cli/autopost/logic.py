@@ -341,6 +341,8 @@ async def run_autopost(cfg: dict) -> None:
 
     count = cfg.get("count", 1)
     base_recent = tracker.recent_topics(days=30)
+    # Rejeições recentes viram exemplo negativo no prompt (anti-padrão).
+    avoid = [d.get("content", "") for d in tracker.rejected_drafts(limit=2)]
     seen: set[str] = set()
     made = 0
 
@@ -356,6 +358,7 @@ async def run_autopost(cfg: dict) -> None:
             recent=base_recent | seen,
             reviewer=reviewer,  # critic loop: gera → review → reescreve
             brief=cfg.get("brief") or "",
+            avoid_examples=avoid,
         )
         draft = await manager.generate()
         if not draft:

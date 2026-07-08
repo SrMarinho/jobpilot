@@ -30,6 +30,7 @@ class AutopostManager:
         recent: set[str] | None = None,
         reviewer: LLMProvider | None = None,
         brief: str = "",
+        avoid_examples: list[str] | None = None,
     ):
         self.drafter = PostDrafter(
             llm_provider,
@@ -37,6 +38,7 @@ class AutopostManager:
             user_name=user_name,
             user_headline=user_headline,
             reviewer=reviewer,
+            avoid_examples=avoid_examples,
         )
         self.source = source or default_source_for_today()
         self.topic = topic

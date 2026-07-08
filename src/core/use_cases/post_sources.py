@@ -96,7 +96,7 @@ def _is_on_stack(text: str) -> bool:
     return any(kw in low for kw in _STACK_KEYWORDS)
 
 
-def _commit_context() -> tuple[str, str]:
+def _commit_context(recent: set[str] | None = None) -> tuple[str, str]:
     try:
         out = subprocess.run(
             ["git", "log", "--since=1 week ago", "--pretty=%s"],
@@ -109,9 +109,16 @@ def _commit_context() -> tuple[str, str]:
         logger.warning(f"commit source git log failed: {e}")
         subjects = []
     if not subjects:
-        return _template_context()
+        return _template_context(recent)
     context = "\n".join(f"- {s}" for s in subjects[:15])
-    return "o que construí essa semana (build-in-public)", context
+    # Tópico por assunto de commit: string fixa fazia todo draft do batch
+    # sair com o mesmo tópico e o dedup nunca disparar. Esgotou = template.
+    recent = recent or set()
+    for s in subjects:
+        topic = f"build-in-public: {s}"
+        if topic.strip().lower() not in recent:
+            return topic, context
+    return _template_context(recent)
 
 
 def _rss_context(recent: set[str] | None = None) -> tuple[str, str]:
@@ -168,7 +175,7 @@ def pick_content(
             raise ValueError("source=manual exige --topic")
         return topic, ""
     if source == "commit":
-        return _commit_context()
+        return _commit_context(recent)
     if source == "rss":
         return _rss_context(recent)
     # template (default)
