@@ -17,12 +17,17 @@ def _to_int(raw: str) -> int | None:
 
 
 # Número adjacente ao rótulo, antes OU depois ("50 visualizações do perfil" e
-# "Visualizações do perfil\n50"). PT + EN.
+# "Visualizações do perfil\n50"). PT + EN. Wording 2026: "Quem viu seu perfil
+# nos últimos 90 dias" com o número ANTES do rótulo ("... 90 dias 77 Quem viu
+# seu perfil nos últimos 90 dias") — só a variante número-antes é segura, a
+# número-depois casaria o "90" de "últimos 90 dias".
 _PATTERNS = (
     r"([\d.,\s]{1,12})\s*visualizaç\w*\s+do\s+perfil",
     r"visualizaç\w*\s+do\s+perfil[^\d]{0,40}([\d.,\s]{1,12})",
     r"([\d.,\s]{1,12})\s*profile views",
     r"profile views[^\d]{0,40}([\d.,\s]{1,12})",
+    r"([\d.,\s]{1,12})\s*quem\s+viu\s+seu\s+perfil",
+    r"([\d.,\s]{1,12})\s*who\s+viewed\s+your\s+profile",
 )
 
 
@@ -47,7 +52,8 @@ class ProfileViewsPage:
             found = await self.page.evaluate(
                 """() => {
                     const t = (document.body.innerText || '').toLowerCase();
-                    return t.includes('visualiza') || t.includes('profile views');
+                    return t.includes('visualiza') || t.includes('profile views')
+                        || t.includes('quem viu') || t.includes('who viewed');
                 }"""
             )
             if found:
@@ -73,7 +79,12 @@ class ProfileViewsPage:
             logger.warning(f"Profile-views page read failed: {e}")
             return None
         low = text.lower()
-        if "visualizaç" not in low and "profile views" not in low:
+        if (
+            "visualizaç" not in low
+            and "profile views" not in low
+            and "quem viu" not in low
+            and "who viewed" not in low
+        ):
             # diagnóstico: revela redirect/paywall/wording novo na próxima run
             try:
                 cur = self.page.url
