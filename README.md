@@ -16,8 +16,8 @@ Automated job application bot with AI-powered evaluation. Currently supports Lin
   - Built-in search: `--keywords "tech recruiter" --network S`
   - Scheduled mode: runs once per day, respects weekly invite limits
 - **Engage** — Likes/comments/shares feed posts with senior-level, grounded comments (anti-junior/anti-hallucination filters)
-- **Autopost** — Generates authored posts via LLM, approval via Telegram, publishes with an **on-brand image card** rendered locally (HTML→PNG, no Canva needed). Batch generation (`--count`) + optional approval TTL
-- **Metrics** — Captures SSI, profile views (90d) and search appearances (7d); shown in the dashboard (`metrics` command)
+- **Autopost** — Generates authored posts via LLM with a critic loop (generator drafts → reviewer critiques → generator rewrites; models configurable via `AUTOPOST_GENERATOR_MODEL`/`AUTOPOST_REVIEWER_MODEL`). Free-form topic/direction via `--brief`, approval via Telegram, publishes with an **on-brand image card** rendered locally (HTML→PNG, no Canva needed). Batch generation (`--count`) with topic dedup + optional approval TTL. Rejected drafts are fed back as negative style examples
+- **Metrics** — Captures SSI, profile views (90d) and search appearances (7d); shown in the dashboard (`profile capture` command)
 - **Persistence** — Backend-swappable via `DATABASE_URL`: JSON files (default) or remote Postgres/Supabase
 - **Search Builder** — Build LinkedIn/Indeed search URLs from CLI flags instead of pasting URLs
 - **Skills Tracker** — Identifies missing skills rejected by AI evaluations (`skills list` / `skills top`)
@@ -71,7 +71,7 @@ LANGCHAIN_MODEL_EVAL=deepseek-r1:14b   # recommended local model
 # DATABASE_URL=postgresql://postgres.<ref>:<senha>@aws-0-<region>.pooler.supabase.com:6543/postgres
 ```
 
-> Postgres mode: `uv run main.py db check|init|migrate|status`. See `docs/persistence.md`.
+> Postgres mode: `uv run main.py config db check|init|migrate|status`. See `docs/persistence.md`.
 
 > Set `HEADLESS=TRUE` to run Chrome in the background (no visible window).
 
@@ -101,22 +101,22 @@ To switch accounts or clear a session, use `logout <site>`.
 
 ## Quick Reference
 
+Commands are grouped: `jobs`, `network`, `content`, `profile`, `insights`, `config` (plus `login`/`logout`/`bot` at top level).
+
 | Command | Purpose |
 |---------|---------|
-| `login <site>` | Open browser to log in to linkedin/glassdoor/indeed |
-| `logout <site>` | Clear saved session for a site |
-| `apply` | Apply to jobs (search by keywords or URL) |
-| `connect` | Send LinkedIn connection requests |
-| `engage` | Like/comment/share feed posts (senior-level comments) |
-| `autopost` | Generate authored post + image card, approve via Telegram |
-| `metrics` | Capture SSI + profile views + search appearances |
-| `dashboard` | Live TUI of applications, engagement, visibility, goals |
-| `test-apply <url>` | Dry-run Easy Apply on a single job (no AI evaluation) |
-| `bot` | Start Telegram bot for remote control |
-| `provider show/set` | View or change LLM backends |
-| `answers list/show/set/fill/clear` | Manage cached form answers |
-| `skills list/top/clear` | View missing skills detected by AI |
-| `report` | Monthly statistics and reports |
+| `login <site>` / `logout <site>` | Open browser to log in / clear saved session |
+| `jobs apply` | Apply to jobs (search by keywords or URL) |
+| `jobs test-apply <url>` | Dry-run Easy Apply on a single job (no AI evaluation) |
+| `jobs skills` / `jobs answers` | Missing skills detected by AI / cached form answers |
+| `network connect` | Send LinkedIn connection requests |
+| `network followup` | Post-connection follow-up DMs |
+| `content engage` | Like/comment/share feed posts (senior-level comments) |
+| `content autopost` | Generate authored post + image card, approve via Telegram (`--brief` for free-form topic/direction) |
+| `profile capture` | Capture SSI + profile views + search appearances |
+| `insights dashboard` | Live TUI of applications, engagement, visibility, goals |
+| `insights report` | Weekly/monthly statistics and reports |
+| `config provider show/set` | View or change LLM backends |
 
 ## Usage
 
@@ -128,19 +128,19 @@ To switch accounts or clear a session, use `logout <site>`.
 
 ```bash
 # First run — keywords required
-uv run main.py apply --keywords "python developer" --site linkedin --resume "resume.pdf" --workplace remote --date-posted 24h
+uv run main.py jobs apply --keywords "python developer" --site linkedin --resume "resume.pdf" --workplace remote --date-posted 24h
 
 # Subsequent runs — reuses last saved search params
-uv run main.py apply
+uv run main.py jobs apply
 
 # Resume from the last page where it stopped
-uv run main.py apply --continue
+uv run main.py jobs apply --continue
 
 # Resume a specific site's saved config
-uv run main.py apply --continue --site indeed
+uv run main.py jobs apply --continue --site indeed
 
 # Raw URL fallback (still supported)
-uv run main.py apply --url "JOB_SEARCH_URL" --resume "path/to/resume.pdf"
+uv run main.py jobs apply --url "JOB_SEARCH_URL" --resume "path/to/resume.pdf"
 ```
 
 All parameters are saved per site (`apply_linkedin`, `apply_indeed`, `apply_glassdoor`) and restored automatically on the next run.
@@ -170,7 +170,7 @@ All parameters are saved per site (`apply_linkedin`, `apply_indeed`, `apply_glas
 
 **Example (LinkedIn):**
 ```bash
-uv run main.py apply \
+uv run main.py jobs apply \
   --keywords "python developer" \
   --site linkedin \
   --workplace remote \
@@ -188,16 +188,16 @@ uv run main.py apply \
 
 ```bash
 # First run — keywords required
-uv run main.py connect --keywords "tech recruiter" --network S
+uv run main.py network connect --keywords "tech recruiter" --network S
 
 # Subsequent runs — reuses last saved search
-uv run main.py connect
+uv run main.py network connect
 
 # Resume from the last page where it stopped
-uv run main.py connect --continue
+uv run main.py network connect --continue
 
 # Raw URL fallback
-uv run main.py connect --url "PEOPLE_SEARCH_URL"
+uv run main.py network connect --url "PEOPLE_SEARCH_URL"
 ```
 
 | Parameter | Required | Description |
@@ -221,19 +221,19 @@ View the current configuration or switch backends without editing `.env` manuall
 
 ```bash
 # Show current providers
-uv run main.py provider show
+uv run main.py config provider show
 
 # Use Claude for job evaluation
-uv run main.py provider set eval claude
+uv run main.py config provider set eval claude
 
 # Use Ollama for job evaluation
-uv run main.py provider set eval langchain --model llama3.1:8b
+uv run main.py config provider set eval langchain --model llama3.1:8b
 
 # Use Claude for form Q&A
-uv run main.py provider set llm claude
+uv run main.py config provider set llm claude
 
 # Use a specific Claude model
-uv run main.py provider set eval claude --model claude-opus-4-6
+uv run main.py config provider set eval claude --model claude-opus-4-6
 ```
 
 | Target | Description |
@@ -251,19 +251,19 @@ JobPilot caches answers to form questions in `files/form_answers.json` so it doe
 
 ```bash
 # Show questions with missing answers (numbered)
-uv run main.py answers list
+uv run main.py jobs answers list
 
 # Show all cached answers
-uv run main.py answers show
+uv run main.py jobs answers show
 
 # Set an answer by number (from list or show)
-uv run main.py answers set 15 "25"
+uv run main.py jobs answers set 15 "25"
 
 # Answer all missing questions interactively
-uv run main.py answers fill
+uv run main.py jobs answers fill
 
 # Clear all cached answers
-uv run main.py answers clear
+uv run main.py jobs answers clear
 ```
 
 > If a required field has no answer (cache miss and AI doesn't know), the application is automatically aborted for that job.
@@ -299,23 +299,23 @@ Prints a summary to the terminal. Use `--telegram` to also send via Telegram.
 
 ```bash
 # Current month (default)
-uv run main.py report
+uv run main.py insights report
 
 # Previous month
-uv run main.py report --prev
+uv run main.py insights report --prev
 
 # Specific month
-uv run main.py report --month 2026-03
+uv run main.py insights report --month 2026-03
 
 # Annual summary
-uv run main.py report --year 2026
+uv run main.py insights report --year 2026
 
 # Any of the above + send via Telegram
-uv run main.py report --telegram
-uv run main.py report --prev --telegram
+uv run main.py insights report --telegram
+uv run main.py insights report --prev --telegram
 
 # Scheduled mode: sends via Telegram only once per month, skips if already sent
-uv run main.py report --scheduled
+uv run main.py insights report --scheduled
 ```
 
 The report includes: applications sent, connections made, rejection breakdown by reason, seniority level breakdown, match rate, average estimated salary, top skills that blocked jobs this month, and evolution vs the previous month (↑/↓).
@@ -330,19 +330,19 @@ JobPilot tracks skills that are flagged as missing during AI job evaluation. Thi
 
 ```bash
 # List all missing skills sorted by demand frequency
-uv run main.py skills list
+uv run main.py jobs skills list
 
 # Filter by category
-uv run main.py skills list --category python
+uv run main.py jobs skills list --category python
 
 # Filter by learning difficulty (1=days, 5=1+ year)
-uv run main.py skills list --level 3
+uv run main.py jobs skills list --level 3
 
 # Show top N most demanded skills
-uv run main.py skills top --n 15
+uv run main.py jobs skills top --n 15
 
 # Clear all tracked skills
-uv run main.py skills clear
+uv run main.py jobs skills clear
 ```
 
 Each skill entry includes:
@@ -359,10 +359,10 @@ Test the form-filling pipeline on a single job without going through the evaluat
 
 ```bash
 # Test apply — fills everything but does NOT submit
-uv run main.py test-apply "https://www.linkedin.com/jobs/view/1234567890" --no-submit
+uv run main.py jobs test-apply "https://www.linkedin.com/jobs/view/1234567890" --no-submit
 
 # Test with custom resume
-uv run main.py test-apply "https://www.linkedin.com/jobs/view/1234567890" --resume "resume.pdf"
+uv run main.py jobs test-apply "https://www.linkedin.com/jobs/view/1234567890" --resume "resume.pdf"
 ```
 
 The browser stays open for inspection. Press Enter to close it. No evaluation is performed — the form is always filled regardless of fit.

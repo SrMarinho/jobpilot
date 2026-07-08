@@ -279,6 +279,12 @@ O comentário tem A/B test embutido (variantes `insight`/`pergunta`); a variante
 é gravada e aparece no relatório semanal. Para aprovação humana antes de postar,
 use `/engage` no bot (human-in-loop).
 
+Filtros pré-LLM (env): `ENGAGE_AUTHOR_DEV_ONLY=1` (só autor da área de software;
+headline ilegível não bloqueia) e `ENGAGE_QUESTION_ONLY=1` (só post que faz pergunta).
+Comentário usa pipeline multi-modelo (`ENGAGE_GENERATOR_MODEL`/`ENGAGE_REVIEWER_MODEL`/
+`ENGAGE_COMPRESSOR_MODEL`; default Sonnet→Fable→Haiku). Run que engaja 0 posts manda
+alerta ⚠️ no Telegram (feed esgotado ou filtros bloqueando).
+
 ---
 
 ### `content autopost`
@@ -288,26 +294,41 @@ Ver `docs/specs/autopost-feature.md`.
 
 ```bash
 uv run main.py content autopost                           # gera draft + envia p/ Telegram
+uv run main.py content autopost --brief "tema + detalhes/ângulo, curto ou longo"
 uv run main.py content autopost --source manual --topic "..." --dry-run
-uv run main.py content autopost --no-telegram             # printa stdout
+uv run main.py content autopost --count 5                 # batch com dedup de tópico
+uv run main.py content autopost --no-telegram             # printa stdout (não salva)
 uv run main.py content autopost --list                    # drafts pendentes + aprovados
 uv run main.py content autopost --approve <draft_id>      # aprova via CLI
-uv run main.py content autopost --publish-approved        # publica todos aprovados
+uv run main.py content autopost --drain                   # só drena aprovações/rejeições
+uv run main.py content autopost --publish                 # drena + publica 1 aprovado (FIFO)
+uv run main.py content autopost --publish <draft_id>      # publica um draft específico
 ```
 
-**Fluxo assíncrono:** `autopost` gera e sai → usuário aprova (Telegram tap **ou** `--approve`) → `--publish-approved` publica.
+**Fluxo assíncrono:** `autopost` gera e sai → usuário aprova (Telegram tap **ou** `--approve`) → `--publish` publica.
 
 | Flag | Descrição |
 |------|-----------|
-| `--source rss\|commit\|template\|manual` | Fonte de conteúdo |
+| `--source rss\|commit\|template\|manual` | Fonte de conteúdo (default por weekday; commit varia o tópico por assunto de commit) |
 | `--topic "string"` | Tema custom (manual) |
-| `--format snippet\|story\|dissertativo\|contrarian` | Formato do post |
+| `--brief "texto"` | Tema/direção livre do autor (curto ou longo, com detalhes e ângulo). Implica `--source manual`; tópico = 1ª sentença. Entra no prompt de geração E como critério do reviewer |
+| `--format snippet\|story\|dissertativo\|contrarian` | Formato do post — junto com a plataforma, dita o tamanho natural (sem limite fixo de chars; guarda só no cap do LinkedIn, 3000) |
+| `--count N` | Batch: N drafts num run, dedup de tópico entre eles + janela 30d |
+| `--expires-hours H` | TTL de aprovação (0 = sem expirar) |
 | `--dry-run` | Gera + Telegram preview, não registra pending |
-| `--no-telegram` | Stdout apenas |
+| `--no-telegram` | Stdout apenas (não salva draft) |
 | `--scheduled` | Respeita skip-today |
-| `--list` | Lista drafts pending + approved com IDs |
+| `--list` / `--list-posted` | Lista drafts pending+approved / publicados |
 | `--approve <id>` | Aprova draft por ID (CLI) |
-| `--publish-approved` | Drena `getUpdates` Telegram + publica todos aprovados |
+| `--drain` | Só drena aprovações/rejeições do Telegram p/ o banco (não publica) |
+| `--publish [id]` | Sem valor: drena + publica 1 aprovado (FIFO). Com id: publica esse draft |
+| `--regen-image <id>` | Regera o card PNG de um draft |
+| `--daily` | Orquestrador diário: publica aprovado, avisa pendente ou gera novo |
+
+**Pipeline multi-modelo (critic loop):** gera → Fable revisa (com o brief como critério) → regera.
+`AUTOPOST_GENERATOR_MODEL` (gera+reescreve) e `AUTOPOST_REVIEWER_MODEL` (critica), ex.:
+`claude-opus-4-8` + `claude-fable-5`. Sem os envs: auto-crítica com o provider único.
+Drafts rejeitados (janela 30d, últimos 2) entram no prompt como exemplo negativo de estilo.
 
 ---
 
