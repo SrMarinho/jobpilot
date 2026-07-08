@@ -32,8 +32,18 @@ def resolve_autopost_config(
     force: bool,
     count: int = 1,
     expires_hours: int = 0,
+    brief: Optional[str] = None,
 ) -> dict | None:
     """Returns config dict or None if scheduled run should skip."""
+    # --brief: tema/direção livre do autor. Sem --source/--topic explícitos,
+    # vira um post manual com o tópico derivado da primeira linha do brief.
+    brief = (brief or "").strip()
+    if brief:
+        if not source:
+            source = "manual"
+        if not topic:
+            first_line = brief.splitlines()[0].strip()
+            topic = first_line[:100] or "post autoral"
     if scheduled and not force:
         if is_already_ran_today("autopost"):
             logger.info("Autopost já rodou hoje. Skipping (exit 0).")
@@ -50,6 +60,7 @@ def resolve_autopost_config(
         "resume_path": resume_path,
         "source": source,
         "topic": topic,
+        "brief": brief,
         "format": fmt,
         "dry_run": dry_run,
         "no_telegram": no_telegram,
@@ -300,7 +311,23 @@ async def run_autopost(cfg: dict) -> None:
     """
     os.environ.setdefault("LLM_PROVIDER_EVAL", "langchain")
     provider = get_eval_provider()
-    logger.info(f"Using LLM for autopost: {provider.describe()}")
+    # Pipeline multi-modelo opcional (mesmo padrão do comment_pipeline):
+    # AUTOPOST_GENERATOR_MODEL gera+reescreve, AUTOPOST_REVIEWER_MODEL critica.
+    gen_model = os.getenv("AUTOPOST_GENERATOR_MODEL")
+    rev_model = os.getenv("AUTOPOST_REVIEWER_MODEL")
+    if gen_model:
+        from src.core.ai.llm_provider import ClaudeProvider
+
+        provider = ClaudeProvider(model=gen_model)
+    reviewer = provider
+    if rev_model:
+        from src.core.ai.llm_provider import ClaudeProvider
+
+        reviewer = ClaudeProvider(model=rev_model)
+    logger.info(
+        f"Using LLM for autopost: {provider.describe()} "
+        f"(reviewer: {reviewer.describe()})"
+    )
 
     tracker = PostedTracker()
     tracker.expire_stale()
@@ -320,7 +347,8 @@ async def run_autopost(cfg: dict) -> None:
             topic=cfg["topic"],
             fmt=cfg["format"],
             recent=base_recent | seen,
-            reviewer=provider,  # critic loop (auto-crítica): gera → review → reescreve
+            reviewer=reviewer,  # critic loop: gera → review → reescreve
+            brief=cfg.get("brief") or "",
         )
         draft = await manager.generate()
         if not draft:
