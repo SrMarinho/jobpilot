@@ -13,7 +13,9 @@ from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.content_filters import is_blacklisted
 
 _MIN_CHARS = 80
-_HARD_CAP_CHARS = 900
+# 1500 dá espaço p/ explicar o mecanismo com fio condutor (900 espremia o
+# post em frases telegráficas). LinkedIn aceita 3000; dobra "ver mais" ~210.
+_HARD_CAP_CHARS = 1500
 # TODO/FIXME são marcadores de código → match SÓ em maiúsculas (case-sensitive),
 # senão a palavra PT-BR "todo"/"toda" (= "all") derruba posts legítimos. Os
 # placeholders em <> ficam case-insensitive.
@@ -93,7 +95,8 @@ class PostDrafter:
             f"Público: engenheiros sêniores. Assuma que já sabem o básico — "
             f"NÃO explique conceitos elementares nem defina termos.\n\n"
             f"Regras estritas:\n"
-            f"- Curto e objetivo. Alvo 400-700 caracteres, MÁXIMO 900.\n"
+            f"- Objetivo, mas com espaço pra explicar. Alvo 700-1200 "
+            f"caracteres, MÁXIMO {_HARD_CAP_CHARS}.\n"
             f"- Primeira linha = hook forte (contrarian, número, vulnerabilidade ou pergunta).\n"
             f"- Toda frase carrega peso. Zero filler.\n"
             f"- UMA ideia central, desenvolvida com fio condutor: cada frase "
@@ -165,7 +168,7 @@ class PostDrafter:
         # comment_pipeline, que conta em Python e delega só o corte).
         return (
             f"O post de LinkedIn abaixo tem {len(text)} caracteres; o limite "
-            f"duro é {_HARD_CAP_CHARS}. Reescreva-o com NO MÁXIMO 700 "
+            f"duro é {_HARD_CAP_CHARS}. Reescreva-o com NO MÁXIMO 1200 "
             "caracteres. Mantenha o hook, a substância técnica e as hashtags; "
             "corte IDEIAS inteiras, não as conexões entre frases — o texto "
             "final deve continuar fluido, não telegráfico. NÃO adicione nada "
