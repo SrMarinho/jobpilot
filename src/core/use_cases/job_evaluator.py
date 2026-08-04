@@ -61,6 +61,22 @@ _LEVEL_KEYWORDS: dict[str, list[str]] = {
 }
 
 
+def _parse_salary(raw: str) -> int | None:
+    """Salário em reais inteiros a partir do texto do LLM.
+
+    O prompt pede número puro, mas o modelo às vezes formata ("R$ 11.000,00").
+    Tirar só os não-dígitos transformaria isso em 1100000 — cem vezes o valor,
+    que vai direto pro campo de pretensão do formulário. Então a parte decimal
+    (vírgula ou ponto seguido de exatamente 2 dígitos no fim) é cortada antes.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    text = re.sub(r"[.,]\d{2}$", "", text)
+    digits = re.sub(r"\D", "", text)
+    return int(digits) if digits else None
+
+
 def _parse_eval_line(line: str) -> EvalResult:
     """Parse a YES/NO eval line (with or without JOB_N prefix stripped).
 
@@ -81,10 +97,7 @@ def _parse_eval_line(line: str) -> EvalResult:
 
         if is_match:
             if len(parts) >= 2:
-                try:
-                    salary = int(re.sub(r"\D", "", parts[1]))
-                except Exception:
-                    salary = None
+                salary = _parse_salary(parts[1])
             reason = (
                 parts[2].strip()
                 if len(parts) >= 3

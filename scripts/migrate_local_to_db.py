@@ -1,4 +1,5 @@
 """Migra dados locais JSON → Supabase (upsert — não apaga dados existentes)."""
+
 import json
 import sys
 from pathlib import Path

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Sem isto os testes que instanciam tracker escreveriam no Postgres real
+      # caso a variável vaze do ambiente. Vazio = backend JSON local.
+      DATABASE_URL: ""
+      USER_NAME: CI
+      USER_HEADLINE: CI
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # --frozen: falha se o uv.lock estiver desatualizado em relação ao
+        # pyproject, em vez de resolver silenciosamente outra versão.
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Format check
+        run: uv run ruff format --check
+
+      - name: Tests
+        run: uv run pytest

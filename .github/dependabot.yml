@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Um scraper depende do comportamento exato do Playwright, então atualização
+  # é revisada, não automática. Semanal e agrupada pra não virar ruído de PR.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        patterns: ["ruff", "pytest*", "pre-commit"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

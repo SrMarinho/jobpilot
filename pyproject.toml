@@ -1,30 +1,59 @@
 [project]
 name = "jobpilot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Automated job application bot for LinkedIn, Glassdoor and Indeed"
 readme = "README.md"
 requires-python = ">=3.12"
+# Tetos de major: um scraper depende do comportamento exato do Playwright e da
+# TUI. Um major novo entrando sozinho quebraria runs agendados sem aviso.
 dependencies = [
-    "python-dotenv>=1.2.1",
-    "ruff>=0.14.5",
-    "playwright>=1.59.0",
-    "playwright-stealth>=2.0.0",
-    "claude-agent-sdk>=0.0.14",
-    "pypdf>=5.0.0",
-    "setuptools>=82.0.1",
-    "requests>=2.33.1",
-    "langchain-ollama>=0.2.0",
-    "langchain-deepseek>=0.1.0",
-    "typer>=0.15.0",
-    "rich>=13.0",
-    "textual>=0.80.0",
-    "filelock>=3.0",
-    "feedparser>=6.0",
-    "psycopg[binary]>=3.2",
-    "psycopg-pool>=3.2",
+    "python-dotenv>=1.2.1,<2",
+    "playwright>=1.59.0,<2",
+    "playwright-stealth>=2.0.0,<3",
+    # 0.0.x: sem contrato de compatibilidade, então pin apertado.
+    "claude-agent-sdk>=0.0.14,<0.1",
+    "pypdf>=5.0.0,<7",
+    "requests>=2.33.1,<3",
+    "langchain-ollama>=0.2.0,<1",
+    "langchain-deepseek>=0.1.0,<1",
+    "typer>=0.15.0,<1",
+    "rich>=15.0,<16",
+    "textual>=8.0,<9",
+    "filelock>=3.0,<4",
+    "feedparser>=6.0,<7",
+    "psycopg[binary]>=3.2,<4",
+    "psycopg-pool>=3.2,<4",
 ]
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.6.0",
+    # ruff era dependência de runtime — ia junto pra quem instalasse o pacote.
+    "ruff>=0.14.5",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
 ]
+
+[tool.pytest.ini_options]
+# testpaths explícito: sem ele o pytest coletaria
+# src/automation/tasks/test_apply.py, que é uma feature da CLI e não um teste.
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+# O projeto não é instalado como pacote (roda via `uv run main.py`), então a
+# raiz do repo precisa entrar no sys.path pro `import src...` resolver.
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+# Mantém o conjunto que o projeto já passava (default do ruff). Ligar "I"
+# (ordenação de imports) e "UP" (sintaxe moderna) rende ~150 correções
+# automáticas mas mexe em quase todo arquivo — vale como commit próprio, não
+# misturado a mudança de comportamento.
+select = ["E4", "E7", "E9", "F"]
+# E501 de fora: o formatter já cuida do comprimento, e prompt de LLM e seletor
+# xpath são longos por natureza.
+ignore = ["E501"]
