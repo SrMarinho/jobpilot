@@ -10,8 +10,18 @@ CLI (main.py, Typer)
   └─ Orchestration (src/automation/tasks/)
        ├─ Site pages (src/automation/pages/)
        └─ Business logic (src/core/use_cases/)
-            └─ AI providers (src/core/ai/)
+            ├─ AI providers (src/core/ai/)
+            └─ Entities (src/core/entities/)     ← camada mais interna
 ```
+
+A dependência aponta sempre pra dentro: `entities` não importa nada do projeto,
+`use_cases` importa `entities`, `automation` importa `use_cases`, e a CLI importa
+tudo. `src/core/entities/` guarda `EvalResult` (veredito do LLM sobre uma vaga) e
+`AppliedJob`/`RejectedJob` (registro de candidatura, cujo `as_record()` é o único
+lugar que mapeia entidade → coluna do banco).
+
+`src/config/` é infraestrutura (env, logger); `src/core/config/` é política de
+negócio parametrizável (ex.: faixas salariais do prompt de avaliação).
 
 ## Request flow (apply)
 
@@ -70,9 +80,9 @@ Implement site-specific selectors and interaction:
 
 | File | Responsibility |
 |------|---------------|
-| `job_evaluator.py` | Quick rejects (title, language, tech) + AI evaluation (single LLM call) |
-| `job_application_handler.py` | LinkedIn/Glassdoor Easy Apply form filling (multi-step) |
-| `indeed_application_handler.py` | Indeed apply form filling |
+| `job_evaluator.py` | Quick rejects (title, language, tech) + AI evaluation. `_build_prompt` serve single e batch — um prompt só, `EvalResult` de retorno |
+| `apply/` | Easy Apply do LinkedIn/Glassdoor, quatro responsabilidades separadas (ver abaixo) |
+| `indeed_application_handler.py` | Indeed apply form filling (reusa `FormAnswerer`/`FieldFiller`) |
 | `applied_jobs_tracker.py` | Deduplication, backend-aware (JSON or Postgres) |
 | `skills_tracker.py` | Tracks missing skills from rejections, AI-categorizes by type and difficulty |
 | `linkedin_profile_skills.py` | Desired LinkedIn profile skills: load/save/diff + `from_skills_tracker()` |
@@ -82,6 +92,29 @@ Implement site-specific selectors and interaction:
 | `salary_estimator.py` | AI salary estimation from job description and market data |
 | `invitation_handler.py` | LinkedIn connection invite sending |
 | `monthly_report.py` | Aggregates applied/rejected/connections per month |
+
+#### Easy Apply (`src/core/use_cases/apply/`)
+
+Quatro peças compostas — não herdadas — pelo orquestrador:
+
+| Módulo | Responsabilidade |
+|--------|-----------------|
+| `form_answerer.py` | Decide **o que** responder: cache primeiro, LLM depois. Sem DOM — por isso o Indeed reusa |
+| `field_filler.py` | Sabe **como** escrever num campo e descobrir seu rótulo. Sem LLM |
+| `modal_driver.py` | Abre, espera, inspeciona e fecha o modal do Easy Apply |
+| `easy_apply.py` | `EasyApplyHandler`: o loop de etapas do formulário até enviar |
+
+### Selectors (`src/automation/pages/selectors.py`)
+
+Cada campo de uma page é declarado como **lista de candidatos** em ordem de
+preferência; `first_visible` / `first_enabled` / `text_or_empty` resolvem o
+primeiro que aparece. Quando nenhum casa, sai um WARNING nomeado (`campo=...`)
+em vez de string vazia silenciosa — é o sinal de que o layout do site mudou.
+
+Timeouts são nomeados (`T_FAST`, `T_NORMAL`, `T_SLOW`), não números soltos.
+
+> Nunca use `locator("a, b")` pra fazer fallback: isso casa os **dois**
+> seletores e estoura strict mode quando ambos existem na página.
 
 ### AI providers (`src/core/ai/`)
 
@@ -98,11 +131,23 @@ Converts CLI flags to search URLs for LinkedIn and Indeed. Glassdoor uses raw `-
 
 ### Bot (`src/bot/`)
 
-Telegram long-polling bot. Runs the same orchestrators in background threads with a shared `stop_event`.
+Telegram long-polling bot. Runs the same orchestrators in background threads with
+a shared `stop_event`. Detalhes em [bot.md](bot.md).
+
+### Config (`src/config/`)
+
+`env.py` lê env de forma tipada (`env_str`/`env_int`/`env_bool`/`env_required`),
+sempre **no momento do acesso** — o bot ajusta `os.environ` em runtime, então um
+valor congelado no import seria ignorado. `sections.py` agrupa por domínio
+(`telegram`, `user`, `engage`, `autopost`), e é onde se descobre que variáveis
+existem sem varrer o código.
 
 ### Utils (`src/utils/`)
 
-`telegram.py` — Telegram message sending helper (used by bot and report).
+`telegram.py` — envio pro Telegram. Um único `_post()` com `raise_for_status` e
+retry com backoff em 429/5xx. Notificações são fire-and-forget: chamadas de dentro
+de corrotina, vão pra uma thread em vez de travar o event loop (e com ele o
+browser) pelo tempo do POST.
 
 ### Persistence (`src/core/persistence/`)
 
@@ -110,8 +155,12 @@ All 14 trackers persist through a backend-swappable layer selected by the
 `DATABASE_URL` env var: **JSON** files (`.local/files/`, default) or **Postgres**
 (managed, remote). Two primitives — `KeyedRepo` (typed tables, per-row upsert) and
 `DocRepo` (whole-doc JSONB in `kv_store`) — back every tracker; each tracker only
-swaps its `_load`/`_save`, keeping public APIs and call-sites unchanged. CLI:
-`db check|init|migrate|status`. Full details in [persistence.md](persistence.md).
+swaps its `_load`/`_save`, keeping public APIs and call-sites unchanged.
+
+`DailySnapshotTracker` é a base dos trackers de um-registro-por-dia (SSI,
+profile views, search appearances): subclasses só declaram a tabela e o payload
+do dia. CLI: `db check|init|migrate|status`. Full details in
+[persistence.md](persistence.md).
 
 ## Adding a new job board
 

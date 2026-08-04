@@ -485,12 +485,17 @@ jobpilot/
     │       └── connection_manager.py
     ├── bot/
     │   └── telegram_bot.py                   # Telegram bot (polling + command handling)
+    ├── config/
+    │   ├── env.py                            # Typed env readers (str/int/bool/required)
+    │   ├── sections.py                       # Config by domain (telegram/user/engage/autopost)
+    │   └── settings.py                       # Logger, paths, DATABASE_URL
     ├── core/
     │   ├── ai/
     │   │   └── llm_provider.py               # LLM abstraction (Claude / Ollama)
+    │   ├── entities/                         # Pure domain: EvalResult, AppliedJob
     │   └── use_cases/                        # Site-agnostic business logic
-    │       ├── job_evaluator.py              # AI job evaluation
-    │       ├── job_application_handler.py    # LinkedIn/Glassdoor Easy Apply forms
+    │       ├── job_evaluator.py              # AI job evaluation → EvalResult
+    │       ├── apply/                        # Easy Apply: answerer/filler/modal/handler
     │       ├── indeed_application_handler.py # Indeed apply forms
     │       ├── applied_jobs_tracker.py       # Deduplication persistence
     │       ├── salary_estimator.py           # AI salary estimation
