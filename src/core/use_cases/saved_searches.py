@@ -8,11 +8,10 @@ molde dos outros trackers.
 
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.doc_repo import DocRepo
 
-_FILES_DIR = Path(".local") / "files"
-SAVED_SEARCHES_FILE = _FILES_DIR / "saved_searches.json"
+SAVED_SEARCHES_FILE = files_dir / "saved_searches.json"
 
 
 class SavedSearches:

@@ -11,11 +11,10 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.doc_repo import DocRepo
 
-_FILES_DIR = Path(".local") / "files"
-POSTED_HISTORY_FILE = _FILES_DIR / "posted_history.json"
+POSTED_HISTORY_FILE = files_dir / "posted_history.json"
 
 _HARD_CAP = 300
 

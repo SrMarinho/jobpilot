@@ -3,13 +3,12 @@ from collections import Counter
 from datetime import datetime, date
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.db import is_db_enabled
 from src.core.persistence.doc_repo import DocRepo
 from src.core.persistence.keyed_repo import KeyedRepo
 
-_FILES_DIR = Path(".local") / "files"
-ENGAGED_POSTS_FILE = _FILES_DIR / "engaged_posts.json"
+ENGAGED_POSTS_FILE = files_dir / "engaged_posts.json"
 
 _HARD_CAP = 500
 
@@ -38,7 +37,7 @@ class EngagedPostsTracker:
         return {}
 
     def _save(self):
-        _FILES_DIR.mkdir(exist_ok=True, parents=True)
+        files_dir.mkdir(exist_ok=True, parents=True)
         engaged = self._data.get("engaged", [])
         if len(engaged) > _HARD_CAP:
             self._data["engaged"] = engaged[-_HARD_CAP:]

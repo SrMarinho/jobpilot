@@ -13,13 +13,12 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.db import is_db_enabled
 from src.core.persistence.keyed_repo import KeyedRepo
 from src.core.use_cases.skills_tracker import _canonical_skill
 
-_FILES_DIR = Path(".local") / "files"
-HIRED_PROFILES_FILE = _FILES_DIR / "hired_profiles.json"
+HIRED_PROFILES_FILE = files_dir / "hired_profiles.json"
 
 _HARD_CAP = 1000
 _DEFAULT_WINDOW_DAYS = 90
@@ -47,7 +46,7 @@ class HiredSkillsTracker:
         return {}
 
     def _save(self):
-        _FILES_DIR.mkdir(exist_ok=True, parents=True)
+        files_dir.mkdir(exist_ok=True, parents=True)
         profiles = self._data.get("profiles", [])
         if len(profiles) > _HARD_CAP:
             self._data["profiles"] = profiles[-_HARD_CAP:]

@@ -8,12 +8,11 @@ configuração persistida — o cálculo do realizado vive no report package.
 import json
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.db import is_db_enabled
 from src.core.persistence.keyed_repo import KeyedRepo
 
-_FILES_DIR = Path(".local") / "files"
-GOALS_FILE = _FILES_DIR / "goals.json"
+GOALS_FILE = files_dir / "goals.json"
 
 # Metas suportadas e seus rótulos no relatório.
 GOAL_KEYS = ("applications", "connections", "posts", "comments")
@@ -43,7 +42,7 @@ class GoalsTracker:
         return {}
 
     def _save(self) -> None:
-        _FILES_DIR.mkdir(exist_ok=True, parents=True)
+        files_dir.mkdir(exist_ok=True, parents=True)
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(
             json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"

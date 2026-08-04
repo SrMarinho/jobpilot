@@ -5,16 +5,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable
-from pathlib import Path
 from playwright.async_api import Page
 from src.core.entities.eval_result import EvalResult
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
 from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
 from src.utils.telegram import send_telegram
-from src.config.settings import logger
-
-_FILES_DIR = Path(".local") / "files"
+from src.config.settings import files_dir, logger
 
 
 def detect_level(title: str, description: str = "") -> str:
@@ -262,7 +259,7 @@ class BaseJobApplicationManager(ABC):
             apply_queue.task_done()
 
     def _notify_apply_failed(self, item: JobItem, reason: str):
-        _manual_file = _FILES_DIR / "manual_apply.json"
+        _manual_file = files_dir / "manual_apply.json"
         _manual: dict = {}
         if _manual_file.exists():
             try:

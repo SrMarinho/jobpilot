@@ -5,14 +5,12 @@ DATABASE_URL setado, leriam o PG vazio) e escreve nas tabelas/kv. Idempotente:
 tabelas tipadas via replace_all, kv via upsert. Os JSON não são apagados."""
 
 import json
-from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.db import connection
 from src.core.persistence.doc_repo import DocRepo
 from src.core.persistence.keyed_repo import KeyedRepo
 
-_FILES_DIR = Path(".local") / "files"
 
 # ns kv -> arquivo JSON (doc inteiro)
 _KV_FILES = {
@@ -38,7 +36,7 @@ _TYPED_TABLES = (
 
 
 def _read_json(name: str):
-    path = _FILES_DIR / name
+    path = files_dir / name
     if not path.exists():
         return None
     try:
@@ -103,11 +101,11 @@ def migrate_json_to_pg() -> dict[str, int]:
     for ns, name in _KV_FILES.items():
         data = _read_json(name)
         if data is not None:
-            DocRepo(ns, json_file=_FILES_DIR / name).save(data)
+            DocRepo(ns, json_file=files_dir / name).save(data)
             counts[f"kv:{ns}"] = 1
 
     # weekly_reports: pasta de arquivos -> kv por week
-    reports_dir = _FILES_DIR / "weekly_reports"
+    reports_dir = files_dir / "weekly_reports"
     wr = 0
     if reports_dir.is_dir():
         repo = DocRepo("weekly_reports", json_dir=reports_dir)
@@ -124,7 +122,7 @@ def migrate_json_to_pg() -> dict[str, int]:
 
 
 def _write_json(name: str, data) -> None:
-    path = _FILES_DIR / name
+    path = files_dir / name
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -187,7 +185,7 @@ def migrate_pg_to_json() -> dict[str, int]:
 
     # kv docs (doc inteiro por ns)
     for ns, name in _KV_FILES.items():
-        data = DocRepo(ns, json_file=_FILES_DIR / name).load()
+        data = DocRepo(ns, json_file=files_dir / name).load()
         if data:
             _write_json(name, data)
             counts[f"kv:{ns}"] = 1

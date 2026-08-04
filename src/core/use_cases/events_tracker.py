@@ -14,11 +14,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.doc_repo import DocRepo
 
-_FILES_DIR = Path(".local") / "files"
-EVENTS_FILE = _FILES_DIR / "events.json"
+EVENTS_FILE = files_dir / "events.json"
 
 _HARD_CAP = 5000
 

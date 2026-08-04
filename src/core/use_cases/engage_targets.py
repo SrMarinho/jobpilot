@@ -5,13 +5,10 @@ comentar no feed aleatório. Aqui só persiste/serve a lista de termos-alvo
 (nomes de empresa ou pessoa); o filtro vive no EngagementManager.
 """
 
-from pathlib import Path
-
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 from src.core.persistence.doc_repo import DocRepo
 
-_FILES_DIR = Path(".local") / "files"
-ENGAGE_TARGETS_FILE = _FILES_DIR / "engage_targets.json"
+ENGAGE_TARGETS_FILE = files_dir / "engage_targets.json"
 
 
 def _doc() -> DocRepo:

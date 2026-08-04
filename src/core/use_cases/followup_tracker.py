@@ -12,9 +12,9 @@ from datetime import datetime
 from pathlib import Path
 
 from src.core.persistence.doc_repo import DocRepo
+from src.config.settings import files_dir
 
-_FILES_DIR = Path(".local") / "files"
-FOLLOWUP_FILE = _FILES_DIR / "followup_dms.json"
+FOLLOWUP_FILE = files_dir / "followup_dms.json"
 
 _HARD_CAP = 500
 

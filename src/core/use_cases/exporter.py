@@ -9,9 +9,8 @@ import csv
 import json
 from pathlib import Path
 
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
 
-_FILES_DIR = Path(".local") / "files"
 
 _APPLIED_FIELDS = [
     "job_id",
@@ -28,7 +27,7 @@ _REJECTED_FIELDS = ["job_id", "title", "site", "reason", "rejected_at", "url"]
 
 
 def _load(name: str) -> dict:
-    path = _FILES_DIR / name
+    path = files_dir / name
     if not path.exists():
         return {}
     try:
