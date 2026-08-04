@@ -54,7 +54,7 @@ class FollowupManager:
         Retorna o número de drafts criados.
         """
         from src.automation.pages.connections_page import ConnectionsPage
-        from src.utils.telegram import send_telegram_buttons
+        from src.utils.telegram import send_telegram_buttons_async
 
         page_obj = ConnectionsPage(self.page)
         connections = await page_obj.recent_connections(limit=self.max_dms * 3)
@@ -76,7 +76,7 @@ class FollowupManager:
                 f"💬 <b>Follow-up DM</b>\n<b>{name}</b>\n<i>{headline[:80]}</i>\n\n"
             )
             try:
-                send_telegram_buttons(
+                await send_telegram_buttons_async(
                     header + content, followup_buttons(draft_id), topic="followup"
                 )
             except Exception as e:

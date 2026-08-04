@@ -1,8 +1,10 @@
 import os
 import threading
+from typing import Awaitable, Callable
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 
+from src.automation.checkpoint import CheckpointError
 from src.config.settings import logger
 from src.interfaces.cli.browser import (
     create_context,
@@ -12,6 +14,11 @@ from src.interfaces.cli.browser import (
 from src.utils.async_utils import run_async
 from src.automation.tasks.connection_manager import ConnectionManager
 from src.automation.tasks.job_application_manager import create_application_manager
+
+CHECKPOINT_MSG = (
+    "🚧 <b>Checkpoint do LinkedIn</b> — a automação parou p/ não arriscar "
+    "bloqueio.\nAbra o Chrome e resolva a verificação manualmente."
+)
 
 
 class BrowserTaskRunner:
@@ -117,65 +124,88 @@ class BrowserTaskRunner:
             return
         self._spawn(lambda: self._followup_send_async(draft_id))
 
+    # ── Browser scaffolding ───────────────────────────────────────────────────
+
+    async def _with_browser(
+        self,
+        label: str,
+        work: Callable[[Page], Awaitable[None]],
+        *,
+        error_prefix: str,
+        on_finish: Callable[[], None] | None = None,
+    ) -> None:
+        """Roda ``work(page)`` sob o browser lock, com Chrome e erros tratados.
+
+        Único ponto do bot que abre browser: garante lock adquirido/liberado,
+        contexto sempre fechado, ``CheckpointError`` reportado como tal (e não
+        como crash genérico) e traceback completo no log.
+        """
+        lock = await acquire_browser_lock(label)
+        try:
+            async with async_playwright() as pw:
+                context, page = await create_context(pw, force_headless=False)
+                try:
+                    await work(page)
+                except CheckpointError as e:
+                    self.client.send(f"{CHECKPOINT_MSG}\n<code>{e}</code>")
+                    logger.error(f"{label}: checkpoint detectado — {e}")
+                except Exception as e:
+                    self.client.send(f"{error_prefix}: {e}")
+                    logger.exception(f"{label} task error")
+                finally:
+                    if on_finish:
+                        on_finish()
+                    try:
+                        await context.close()
+                    except Exception:
+                        pass
+        finally:
+            _release_browser_lock(lock, label)
+
     # ── Coroutines ────────────────────────────────────────────────────────────
 
     async def _connect_async(
         self, url: str, start_page: int = 1, max_pages: int = 100
     ) -> None:
-        lock = await acquire_browser_lock("bot_connect")
-        try:
-            async with async_playwright() as pw:
-                context, page = await create_context(pw, force_headless=False)
-                manager = None
-                try:
-                    manager = ConnectionManager(
-                        page,
-                        url=url,
-                        start_page=start_page,
-                        max_pages=max_pages,
-                        stop_event=self.stop_event,
-                    )
-                    await manager.run()
-                except Exception as e:
-                    self.client.send("❌ Erro ao executar conexões.")
-                    logger.error(f"connect task error: {e}")
-                finally:
-                    sent = manager.connect_people.invite_sended if manager else 0
-                    self.client.send(f"🔗 Conexões finalizadas! Total enviado: {sent}")
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
-        finally:
-            _release_browser_lock(lock, "bot_connect")
+        managers: list[ConnectionManager] = []
+
+        async def work(page: Page) -> None:
+            manager = ConnectionManager(
+                page,
+                url=url,
+                start_page=start_page,
+                max_pages=max_pages,
+                stop_event=self.stop_event,
+            )
+            managers.append(manager)
+            await manager.run()
+
+        def report() -> None:
+            sent = managers[0].connect_people.invite_sended if managers else 0
+            self.client.send(f"🔗 Conexões finalizadas! Total enviado: {sent}")
+
+        await self._with_browser(
+            "bot_connect",
+            work,
+            error_prefix="❌ Erro ao executar conexões",
+            on_finish=report,
+        )
 
     async def _apply_async(self, url: str) -> None:
-        lock = await acquire_browser_lock("bot_apply")
-        try:
-            async with async_playwright() as pw:
-                context, page = await create_context(pw, force_headless=False)
-                try:
-                    manager = create_application_manager(
-                        page,
-                        url=url,
-                        resume_path=self.resume_path,
-                        stop_event=self.stop_event,
-                    )
-                    await manager.run()
-                    self.client.send(
-                        f"✅ Candidaturas concluídas!\n"
-                        f"Avaliadas: {manager.evaluated_count} | Aplicadas: {manager.applied_count}"
-                    )
-                except Exception as e:
-                    self.client.send(f"❌ Erro: {e}")
-                    logger.error(f"apply task error: {e}")
-                finally:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
-        finally:
-            _release_browser_lock(lock, "bot_apply")
+        async def work(page: Page) -> None:
+            manager = create_application_manager(
+                page,
+                url=url,
+                resume_path=self.resume_path,
+                stop_event=self.stop_event,
+            )
+            await manager.run()
+            self.client.send(
+                f"✅ Candidaturas concluídas!\n"
+                f"Avaliadas: {manager.evaluated_count} | Aplicadas: {manager.applied_count}"
+            )
+
+        await self._with_browser("bot_apply", work, error_prefix="❌ Erro")
 
     async def _engage_async(self, max_posts: int, review: bool) -> None:
         import os
@@ -195,40 +225,28 @@ class BrowserTaskRunner:
             async def approver(text, author):
                 return await self.approval.request("comentário", text, author)
 
-        lock = await acquire_browser_lock("bot_engage")
-        try:
-            async with async_playwright() as pw:
-                context, page = await create_context(pw, force_headless=False)
-                try:
-                    manager = EngagementManager(
-                        page,
-                        llm_provider=provider,
-                        resume_path=self.resume_path,
-                        user_name=os.getenv("USER_NAME", "Matheus Marinho"),
-                        user_headline=os.getenv(
-                            "USER_HEADLINE",
-                            "Software Engineer focado em Python e Node.js",
-                        ),
-                        max_posts=max_posts,
-                        stop_event=self.stop_event,
-                        targets=load_targets(),
-                        comment_approver=approver,
-                    )
-                    result = await manager.run()
-                    self.client.send(
-                        f"🤝 Engage concluído!\n"
-                        f"❤️ {result.liked} | 💬 {result.commented} | 🔁 {result.shared}"
-                    )
-                except Exception as e:
-                    self.client.send(f"❌ Erro no engage: {e}")
-                    logger.error(f"engage task error: {e}")
-                finally:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
-        finally:
-            _release_browser_lock(lock, "bot_engage")
+        async def work(page: Page) -> None:
+            manager = EngagementManager(
+                page,
+                llm_provider=provider,
+                resume_path=self.resume_path,
+                user_name=os.getenv("USER_NAME", "Matheus Marinho"),
+                user_headline=os.getenv(
+                    "USER_HEADLINE",
+                    "Software Engineer focado em Python e Node.js",
+                ),
+                max_posts=max_posts,
+                stop_event=self.stop_event,
+                targets=load_targets(),
+                comment_approver=approver,
+            )
+            result = await manager.run()
+            self.client.send(
+                f"🤝 Engage concluído!\n"
+                f"❤️ {result.liked} | 💬 {result.commented} | 🔁 {result.shared}"
+            )
+
+        await self._with_browser("bot_engage", work, error_prefix="❌ Erro no engage")
 
     async def _followup_scan_async(self, max_dms: int) -> None:
         from src.interfaces.cli.followup.logic import (
@@ -237,22 +255,13 @@ class BrowserTaskRunner:
         )
 
         cfg = resolve_followup_config(None, max_dms, scheduled=False, force=False)
-        lock = await acquire_browser_lock("bot_followup")
-        try:
-            async with async_playwright() as pw:
-                context, page = await create_context(pw, force_headless=False)
-                try:
-                    await run_followup_browser(page, cfg)
-                except Exception as e:
-                    self.client.send(f"❌ Erro no follow-up: {e}")
-                    logger.error(f"followup scan error: {e}")
-                finally:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
-        finally:
-            _release_browser_lock(lock, "bot_followup")
+
+        async def work(page: Page) -> None:
+            await run_followup_browser(page, cfg)
+
+        await self._with_browser(
+            "bot_followup", work, error_prefix="❌ Erro no follow-up"
+        )
 
     async def _followup_send_async(self, draft_id: str) -> None:
         from src.core.use_cases.followup_tracker import FollowupTracker
@@ -264,29 +273,19 @@ class BrowserTaskRunner:
             self.client.send("⚠️ Draft de DM não encontrado.")
             return
 
-        lock = await acquire_browser_lock("bot_followup_send")
-        try:
-            async with async_playwright() as pw:
-                context, page = await create_context(pw, force_headless=False)
-                try:
-                    ok = await MessagingPage(page).send_dm(
-                        draft["profile_url"], draft["content"]
-                    )
-                    if ok:
-                        tracker.mark_sent(draft_id)
-                        self.client.send(f"✅ DM enviado p/ {draft.get('name')}!")
-                    else:
-                        self.client.send("❌ Falha ao enviar o DM.")
-                except Exception as e:
-                    self.client.send(f"❌ Erro ao enviar DM: {e}")
-                    logger.error(f"followup send error: {e}")
-                finally:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
-        finally:
-            _release_browser_lock(lock, "bot_followup_send")
+        async def work(page: Page) -> None:
+            ok = await MessagingPage(page).send_dm(
+                draft["profile_url"], draft["content"]
+            )
+            if ok:
+                tracker.mark_sent(draft_id)
+                self.client.send(f"✅ DM enviado p/ {draft.get('name')}!")
+            else:
+                self.client.send("❌ Falha ao enviar o DM.")
+
+        await self._with_browser(
+            "bot_followup_send", work, error_prefix="❌ Erro ao enviar DM"
+        )
 
     async def _capture_ssi(self, page) -> None:
         """Best-effort SSI snapshot after publishing (never fatal)."""

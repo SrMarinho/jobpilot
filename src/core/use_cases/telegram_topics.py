@@ -9,10 +9,9 @@ direto na sessão certa. Aqui ficam: a lista de tópicos por feature, o bootstra
 
 import os
 
-import requests
-
 from src.config.settings import files_dir, logger
 from src.core.persistence.doc_repo import DocRepo
+from src.utils.telegram import _post
 
 # (key, título, icon_color). icon_color só aceita um destes 6 valores oficiais.
 TOPICS: list[tuple[str, str, int]] = [
@@ -63,18 +62,14 @@ class TelegramTopics:
         self.repo.save({"topics": {}})
 
     def _create(self, title: str, color: int) -> int | None:
-        try:
-            resp = requests.post(
-                f"https://api.telegram.org/bot{self.token}/createForumTopic",
-                json={"chat_id": self.chat_id, "name": title, "icon_color": color},
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("ok"):
-                return data["result"]["message_thread_id"]
-            logger.warning(f"createForumTopic falhou para {title}: {data}")
-        except Exception as e:
-            logger.warning(f"createForumTopic erro: {e}")
+        data = _post(
+            "createForumTopic",
+            label=f"createForumTopic '{title}'",
+            json={"chat_id": self.chat_id, "name": title, "icon_color": color},
+        )
+        if data and data.get("ok"):
+            return data["result"]["message_thread_id"]
+        logger.warning(f"createForumTopic falhou para {title}")
         return None
 
 

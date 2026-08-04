@@ -4,6 +4,10 @@ import requests
 from src.config.settings import logger
 
 
+class TelegramAuthError(RuntimeError):
+    """Token inválido/revogado — retry não resolve, o bot precisa parar."""
+
+
 class TelegramClient:
     """Pure Telegram HTTP transport — no business logic.
 
@@ -94,6 +98,12 @@ class TelegramClient:
     # ── Inbound ───────────────────────────────────────────────────────────────
 
     def get_updates(self, timeout: int = 30) -> list:
+        """Long-poll de updates.
+
+        Distingue falha de rede (transitória → ``[]``, o loop tenta de novo) de
+        falha de credencial (``TelegramAuthError``, que para o bot em vez de
+        virar um hot spin invisível).
+        """
         try:
             resp = requests.get(
                 f"{self.base_url}/getUpdates",
@@ -104,8 +114,17 @@ class TelegramClient:
                 },
                 timeout=timeout + 5,
             )
+        except requests.RequestException as e:
+            logger.warning(f"getUpdates: falha de rede ({e})")
+            return []
+        if resp.status_code in (401, 403, 404):
+            raise TelegramAuthError(
+                f"getUpdates HTTP {resp.status_code} — TELEGRAM_BOT_TOKEN inválido"
+            )
+        try:
             return resp.json().get("result", [])
-        except Exception:
+        except Exception as e:
+            logger.warning(f"getUpdates: resposta ilegível ({e})")
             return []
 
     def flush_pending_updates(self) -> None:

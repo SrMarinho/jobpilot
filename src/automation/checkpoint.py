@@ -91,9 +91,10 @@ async def ensure_not_blocked(page, label: str = "task") -> None:
         return
     logger.error(f"Checkpoint/CAPTCHA detected during {label}: {reason}")
     try:
-        from src.utils.telegram import send_telegram
+        from src.utils.telegram import send_telegram_async
 
-        send_telegram(
+        # await: o alerta precisa sair antes do raise interromper a automação.
+        await send_telegram_async(
             "🚧 <b>Checkpoint do LinkedIn detectado!</b>\n"
             f"Tarefa: <code>{label}</code>\n"
             f"Motivo: <code>{reason}</code>\n\n"

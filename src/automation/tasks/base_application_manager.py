@@ -3,6 +3,7 @@ import json
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable
 from pathlib import Path
 from playwright.async_api import Page
@@ -355,14 +356,19 @@ class BaseJobApplicationManager(ABC):
             if success:
                 self.applied_count += 1
                 lvl = detect_level(item.title, item.description)
-                self.tracker.mark_applied(
-                    item.job_url,
-                    item.title,
-                    salary,
-                    company=item.company,
-                    level=lvl,
-                    site=self.site,
-                    contract=contract,
+                # to_thread: mark_applied faz I/O síncrono (psycopg/disco) e
+                # travaria o event loop — e com ele o browser.
+                await asyncio.to_thread(
+                    partial(
+                        self.tracker.mark_applied,
+                        item.job_url,
+                        item.title,
+                        salary,
+                        company=item.company,
+                        level=lvl,
+                        site=self.site,
+                        contract=contract,
+                    )
                 )
                 item.state = "applied"
                 self.on_update(item)

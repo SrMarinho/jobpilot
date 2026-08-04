@@ -5,6 +5,7 @@ from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from filelock import FileLock, Timeout
 
+from src.automation.checkpoint import CheckpointError
 from src.config.settings import logger
 import src.config.settings as setting
 from src.interfaces.cli.persistence import BOT_PROFILE_DIR
@@ -181,15 +182,20 @@ async def run_logout(site: str):
             try:
                 await page.goto(login_url, wait_until="domcontentloaded")
                 await page.wait_for_timeout(2000)
+                # Só os cookies do site pedido — o perfil Chrome é compartilhado
+                # entre linkedin/glassdoor/indeed, então limpar tudo derrubaria
+                # as sessões dos outros sites.
                 removed = 0
+                targets: set[str] = set()
                 for cookie in await context.cookies():
                     domain = cookie.get("domain", "")
                     if any(
                         domain.endswith(d.lstrip(".")) or domain == d for d in domains
                     ):
                         removed += 1
-                        await context.clear_cookies()
-                        break
+                        targets.add(domain)
+                for domain in targets:
+                    await context.clear_cookies(domain=domain)
                 print(f"Cleared {removed} cookie(s) for {site}.")
                 print(f"Session removed. Run 'login {site}' to log in again.")
             finally:
@@ -215,6 +221,18 @@ async def run_browser(work, *, headless: bool = False):
                     await page.screenshot(path=f"{setting.screenshots_path}.png")
                 except Exception:
                     pass
+            except CheckpointError as e:
+                # Não é crash: a conta caiu num checkpoint e a automação parou
+                # de propósito. O alerta no Telegram já saiu em ensure_not_blocked.
+                logger.error(
+                    f"Checkpoint do LinkedIn ({e}) — resolva a verificação "
+                    "manualmente no Chrome antes do próximo run."
+                )
+                try:
+                    await page.screenshot(path=f"{setting.screenshots_path}.png")
+                except Exception:
+                    pass
+                raise
             except Exception as e:
                 logger.critical(f"{str(e)}")
                 try:

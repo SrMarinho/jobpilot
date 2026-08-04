@@ -1,6 +1,8 @@
+import time
+
 from src.config.settings import logger
 from src.interfaces.cli.persistence import _find_resume
-from src.bot.client import TelegramClient
+from src.bot.client import TelegramAuthError, TelegramClient
 from src.bot.runner import BrowserTaskRunner
 from src.bot.conversation import ConversationFlow
 from src.bot.router import UpdateRouter
@@ -23,6 +25,8 @@ class TelegramBot:
         self.conversation = ConversationFlow(self.client, self.runner)
         self.router = UpdateRouter(self.client, self.runner, self.conversation)
 
+    _MAX_BACKOFF_S = 60
+
     def run(self) -> None:
         self.client.flush_pending_updates()
         self.client.register_commands()
@@ -30,10 +34,27 @@ class TelegramBot:
             "🤖 <b>JobPilot online!</b> Digite /help para ver os comandos."
         )
         logger.info("Telegram bot polling started")
+        backoff = 1
         while True:
-            for update in self.client.get_updates():
+            try:
+                updates = self.client.get_updates()
+            except TelegramAuthError:
+                logger.critical("Credencial do Telegram inválida — bot encerrado")
+                return
+            except Exception:
+                logger.exception(f"Erro no polling, retry em {backoff}s")
+                time.sleep(backoff)
+                backoff = min(backoff * 2, self._MAX_BACKOFF_S)
+                continue
+            backoff = 1
+            for update in updates:
+                # O offset avança sempre — um update que quebra o dispatch não
+                # pode ser reentregue em loop e travar o bot.
                 self.client.offset = update["update_id"] + 1
-                self._dispatch(update)
+                try:
+                    self._dispatch(update)
+                except Exception:
+                    logger.exception("Erro ao processar update")
 
     def _dispatch(self, update: dict) -> None:
         # callback de botão inline

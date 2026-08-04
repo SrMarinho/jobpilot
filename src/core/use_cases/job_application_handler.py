@@ -1,5 +1,7 @@
+import asyncio
+
 from playwright.async_api import Page
-from src.core.ai.llm_provider import get_llm_provider
+from src.core.ai.llm_provider import LLMProvider, get_llm_provider
 from src.config.settings import logger
 from src.core.use_cases.form_answer_cache import FormAnswerCache, SALARY_KEYWORDS
 
@@ -13,11 +15,29 @@ arguments[0].dispatchEvent(event);
 """
 
 
+# Botões de avanço/envio do Easy Apply, em ordem de preferência.
+# Os 4 primeiros são os candidatos a "submit" usados na checagem final.
+_SUBMIT_BUTTON_SELECTORS = [
+    "button[aria-label='Submit application']",
+    "button[aria-label='Enviar candidatura']",
+    "button[type='submit']",
+    "xpath=//button[contains(@aria-label,'Next') or contains(normalize-space(),'Next') or contains(normalize-space(),'Próximo') or contains(normalize-space(),'Proximo') or contains(normalize-space(),'Avançar')]",
+    "xpath=//button[contains(@aria-label,'Review') or contains(normalize-space(),'Review') or contains(normalize-space(),'Revisar')]",
+    "xpath=//button[contains(@aria-label,'Done') or contains(normalize-space(),'Done') or contains(normalize-space(),'Concluído')]",
+    "button[class*=artdeco-button--primary]",
+]
+_FINAL_SUBMIT_SELECTORS = _SUBMIT_BUTTON_SELECTORS[:3]
+
+
 class JobApplicationHandler:
-    def __init__(self, page: Page, resume: str = ""):
+    def __init__(
+        self, page: Page, resume: str = "", provider: LLMProvider | None = None
+    ):
         self.page = page
         self.resume = resume
         self._qa = FormAnswerCache()
+        # Injetável p/ teste; None = resolvido sob demanda em _get_provider.
+        self._provider = provider
 
     # ── select helpers ───────────────────────────────────────────────────────
 
@@ -49,10 +69,20 @@ class JobApplicationHandler:
 
     # ── LLM-driven answer ────────────────────────────────────────────────────
 
+    async def _get_provider(self) -> LLMProvider:
+        """Provider lazy + memoizado, construído fora do event loop.
+
+        ``get_llm_provider()`` pode bloquear até 15s subindo o Ollama; construir
+        a cada pergunta travaria o browser junto.
+        """
+        if self._provider is None:
+            self._provider = await asyncio.to_thread(get_llm_provider)
+        return self._provider
+
     async def _ask_llm(
         self, question: str, job_title: str, job_description: str
     ) -> str:
-        model = get_llm_provider()
+        model = await self._get_provider()
         prompt = (
             f"You are applying for the job '{job_title}'. "
             f"Job description: {job_description[:1500]}\n"
@@ -755,19 +785,9 @@ class JobApplicationHandler:
                 )
 
                 # Try Submit / Next / Review
-                btn_selectors = [
-                    "button[aria-label='Submit application']",
-                    "button[aria-label='Enviar candidatura']",
-                    "button[type='submit']",
-                    "xpath=//button[contains(@aria-label,'Next') or contains(normalize-space(),'Next') or contains(normalize-space(),'Próximo') or contains(normalize-space(),'Proximo') or contains(normalize-space(),'Avançar')]",
-                    "xpath=//button[contains(@aria-label,'Review') or contains(normalize-space(),'Review') or contains(normalize-space(),'Revisar')]",
-                    "xpath=//button[contains(@aria-label,'Done') or contains(normalize-space(),'Done') or contains(normalize-space(),'Concluído')]",
-                    "button[class*=artdeco-button--primary]",
-                ]
                 clicked = False
-                for sel in btn_selectors:
+                for sel in _SUBMIT_BUTTON_SELECTORS:
                     try:
-                        _btn = "css" if not sel.startswith("xpath=") else "xpath"
                         loc = self.page.locator(
                             sel[len("xpath=") :] if sel.startswith("xpath=") else sel
                         )
@@ -793,7 +813,7 @@ class JobApplicationHandler:
                     break
 
             # Final submit check
-            for sel in btn_selectors[:4]:
+            for sel in _FINAL_SUBMIT_SELECTORS:
                 try:
                     loc = self.page.locator(sel)
                     if await loc.is_visible(timeout=1000) and await loc.is_enabled():
@@ -810,8 +830,8 @@ class JobApplicationHandler:
                 except Exception:
                     pass
             return True
-        except Exception as e:
-            logger.error(f"Easy Apply error: {e}")
+        except Exception:
+            logger.exception("Easy Apply error")
             return False
 
     # ── discard check ────────────────────────────────────────────────────────
