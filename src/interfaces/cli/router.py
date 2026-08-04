@@ -8,6 +8,7 @@ from src.interfaces.cli.report.command import register_report_command
 from src.interfaces.cli.export.command import register_export_command
 from src.interfaces.cli.searches.command import register_searches_commands
 from src.interfaces.cli.goals.command import register_goals_commands
+from src.interfaces.cli.canary.command import register_canary_command
 from src.interfaces.cli.limits.command import register_limits_command
 from src.interfaces.cli.profile.capture.command import register_profile_capture_command
 from src.interfaces.cli.profile.skills.command import register_profile_skills_commands
@@ -135,6 +136,7 @@ def register(app: typer.Typer) -> None:
     config_app = typer.Typer(help="System configuration (LLM, DB, Telegram, goals)")
     app.add_typer(config_app, name="config")
     register_limits_command(config_app)
+    register_canary_command(config_app)
     _add_group(
         config_app,
         "telegram-topics",
