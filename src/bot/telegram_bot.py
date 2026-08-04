@@ -6,6 +6,7 @@ from src.bot.client import TelegramAuthError, TelegramClient
 from src.bot.runner import BrowserTaskRunner
 from src.bot.conversation import ConversationFlow
 from src.bot.router import UpdateRouter
+from src.bot.urls import is_job_url
 
 
 class TelegramBot:
@@ -82,3 +83,6 @@ class TelegramBot:
             self.conversation.handle_text(text, self.router.handle_command)
         elif text.startswith("/"):
             self.router.handle_command(text)
+        elif is_job_url(text):
+            # URL de vaga solta = "vale a pena?". Avalia e responde o veredito.
+            self.runner.launch_triage(text.strip())

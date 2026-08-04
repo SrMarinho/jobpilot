@@ -61,6 +61,10 @@ class ConversationFlow:
             self._handle_engage_callback(data)
             return
 
+        if data.startswith("triage_apply:"):
+            self.runner.launch_apply_single(data[len("triage_apply:") :])
+            return
+
         if data.startswith("sp:"):  # start_page escolhido
             value = data[3:]
             if value == "custom":

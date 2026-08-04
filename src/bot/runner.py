@@ -136,6 +136,19 @@ class BrowserTaskRunner:
             return
         self._spawn(lambda: self._followup_send_async(draft_id))
 
+    def launch_triage(self, url: str) -> None:
+        """Avalia uma vaga a partir do link, sem candidatar.
+
+        Não passa pelo ``_blocked``: triagem só lê a página, não gasta quota de
+        candidatura nem convite. Mas continua respeitando o browser lock e o
+        "uma tarefa por vez".
+        """
+        if self.is_busy():
+            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+            return
+        self.client.send("🔍 Avaliando a vaga...")
+        self._spawn(lambda: self._triage_async(url))
+
     # ── Browser scaffolding ───────────────────────────────────────────────────
 
     async def _with_browser(
@@ -295,6 +308,48 @@ class BrowserTaskRunner:
         await self._with_browser(
             "bot_followup_send", work, error_prefix="❌ Erro ao enviar DM"
         )
+
+    async def _triage_async(self, url: str) -> None:
+        from src.automation.tasks.job_triage import triage_job
+        from src.core.use_cases.job_evaluator import JobEvaluator
+
+        evaluator = JobEvaluator(self.resume_path)
+
+        async def work(page: Page) -> None:
+            result = await triage_job(page, url, evaluator=evaluator)
+            buttons = (
+                [[{"text": "📨 Aplicar agora", "data": f"triage_apply:{url}"}]]
+                if result.ok and result.result.matches
+                else None
+            )
+            self.client.send(result.as_telegram(), buttons=buttons)
+
+        await self._with_browser("bot_triage", work, error_prefix="❌ Erro na triagem")
+
+    async def apply_single(self, url: str) -> None:
+        """Candidata a uma vaga específica (botão 'Aplicar agora' da triagem)."""
+        from src.automation.tasks.test_apply import run_test_apply
+        from src.core.use_cases.resume_loader import load_resume_text
+
+        resume_text = load_resume_text(self.resume_path)
+
+        async def work(page: Page) -> None:
+            ok = await run_test_apply(page, url, resume_text, no_submit=False)
+            if ok:
+                RateLimiter().record("apply")
+                self.client.send(f"✅ Candidatura enviada!\n{url}")
+            else:
+                self.client.send(f"❌ Não consegui enviar a candidatura.\n{url}")
+
+        await self._with_browser(
+            "bot_apply_single", work, error_prefix="❌ Erro ao aplicar"
+        )
+
+    def launch_apply_single(self, url: str) -> None:
+        if self._blocked("apply"):
+            return
+        self.client.send("📨 Aplicando...")
+        self._spawn(lambda: self.apply_single(url))
 
     async def _capture_ssi(self, page) -> None:
         """Best-effort SSI snapshot after publishing (never fatal)."""
