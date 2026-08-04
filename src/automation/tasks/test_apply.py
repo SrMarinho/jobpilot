@@ -2,7 +2,7 @@ from src.automation.tasks.job_application_manager import detect_site
 from src.automation.pages.indeed_jobs_page import IndeedJobsPage
 from src.automation.pages.jobs_search_page import JobsSearchPage
 from src.core.use_cases.indeed_application_handler import IndeedApplicationHandler
-from src.core.use_cases.job_application_handler import JobApplicationHandler
+from src.core.use_cases.apply import EasyApplyHandler
 
 
 async def run_test_apply(page, job_url: str, resume_text: str, no_submit: bool) -> bool:
@@ -39,7 +39,7 @@ async def run_test_apply(page, job_url: str, resume_text: str, no_submit: bool) 
     print(f"Applying to: {title}")
     await btn.click()
     await page.wait_for_timeout(1500)
-    handler = JobApplicationHandler(page, resume=resume_text)
+    handler = EasyApplyHandler(page, resume=resume_text)
     return await handler.submit_easy_apply(
         job_title=title, job_description=description, no_submit=no_submit
     )

@@ -1,6 +1,6 @@
 from src.automation.tasks.base_application_manager import BaseJobApplicationManager
 from src.automation.pages.glassdoor_jobs_page import GlassdoorJobsPage
-from src.core.use_cases.job_application_handler import JobApplicationHandler
+from src.core.use_cases.apply import EasyApplyHandler
 
 
 class GlassdoorJobApplicationManager(BaseJobApplicationManager):
@@ -18,7 +18,7 @@ class GlassdoorJobApplicationManager(BaseJobApplicationManager):
         return cards
 
     def _build_handler(self, page, resume: str):
-        return JobApplicationHandler(page, resume=resume)
+        return EasyApplyHandler(page, resume=resume)
 
     def _next_page_url(self, page_num: int) -> str:
         return self.page_obj.next_page_url(self.base_url, page_num)

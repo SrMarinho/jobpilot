@@ -1,6 +1,6 @@
 from src.automation.tasks.base_application_manager import BaseJobApplicationManager
 from src.automation.pages.jobs_search_page import JobsSearchPage
-from src.core.use_cases.job_application_handler import JobApplicationHandler
+from src.core.use_cases.apply import EasyApplyHandler
 
 
 class LinkedInJobApplicationManager(BaseJobApplicationManager):
@@ -14,7 +14,7 @@ class LinkedInJobApplicationManager(BaseJobApplicationManager):
         return JobsSearchPage(page, url)
 
     def _build_handler(self, page, resume: str):
-        return JobApplicationHandler(page, resume=resume)
+        return EasyApplyHandler(page, resume=resume)
 
     def _next_page_url(self, page_num: int) -> str:
         if page_num == 1:

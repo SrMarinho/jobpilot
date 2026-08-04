@@ -1,14 +1,23 @@
 from playwright.async_api import Page
-from src.core.ai.llm_provider import get_llm_provider
 from src.config.settings import logger
-from src.core.use_cases.form_answer_cache import FormAnswerCache
+from src.core.ai.llm_provider import LLMProvider
+from src.core.use_cases.apply.field_filler import FieldFiller
+from src.core.use_cases.apply.form_answerer import FormAnswerer
 
 
 class IndeedApplicationHandler:
-    def __init__(self, page: Page, resume: str = ""):
+    def __init__(
+        self,
+        page: Page,
+        resume: str = "",
+        provider: LLMProvider | None = None,
+        answerer: FormAnswerer | None = None,
+    ):
         self.page = page
         self.resume = resume
-        self._qa = FormAnswerCache()
+        # Mesma peça que o Easy Apply usa — cache de Q&A e prompt são idênticos.
+        self.answerer = answerer or FormAnswerer(provider=provider)
+        self.fields = FieldFiller(page)
 
     async def _get_iframe(self):
         """Find Indeed apply iframe."""
@@ -41,28 +50,12 @@ class IndeedApplicationHandler:
         return False
 
     async def _fill_input(self, el, value: str):
-        tag = await el.evaluate("el => el.tagName.toLowerCase()")
-        readonly = await el.get_attribute("readonly")
-        if tag == "select":
-            await el.select_option(value=value)
-        elif not readonly:
-            await el.fill(value)
+        await self.fields.fill(el, value)
 
     async def _ask_llm(
         self, question: str, job_title: str, job_description: str
     ) -> str:
-        model = get_llm_provider()
-        prompt = (
-            f"You are applying for the job '{job_title}'. "
-            f"Job description: {job_description[:1500]}\n"
-            f"Answer the following question concisely for a job application form: {question}\n"
-            f"Answer with only the value, no explanation."
-        )
-        try:
-            return await model.complete(prompt)
-        except Exception as e:
-            logger.error(f"LLM error on '{question[:50]}': {e}")
-            return ""
+        return await self.answerer.ask(question, job_title, job_description)
 
     async def submit(
         self, salary_expectation: int | str = "", no_submit: bool = False
@@ -255,7 +248,7 @@ class IndeedApplicationHandler:
             return False
 
     def _resolve_cached(self, question: str) -> str | None:
-        return self._qa.resolve(question)
+        return self.answerer.resolve(question)
 
     def _save_cached(self, question: str, answer: str, options: list | None = None):
-        self._qa.store(question, answer, options=options)
+        self.answerer.store(question, answer, options=options)
