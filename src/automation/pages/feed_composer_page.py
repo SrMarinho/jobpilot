@@ -9,12 +9,12 @@ não acha o editor/botão. Usamos **locators de acessibilidade** do Playwright
     feed → "Começar publicação" → editor (textbox) → type → "Publicar" → URL
 """
 
-import random
 import re
 
 from playwright.async_api import Page
 
 from src.config.settings import logger
+from src.utils.pacing import type_like_human
 
 FEED_URL = "https://www.linkedin.com/feed/"
 
@@ -153,7 +153,7 @@ class FeedComposerPage:
             if not await editor.count():
                 editor = self.page.get_by_role("textbox")
             await editor.first.click(timeout=8000)
-            await editor.first.type(text, delay=random.randint(8, 25))
+            await type_like_human(editor.first, text)
         except Exception as e:
             logger.warning(f"editor type failed: {e}")
             _alert("encontrar editor")

@@ -5,11 +5,11 @@ import typer
 from src.config.settings import logger
 from src.automation import url_builder as _url_builder
 from src.automation.tasks.connection_manager import ConnectionManager
+from src.core.use_cases.rate_limiter import RateLimiter
+from src.core.use_cases.run_guard import check_run
 from src.interfaces.cli.persistence import (
     load_last_urls,
     save_last_url,
-    is_already_ran_today,
-    is_weekly_limit_reached,
     save_ran_today,
     save_weekly_limit_reached,
 )
@@ -32,14 +32,12 @@ def resolve_connect_config(
     site_key = "connect"
     saved: dict = last_urls.get(site_key, {})
 
-    # ── scheduled guard ──
+    # ── guard do run (cooldown, janela horária, quota, já-rodou-hoje) ──
+    verdict = check_run("connect", scheduled=scheduled)
+    if not verdict:
+        logger.info(f"Connect não vai rodar — {verdict.reason}")
+        return None
     if scheduled:
-        if is_already_ran_today():
-            logger.info("Already ran today. Skipping.")
-            return None
-        if is_weekly_limit_reached():
-            logger.info("Weekly connection limit already reached this week. Skipping.")
-            return None
         save_ran_today()
 
     # ── rotação de saved-searches ──
@@ -138,3 +136,6 @@ async def run_connect_browser(
     if manager.connect_people.limit_reached:
         save_weekly_limit_reached()
         logger.info("Weekly limit reached — saved. Will skip until next week.")
+        # Chegar no limite do LinkedIn significa que a quota própria estava
+        # frouxa demais: pausa os runs agendados até revisão manual.
+        RateLimiter().open_cooldown("LinkedIn sinalizou limite de convites")

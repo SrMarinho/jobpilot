@@ -238,6 +238,10 @@ async def run_browser(work, *, headless: bool = False):
             except CheckpointError as e:
                 # Não é crash: a conta caiu num checkpoint e a automação parou
                 # de propósito. O alerta no Telegram já saiu em ensure_not_blocked.
+                # Abre o cooldown p/ os runs agendados não insistirem no logon.
+                from src.core.use_cases.rate_limiter import RateLimiter
+
+                RateLimiter().open_cooldown(f"checkpoint do LinkedIn: {e}")
                 logger.error(
                     f"Checkpoint do LinkedIn ({e}) — resolva a verificação "
                     "manualmente no Chrome antes do próximo run."

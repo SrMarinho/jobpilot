@@ -7,6 +7,7 @@ from typing import Optional
 from playwright.async_api import Page, ElementHandle
 
 from src.config.settings import logger
+from src.utils.pacing import human_pause, type_like_human
 
 
 FEED_URL = "https://www.linkedin.com/feed/"
@@ -473,7 +474,7 @@ class FeedPage:
         try:
             await editor.click()
             await self.page.wait_for_timeout(300)
-            await editor.type(text, delay=random.randint(20, 60))
+            await type_like_human(editor, text)
             await self.page.wait_for_timeout(700)
         except Exception as e:
             logger.warning(f"Typing comment failed: {e}")
@@ -546,5 +547,13 @@ class FeedPage:
         logger.warning("Repost click failed")
         return False
 
-    async def random_pause(self, lo: int = 5, hi: int = 15) -> None:
-        await asyncio.sleep(random.randint(lo, hi))
+    async def random_pause(self, lo: int | None = None, hi: int | None = None) -> None:
+        """Pausa entre posts. Sem argumentos, usa o perfil de pacing ativo.
+
+        ``lo``/``hi`` continuam aceitos por compatibilidade com os call sites
+        antigos, mas o padrão passou a ser o perfil central (ver utils/pacing).
+        """
+        if lo is None and hi is None:
+            await human_pause()
+            return
+        await asyncio.sleep(random.uniform(lo or 0, hi or (lo or 0)))

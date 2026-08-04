@@ -4,11 +4,10 @@ Abre o perfil, clica em "Mensagem", digita e envia. Selectors best-effort
 (aria-label PT/EN + fallback JS) — ⚠️ não verificado ao vivo.
 """
 
-import random
-
 from playwright.async_api import Page
 
 from src.config.settings import logger
+from src.utils.pacing import type_like_human
 
 _MESSAGE_BTN_JS = """
 () => {
@@ -112,7 +111,7 @@ class MessagingPage:
         try:
             await editor.click()
             await self.page.wait_for_timeout(300)
-            await editor.type(text, delay=random.randint(15, 45))
+            await type_like_human(editor, text)
             await self.page.wait_for_timeout(800)
         except Exception as e:
             logger.warning(f"Digitar DM falhou: {e}")

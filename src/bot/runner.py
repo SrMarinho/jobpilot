@@ -7,6 +7,8 @@ from playwright.async_api import Page, async_playwright
 from src.automation.checkpoint import CheckpointError
 from src.config import sections as settings_sections
 from src.config.settings import logger
+from src.core.use_cases.rate_limiter import RateLimiter
+from src.core.use_cases.run_guard import check_run
 from src.interfaces.cli.browser import (
     create_context,
     acquire_browser_lock,
@@ -44,6 +46,23 @@ class BrowserTaskRunner:
     def is_busy(self) -> bool:
         return bool(self.current_task and self.current_task.is_alive())
 
+    def _blocked(self, action: str) -> bool:
+        """Recusa a tarefa se o guard barrar, avisando o motivo no Telegram.
+
+        O bot passa pelas mesmas barreiras da CLI: até aqui um /connect pelo
+        Telegram furava a quota inteira, porque os guards só rodavam com
+        --scheduled.
+        """
+        if self.is_busy():
+            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+            return True
+        verdict = check_run(action)
+        if not verdict:
+            self.client.send(f"🚫 <b>{action}</b> bloqueado — {verdict.reason}")
+            logger.info(f"Bot recusou {action}: {verdict.reason}")
+            return True
+        return False
+
     def stop(self) -> None:
         self.stop_event.set()
 
@@ -66,8 +85,7 @@ class BrowserTaskRunner:
     def launch_connect(
         self, url: str, start_page: int = 1, max_pages: int = 100
     ) -> None:
-        if self.is_busy():
-            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+        if self._blocked("connect"):
             return
         self.client.send(
             f"🔗 Iniciando conexões a partir da página {start_page} (máx: {max_pages})..."
@@ -75,8 +93,7 @@ class BrowserTaskRunner:
         self._spawn(lambda: self._connect_async(url, start_page, max_pages))
 
     def launch_apply(self, url: str) -> None:
-        if self.is_busy():
-            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+        if self._blocked("apply"):
             return
         self.client.send("📋 Iniciando candidaturas...")
         self._spawn(lambda: self._apply_async(url))
@@ -102,23 +119,20 @@ class BrowserTaskRunner:
         self._spawn_detached(lambda: run_autopost(cfg))
 
     def launch_engage(self, max_posts: int = 3, review: bool = True) -> None:
-        if self.is_busy():
-            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+        if self._blocked("engage"):
             return
         mode = "com aprovação" if review else "automático"
         self.client.send(f"🤝 Iniciando engage ({mode})...")
         self._spawn(lambda: self._engage_async(max_posts, review))
 
     def launch_followup_scan(self, max_dms: int = 5) -> None:
-        if self.is_busy():
-            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+        if self._blocked("dm"):
             return
         self.client.send("💬 Buscando conexões novas p/ follow-up...")
         self._spawn(lambda: self._followup_scan_async(max_dms))
 
     def launch_followup_send(self, draft_id: str) -> None:
-        if self.is_busy():
-            self.client.send("⚠️ Já tem uma tarefa rodando. Use /stop primeiro.")
+        if self._blocked("dm"):
             return
         self._spawn(lambda: self._followup_send_async(draft_id))
 
@@ -145,6 +159,9 @@ class BrowserTaskRunner:
                 try:
                     await work(page)
                 except CheckpointError as e:
+                    # Checkpoint é sinal forte: insistir é o pior movimento.
+                    # Bloqueia os runs até liberação manual.
+                    RateLimiter().open_cooldown(f"checkpoint durante {label}")
                     self.client.send(f"{CHECKPOINT_MSG}\n<code>{e}</code>")
                     logger.error(f"{label}: checkpoint detectado — {e}")
                 except Exception as e:

@@ -1,9 +1,9 @@
-import random
 import threading
 from playwright.async_api import Page
 from src.core.use_cases import ConnectionHandler
 from src.automation.pages import PeopleSearchPage
 from src.config.settings import logger
+from src.utils.pacing import human_pause
 
 
 class ConnectionManager:
@@ -78,9 +78,7 @@ class ConnectionManager:
         except Exception:
             pass
 
-        if page_num > 1:
-            await self.page.wait_for_timeout(2000)
-        else:
-            wait = random.uniform(3, 6)
-            logger.info(f"Waiting {wait:.1f}s before processing page {page_num}...")
-            await self.page.wait_for_timeout(int(wait * 1000))
+        # Pausa em TODA página, não só na primeira: uma cadência fixa entre
+        # páginas é justamente o padrão que denuncia automação.
+        logger.info(f"Pausa humana antes de processar a página {page_num}...")
+        await human_pause()
