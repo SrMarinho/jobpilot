@@ -1,30 +1,74 @@
 import re
 from src.config.settings import logger
 from src.automation.pages.base import BaseJobsPage
+from src.automation.pages.selectors import (
+    T_FAST,
+    T_NORMAL,
+    T_SLOW,
+    first_visible,
+    text_or_empty,
+)
+
+# Candidatos por campo, em ordem de preferência (ver selectors.py).
+_CARDS = 'li[data-test="jobListing"]'
+_MODAL_CLOSE = [
+    "[class*=modal_Modal] button[class*=close]",
+    "[class*=modal_Modal] button[class*=Close]",
+    '[class*=modal_Modal] button[aria-label="Close"]',
+    'button[data-test="modal-close-btn"]',
+]
+_TITLE = ['[data-test="job-title"]']
+_DESCRIPTION = ["[class*=JobDetails_jobDescription]"]
+_CARD_TITLE = [
+    "[class*=JobCard_jobTitle]",
+    'a[data-test="job-title"]',
+    "[class*=jobTitle]",
+]
+_CARD_COMPANY = [
+    "[class*=EmployerProfile_employerName]",
+    '[data-test="employer-name"]',
+    "[class*=employerName]",
+]
+_APPLY_BTN = [
+    '[data-test="easyApply"]',
+    '[data-test="applyButton"]',
+    "button[class*=apply]",
+    "button[class*=Apply]",
+    "[class*=EasyApply]",
+    "[class*=easyApply]",
+]
+_APPLY_BTN_BY_TEXT = [
+    "xpath=//button[contains(normalize-space(),'Candidatura rápida') or "
+    "contains(normalize-space(),'Candidatar-se agora') or "
+    "contains(normalize-space(),'Easy Apply')]"
+]
+# Botões que levam pro site da empresa, não pro apply nativo.
+_EXTERNAL_APPLY_PHRASES = ("site da empresa", "company site", "empresa parceira")
 
 
 class GlassdoorJobsPage(BaseJobsPage):
     async def close_modal(self) -> None:
+        # required=False: normalmente não há modal — ausência não é quebra.
+        btn = await first_visible(
+            self.page,
+            _MODAL_CLOSE,
+            field="glassdoor modal close",
+            timeout=T_FAST,
+            required=False,
+        )
+        if btn is None:
+            return
         try:
-            btn = self.page.locator(
-                "[class*=modal_Modal] button[class*=close], "
-                "[class*=modal_Modal] button[class*=Close], "
-                '[class*=modal_Modal] button[aria-label="Close"], '
-                'button[data-test="modal-close-btn"]'
-            )
-            if await btn.is_visible(timeout=2000):
-                await btn.click()
-                logger.info("Glassdoor modal closed")
+            await btn.click()
+            logger.info("Glassdoor modal closed")
         except Exception:
             pass
 
     async def get_job_cards(self):
         await self.close_modal()
         try:
-            await self.page.wait_for_selector(
-                'li[data-test="jobListing"]', timeout=10000
-            )
-            return await self.page.locator('li[data-test="jobListing"]').all()
+            await self.page.wait_for_selector(_CARDS, timeout=T_SLOW)
+            return await self.page.locator(_CARDS).all()
         except Exception:
             logger.info("No job cards found on page")
             return []
@@ -48,56 +92,45 @@ class GlassdoorJobsPage(BaseJobsPage):
         return last
 
     async def get_job_title(self) -> str:
-        try:
-            el = self.page.locator('[data-test="job-title"]')
-            await el.wait_for(timeout=10000)
-            return (await el.inner_text()).strip()
-        except Exception:
-            return ""
+        return await text_or_empty(
+            self.page, _TITLE, field="glassdoor job title", timeout=T_SLOW
+        )
 
     async def get_job_description(self) -> str:
-        try:
-            el = self.page.locator("[class*=JobDetails_jobDescription]")
-            await el.wait_for(timeout=5000)
-            return (await el.inner_text()).strip()
-        except Exception:
-            return ""
+        return await text_or_empty(
+            self.page, _DESCRIPTION, field="glassdoor job description", timeout=T_NORMAL
+        )
 
     async def get_apply_btn(self):
-        skip_phrases = ["site da empresa", "company site", "empresa parceira"]
-        for sel in [
-            '[data-test="easyApply"]',
-            '[data-test="applyButton"]',
-            "button[class*=apply]",
-            "button[class*=Apply]",
-            "[class*=EasyApply]",
-            "[class*=easyApply]",
-        ]:
+        """Botão de apply nativo, ignorando os que levam pro site da empresa.
+
+        Não usa ``first_enabled`` porque aqui a escolha depende do TEXTO do
+        botão: um mesmo seletor casa tanto o apply nativo quanto o link externo.
+        """
+        for sel in _APPLY_BTN:
             try:
                 btns = self.page.locator(sel)
-                count = await btns.count()
-                for i in range(count):
+                for i in range(await btns.count()):
                     btn = btns.nth(i)
                     if not await btn.is_visible() or not await btn.is_enabled():
                         continue
                     text = (await btn.inner_text()).strip().lower()
-                    if any(p in text for p in skip_phrases):
+                    if any(p in text for p in _EXTERNAL_APPLY_PHRASES):
                         continue
-                    logger.info(f"Found apply button: '{await btn.inner_text()}'")
+                    logger.info(f"Found apply button: '{text}'")
                     return btn
             except Exception:
-                pass
-        try:
-            btn = self.page.locator(
-                "xpath=//button[contains(normalize-space(),'Candidatura rápida') or "
-                "contains(normalize-space(),'Candidatar-se agora') or "
-                "contains(normalize-space(),'Easy Apply')]"
-            )
-            if await btn.is_visible() and await btn.is_enabled():
-                logger.info(f"Found apply button via text: '{await btn.inner_text()}'")
-                return btn
-        except Exception:
-            pass
+                continue
+        btn = await first_visible(
+            self.page,
+            _APPLY_BTN_BY_TEXT,
+            field="glassdoor apply button",
+            timeout=T_FAST,
+            required=False,
+        )
+        if btn is not None:
+            logger.info("Found apply button via text")
+            return btn
         logger.info("No native apply button found")
         return None
 
@@ -108,22 +141,14 @@ class GlassdoorJobsPage(BaseJobsPage):
             return None
 
     async def get_card_title(self, card) -> str:
-        try:
-            el = card.locator(
-                '[class*=JobCard_jobTitle], a[data-test="job-title"], [class*=jobTitle]'
-            )
-            return (await el.inner_text()).strip()
-        except Exception:
-            return ""
+        return await text_or_empty(
+            card, _CARD_TITLE, field="glassdoor card title", timeout=T_FAST
+        )
 
     async def get_card_company(self, card) -> str:
-        try:
-            el = card.locator(
-                '[class*=EmployerProfile_employerName], [data-test="employer-name"], [class*=employerName]'
-            )
-            return (await el.inner_text()).strip()
-        except Exception:
-            return ""
+        return await text_or_empty(
+            card, _CARD_COMPANY, field="glassdoor card company", timeout=T_FAST
+        )
 
     def next_page_url(self, base_url: str, page_num: int) -> str:
         if page_num == 1:

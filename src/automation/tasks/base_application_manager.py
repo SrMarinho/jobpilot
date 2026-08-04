@@ -7,6 +7,7 @@ from functools import partial
 from typing import Callable
 from pathlib import Path
 from playwright.async_api import Page
+from src.core.entities.eval_result import EvalResult
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
 from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
@@ -32,7 +33,7 @@ class JobItem:
     company: str = ""
     job_url: str = ""
     card_id: str = ""
-    eval_result: tuple | None = None
+    eval_result: EvalResult | None = None
     state: str = "pending"
     note: str = ""
 
@@ -201,19 +202,20 @@ class BaseJobApplicationManager(ABC):
                     return
                 for item, result in zip(items, results):
                     item.eval_result = result
-                    is_match, salary, reason, missing, contract = result
-                    if missing:
-                        await track_missing_skills_async(missing)
-                    if is_match:
+                    if result.missing_skills:
+                        await track_missing_skills_async(result.missing_skills)
+                    item.note = result.reason
+                    if result.matches:
                         item.state = "approved"
-                        item.note = reason
                         self.on_update(item)
                         await apply_queue.put(item)
                     else:
                         item.state = "rejected"
-                        item.note = reason
                         self.tracker.mark_rejected(
-                            item.job_url, item.title, reason=reason, site=self.site
+                            item.job_url,
+                            item.title,
+                            reason=result.reason,
+                            site=self.site,
                         )
                         self.on_update(item)
                     self.evaluated_count += 1
@@ -269,11 +271,13 @@ class BaseJobApplicationManager(ABC):
                 _manual = {}
         if item.job_url in _manual:
             return
-        salary = item.eval_result[1] if item.eval_result else None
-        contract = item.eval_result[4] if item.eval_result else ""
-        salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
-        contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
-        salary_line = f"\n💰 Pretensão: R$ {salary_str}{contract_tag}" if salary else ""
+        result = item.eval_result or EvalResult()
+        salary_str = f"{result.salary:,.0f}".replace(",", ".") if result.salary else ""
+        salary_line = (
+            f"\n💰 Pretensão: R$ {salary_str}{result.contract_tag}"
+            if result.salary
+            else ""
+        )
         company_line = f"\n🏢 {item.company}" if item.company else ""
         send_telegram(
             f"⚠️ <b>Candidatura manual necessária</b>\n"
@@ -287,8 +291,8 @@ class BaseJobApplicationManager(ABC):
         _manual[item.job_url] = {
             "title": item.title,
             "company": item.company,
-            "salary": salary,
-            "contract": contract,
+            "salary": result.salary,
+            "contract": result.contract,
             "reason": reason,
         }
         _manual_file.parent.mkdir(parents=True, exist_ok=True)
@@ -341,14 +345,17 @@ class BaseJobApplicationManager(ABC):
             await btn.click()
             await apply_page.wait_for_timeout(1500)
 
-            _, salary, _, _, contract = item.eval_result
+            evaluation = item.eval_result or EvalResult()
             if hasattr(temp_handler, "submit_easy_apply"):
                 success = await temp_handler.submit_easy_apply(
-                    salary, item.title, item.description, no_submit=self.no_submit
+                    evaluation.salary,
+                    item.title,
+                    item.description,
+                    no_submit=self.no_submit,
                 )
             elif hasattr(temp_handler, "submit"):
                 success = await temp_handler.submit(
-                    salary_expectation=salary, no_submit=self.no_submit
+                    salary_expectation=evaluation.salary, no_submit=self.no_submit
                 )
             else:
                 success = False
@@ -363,11 +370,11 @@ class BaseJobApplicationManager(ABC):
                         self.tracker.mark_applied,
                         item.job_url,
                         item.title,
-                        salary,
+                        evaluation.salary,
                         company=item.company,
                         level=lvl,
                         site=self.site,
-                        contract=contract,
+                        contract=evaluation.contract,
                     )
                 )
                 item.state = "applied"

@@ -70,9 +70,7 @@ _HIRED_ANNOUNCE_TERMS = [
 ]
 
 
-def build_linkedin_hired_posts_url(
-    role: str, announce_term: str | None = None
-) -> str:
+def build_linkedin_hired_posts_url(role: str, announce_term: str | None = None) -> str:
     """Busca de POSTS de anúncio de contratação recente, ordenados por data.
 
     ``announce_term`` = frase exata entre aspas (ex: '"comecei como"').

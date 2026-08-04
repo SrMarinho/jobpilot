@@ -1,15 +1,14 @@
 import json
 import re
-from datetime import datetime
 from pathlib import Path
-from src.config.settings import logger
+from src.config.settings import files_dir, logger
+from src.core.entities.applied_job import AppliedJob, RejectedJob
 from src.core.persistence.db import is_db_enabled
 from src.core.persistence.keyed_repo import KeyedRepo
 from src.utils.telegram import send_telegram
 
-_FILES_DIR = Path(".local") / "files"
-APPLIED_JOBS_FILE = _FILES_DIR / "applied_jobs.json"
-REJECTED_JOBS_FILE = _FILES_DIR / "rejected_jobs.json"
+APPLIED_JOBS_FILE = files_dir / "applied_jobs.json"
+REJECTED_JOBS_FILE = files_dir / "rejected_jobs.json"
 
 
 class AppliedJobsTracker:
@@ -80,22 +79,22 @@ class AppliedJobsTracker:
         site: str = "",
         contract: str = "",
     ):
-        job_id = self._job_id(job_url)
-        self._applied[job_id] = {
-            "title": title,
-            "company": company,
-            "url": job_url,
-            "applied_at": datetime.now().isoformat(),
-            "salary_offered": salary,
-            "level": level or "unknown",
-            "site": site or "unknown",
-            "contract": contract or "unknown",
-        }
+        job = AppliedJob.create(
+            self._job_id(job_url),
+            job_url,
+            title,
+            salary=salary,
+            company=company,
+            level=level,
+            site=site,
+            contract=contract,
+        )
+        self._applied[job.job_id] = job.as_document()
         if is_db_enabled():
-            self._ar.upsert({"job_id": job_id, **self._applied[job_id]})
+            self._ar.upsert(job.as_record())
         else:
             self._save_applied()
-        logger.info(f"Saved application: '{title}' at '{company}' (id={job_id})")
+        logger.info(f"Saved application: '{title}' at '{company}' (id={job.job_id})")
 
         salary_str = f"{salary:,.0f}".replace(",", ".") if salary else ""
         contract_tag = f" ({contract})" if contract and contract != "unknown" else ""
@@ -110,16 +109,12 @@ class AppliedJobsTracker:
         )
 
     def mark_rejected(self, job_url: str, title: str, reason: str = "", site: str = ""):
-        job_id = self._job_id(job_url)
-        self._rejected[job_id] = {
-            "title": title,
-            "url": job_url,
-            "rejected_at": datetime.now().isoformat(),
-            "reason": reason,
-            "site": site or "unknown",
-        }
+        job = RejectedJob.create(
+            self._job_id(job_url), job_url, title, reason=reason, site=site
+        )
+        self._rejected[job.job_id] = job.as_document()
         if is_db_enabled():
-            self._rr.upsert({"job_id": job_id, **self._rejected[job_id]})
+            self._rr.upsert(job.as_record())
         else:
             self._save_rejected()
-        logger.debug(f"Saved rejection: '{title}' (id={job_id})")
+        logger.debug(f"Saved rejection: '{title}' (id={job.job_id})")

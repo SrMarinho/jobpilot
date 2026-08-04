@@ -1,5 +1,7 @@
 import re
 from src.core.ai.llm_provider import get_eval_provider
+from src.core.config.salary_reference import salary_reference_block
+from src.core.entities.eval_result import EvalResult
 from src.core.use_cases.resume_loader import load_resume_text
 from src.config.settings import logger
 from src.utils.text import normalize as _normalize
@@ -59,50 +61,54 @@ _LEVEL_KEYWORDS: dict[str, list[str]] = {
 }
 
 
-def _parse_eval_line(line: str) -> tuple[bool, int | None, str, list[str], str]:
+def _parse_eval_line(line: str) -> EvalResult:
     """Parse a YES/NO eval line (with or without JOB_N prefix stripped).
 
     Handles both formats:
       YES|7000|reason|skills|CLT
       NO|reason|skills
     """
-    is_match = False
-    salary: int | None = None
-    reason = line
-    missing_skills: list[str] = []
-    contract_type = "unknown"
-
     for raw in line.splitlines():
         raw = raw.strip()
         upper = raw.upper()
-        if upper.startswith("YES") or upper.startswith("NO"):
-            parts = raw.split("|")
-            is_match = parts[0].strip().upper() == "YES"
-            if is_match and len(parts) >= 2:
+        if not (upper.startswith("YES") or upper.startswith("NO")):
+            continue
+
+        parts = raw.split("|")
+        is_match = parts[0].strip().upper() == "YES"
+        salary: int | None = None
+        contract = "unknown"
+
+        if is_match:
+            if len(parts) >= 2:
                 try:
                     salary = int(re.sub(r"\D", "", parts[1]))
                 except Exception:
                     salary = None
-            if is_match:
-                reason = (
-                    parts[2].strip()
-                    if len(parts) >= 3
-                    else (parts[-1].strip() if parts else raw)
-                )
-                skills_raw = parts[3].strip() if len(parts) >= 4 else ""
-                if len(parts) >= 5:
-                    ct_raw = parts[4].strip().upper()
-                    if ct_raw in ("CLT", "PJ"):
-                        contract_type = ct_raw
-            else:
-                reason = parts[1].strip() if len(parts) >= 2 else raw
-                skills_raw = parts[2].strip() if len(parts) >= 3 else ""
-            missing_skills = [
-                s.strip().lower() for s in skills_raw.split(",") if s.strip()
-            ]
-            break
+            reason = (
+                parts[2].strip()
+                if len(parts) >= 3
+                else (parts[-1].strip() if parts else raw)
+            )
+            skills_raw = parts[3].strip() if len(parts) >= 4 else ""
+            if len(parts) >= 5 and parts[4].strip().upper() in ("CLT", "PJ"):
+                contract = parts[4].strip().upper()
+        else:
+            reason = parts[1].strip() if len(parts) >= 2 else raw
+            skills_raw = parts[2].strip() if len(parts) >= 3 else ""
 
-    return is_match, salary, reason, missing_skills, contract_type
+        return EvalResult(
+            matches=is_match,
+            salary=salary,
+            reason=reason,
+            missing_skills=[
+                s.strip().lower() for s in skills_raw.split(",") if s.strip()
+            ],
+            contract=contract,
+        )
+
+    # Nenhuma linha reconhecível: devolve a resposta crua como motivo.
+    return EvalResult(reason=line)
 
 
 class JobEvaluator:
@@ -191,38 +197,68 @@ class JobEvaluator:
 
         return False
 
-    async def evaluate_async(
-        self, title: str, description: str
-    ) -> tuple[bool, int | None, str, list[str], str]:
-        description = description[:MAX_DESCRIPTION_CHARS]
+    # ── Prompt ───────────────────────────────────────────────────────────────
 
-        preferences_section = (
-            f"\nCANDIDATE PREFERENCES (prioritize these):\n{self.preferences}\n"
-            if self.preferences
-            else ""
+    def _preferences_section(self) -> str:
+        if not self.preferences:
+            return ""
+        return f"\nCANDIDATE PREFERENCES (prioritize these):\n{self.preferences}\n"
+
+    def _level_rule(self) -> str:
+        if not self.levels:
+            return "2. Seniority: accept any level.\n"
+        accepted = " or ".join(f"'{lv}'" for lv in self.levels)
+        return (
+            f"2. Seniority: only accept jobs targeting {accepted} level(s). "
+            f"If the job is clearly for a different level, answer NO.\n"
         )
 
-        if self.levels:
-            accepted = " or ".join(f"'{lv}'" for lv in self.levels)
-            level_rule = (
-                f"2. Seniority: only accept jobs targeting {accepted} level(s). "
-                f"If the job is clearly for a different level, answer NO.\n"
-            )
-        else:
-            level_rule = "2. Seniority: accept any level.\n"
+    def _build_prompt(self, jobs: list[tuple[str, str]], max_chars: int) -> str:
+        """Prompt de avaliação — o mesmo para 1 ou N vagas.
 
-        prompt = f"""Analyze if this job matches the candidate. Answer in the exact format shown.
+        Single e batch eram dois prompts copiados, com as mesmas regras escritas
+        duas vezes: qualquer ajuste em um deixava o outro para trás em silêncio.
+        Aqui a única diferença é o prefixo ``JOB_N|`` exigido na resposta quando
+        há mais de uma vaga.
+        """
+        n = len(jobs)
+        batch = n > 1
+        jobs_section = "".join(
+            f"\n--- JOB {i} ---\nTITLE: {title}\nDESCRIPTION:\n{desc[:max_chars]}\n"
+            for i, (title, desc) in enumerate(jobs, 1)
+        )
+        prefix = "JOB_N|" if batch else ""
+        header = (
+            f"Analyze {n} job listings for the candidate. For EACH job, reply with "
+            "exactly ONE line in the format shown."
+            if batch
+            else "Analyze if this job matches the candidate. "
+            "Answer in the exact format shown."
+        )
+        reply_rule = (
+            f"Reply with EXACTLY {n} lines, one per job, in order:"
+            if batch
+            else "IMPORTANT: reply with ONLY one line, no extra text:"
+        )
+        examples = (
+            "JOB_1|YES|7000|Python/Node backend, remote, pleno|kubernetes|CLT\n"
+            "JOB_2|NO|Requires Angular|angular,typescript\n"
+            "JOB_3|YES|9000|Node fullstack PJ||PJ"
+            if batch
+            else "YES|7000|Python/Node backend role, remote, pleno level matches|kubernetes,redis|CLT\n"
+            "YES|11000|Pleno PJ Node fullstack remoto|next.js|PJ\n"
+            "NO|Requires Angular, candidate works with Python/Node|angular,typescript\n"
+            "NO|Go required|golang"
+        )
+
+        return f"""{header}
 
 RESUME:
 {self.resume}
-{preferences_section}
-JOB TITLE: {title}
-JOB DESCRIPTION:
-{description}
-
+{self._preferences_section()}{jobs_section}
 RULES (answer NO if any fails):
 1. Description must be in Portuguese. If English/Spanish → NO.
-{level_rule}3. Technologies and preferences must match.
+{self._level_rule()}3. Technologies and preferences must match.
 4. Work location: if the description does not explicitly mention on-site or hybrid work, assume it is fully remote and accept it. Only reject if it explicitly requires presential or hybrid attendance.
 
 Contract type detection (look for keywords in description):
@@ -231,125 +267,52 @@ Contract type detection (look for keywords in description):
 - Both mentioned (candidate choice) → pick PJ (higher gross)
 - Not mentioned → unknown
 
-Salary reference (BRL/month):
-- Junior CLT 3000-6000 | Junior PJ 4000-8000
-- Pleno  CLT 6000-10000 | Pleno  PJ 8000-14000
-- Senior CLT 10000-18000 | Senior PJ 14000-25000
+{salary_reference_block()}
 
 Use CLT range if contract=CLT, PJ range if contract=PJ. If unknown, default to CLT range (more conservative).
 
-IMPORTANT: reply with ONLY one line, no extra text:
-If match: YES|<salary number>|<short reason>|<missing skills>|<CLT|PJ|unknown>
-If no match: NO|<short reason>|<missing skills>
+{reply_rule}
+If match:    {prefix}YES|<salary number>|<short reason>|<missing skills>|<CLT|PJ|unknown>
+If no match: {prefix}NO|<short reason>|<missing skills>
 
 <missing skills>: comma-separated hard skills/technologies the job requires that are NOT in the candidate's resume. Leave empty if none.
 
 Examples:
-YES|7000|Python/Node backend role, remote, pleno level matches|kubernetes,redis|CLT
-YES|11000|Pleno PJ Node fullstack remoto|next.js|PJ
-NO|Requires Angular, candidate works with Python/Node|angular,typescript
-NO|Go required|golang"""
+{examples}"""
 
-        result = await get_eval_provider().complete(prompt)
-        parsed = _parse_eval_line(result)
-        is_match, salary, reason, missing_skills, contract_type = parsed
-        logger.info(
-            f"Evaluation: {'YES' if is_match else 'NO'} | salary={salary} | contract={contract_type} | {reason}"
-            + (f" | missing: {missing_skills}" if missing_skills else "")
-        )
-        return parsed
+    # ── Avaliação ────────────────────────────────────────────────────────────
 
-    async def evaluate_batch(
-        self, jobs: list[tuple[str, str]]
-    ) -> list[tuple[bool, int | None, str, list[str], str]]:
-        """Evaluate N jobs in a single LLM call. Resume sent once — saves ~50% tokens vs N individual calls."""
+    async def evaluate_async(self, title: str, description: str) -> EvalResult:
+        prompt = self._build_prompt([(title, description)], MAX_DESCRIPTION_CHARS)
+        raw = await get_eval_provider().complete(prompt)
+        result = _parse_eval_line(raw)
+        logger.info(f"Evaluation: {result.summary()}")
+        return result
+
+    async def evaluate_batch(self, jobs: list[tuple[str, str]]) -> list[EvalResult]:
+        """Avalia N vagas numa chamada só — currículo vai uma vez, ~50% menos tokens."""
         n = len(jobs)
+        prompt = self._build_prompt(jobs, MAX_DESCRIPTION_CHARS_BATCH)
+        raw = await get_eval_provider().complete(prompt)
 
-        preferences_section = (
-            f"\nCANDIDATE PREFERENCES (prioritize these):\n{self.preferences}\n"
-            if self.preferences
-            else ""
-        )
-
-        if self.levels:
-            accepted = " or ".join(f"'{lv}'" for lv in self.levels)
-            level_rule = (
-                f"2. Seniority: only accept jobs targeting {accepted} level(s). "
-                f"If the job is clearly for a different level, answer NO.\n"
-            )
-        else:
-            level_rule = "2. Seniority: accept any level.\n"
-
-        jobs_section = ""
-        for i, (title, description) in enumerate(jobs, 1):
-            jobs_section += (
-                f"\n--- JOB {i} ---\n"
-                f"TITLE: {title}\n"
-                f"DESCRIPTION:\n{description[:MAX_DESCRIPTION_CHARS_BATCH]}\n"
-            )
-
-        prompt = f"""Analyze {n} job listings for the candidate. For EACH job, reply with exactly ONE line in the format shown.
-
-RESUME:
-{self.resume}
-{preferences_section}{jobs_section}
-RULES (apply to ALL jobs):
-1. Description must be in Portuguese. If English/Spanish → NO.
-{level_rule}3. Technologies and preferences must match.
-4. Work location: if not explicitly on-site or hybrid, assume remote and accept.
-
-Contract type detection:
-- "CLT", "carteira assinada" → CLT
-- "PJ", "pessoa jurídica", "MEI" → PJ
-- Both → pick PJ | Not mentioned → unknown
-
-Salary reference (BRL/month):
-- Junior CLT 3000-6000 | Junior PJ 4000-8000
-- Pleno  CLT 6000-10000 | Pleno  PJ 8000-14000
-- Senior CLT 10000-18000 | Senior PJ 14000-25000
-
-Reply with EXACTLY {n} lines, one per job, in order:
-If match:    JOB_N|YES|<salary>|<short reason>|<missing skills>|<CLT|PJ|unknown>
-If no match: JOB_N|NO|<short reason>|<missing skills>
-
-<missing skills>: comma-separated techs NOT in resume. Leave empty if none.
-
-Examples:
-JOB_1|YES|7000|Python/Node backend, remote, pleno|kubernetes|CLT
-JOB_2|NO|Requires Angular|angular,typescript
-JOB_3|YES|9000|Node fullstack PJ||PJ"""
-
-        result = await get_eval_provider().complete(prompt)
-
-        default: tuple[bool, int | None, str, list[str], str] = (
-            False,
-            None,
-            "parse error",
-            [],
-            "unknown",
-        )
-        results: list[tuple[bool, int | None, str, list[str], str]] = [default] * n
-
-        for line in result.splitlines():
+        results = [EvalResult.parse_error() for _ in range(n)]
+        for line in raw.splitlines():
             line = line.strip()
-            upper = line.upper()
-            if upper.startswith("JOB_"):
-                try:
-                    prefix, rest = line.split("|", 1)
-                    idx = int(prefix.strip().split("_")[1]) - 1
-                    if 0 <= idx < n:
-                        parsed = _parse_eval_line(rest)
-                        results[idx] = parsed
-                        is_match, salary, reason, missing_skills, contract_type = parsed
-                        logger.info(
-                            f"Batch JOB_{idx + 1}: {'YES' if is_match else 'NO'} | salary={salary} | {reason}"
-                            + (
-                                f" | missing: {missing_skills}"
-                                if missing_skills
-                                else ""
-                            )
-                        )
-                except Exception:
-                    pass
+            if not line.upper().startswith("JOB_"):
+                continue
+            try:
+                prefix, rest = line.split("|", 1)
+                idx = int(prefix.strip().split("_")[1]) - 1
+            except Exception:
+                logger.warning(f"Batch: linha ilegível descartada: {line[:80]!r}")
+                continue
+            if not 0 <= idx < n:
+                logger.warning(f"Batch: índice fora da faixa em {line[:80]!r}")
+                continue
+            results[idx] = _parse_eval_line(rest)
+            logger.info(f"Batch JOB_{idx + 1}: {results[idx].summary()}")
 
+        unparsed = sum(1 for r in results if r.reason == "parse error")
+        if unparsed:
+            logger.warning(f"Batch: {unparsed}/{n} vagas sem veredito do LLM")
         return results

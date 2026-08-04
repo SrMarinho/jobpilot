@@ -13,7 +13,9 @@ def register_profile_ssi_commands(app: typer.Typer) -> None:
             typer.echo("No SSI snapshots yet. Run `profile capture` first.")
             return
         latest = snaps[-1]
-        typer.echo(f"SSI Score: {latest.get('total', '?')}/100  ({latest.get('date', '?')})")
+        typer.echo(
+            f"SSI Score: {latest.get('total', '?')}/100  ({latest.get('date', '?')})"
+        )
         typer.echo(f"  Brand professional:  {latest.get('brand', '?')}/25")
         typer.echo(f"  Find right people:   {latest.get('find_people', '?')}/25")
         typer.echo(f"  Engage with insights:{latest.get('engage_insights', '?')}/25")
@@ -31,14 +33,16 @@ def register_profile_ssi_commands(app: typer.Typer) -> None:
         if not snaps:
             typer.echo("No SSI snapshots yet.")
             return
-        typer.echo(f"{'Date':<12} {'Total':>6} {'Brand':>6} {'People':>7} {'Insights':>9} {'Rels':>5}")
+        typer.echo(
+            f"{'Date':<12} {'Total':>6} {'Brand':>6} {'People':>7} {'Insights':>9} {'Rels':>5}"
+        )
         typer.echo("-" * 52)
         for s in snaps:
             typer.echo(
-                f"  {s.get('date','?'):<10} "
-                f"{s.get('total','?'):>6} "
-                f"{s.get('brand','?'):>6} "
-                f"{s.get('find_people','?'):>7} "
-                f"{s.get('engage_insights','?'):>9} "
-                f"{s.get('relationships','?'):>5}"
+                f"  {s.get('date', '?'):<10} "
+                f"{s.get('total', '?'):>6} "
+                f"{s.get('brand', '?'):>6} "
+                f"{s.get('find_people', '?'):>7} "
+                f"{s.get('engage_insights', '?'):>9} "
+                f"{s.get('relationships', '?'):>5}"
             )

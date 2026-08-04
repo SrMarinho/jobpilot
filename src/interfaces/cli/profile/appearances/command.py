@@ -12,12 +12,16 @@ def register_profile_appearances_commands(app: typer.Typer) -> None:
         tracker = SearchAppearancesTracker()
         a = tracker.analyze()
         if a["samples"] == 0:
-            typer.echo("No search-appearance snapshots yet. Run `profile capture` first.")
+            typer.echo(
+                "No search-appearance snapshots yet. Run `profile capture` first."
+            )
             return
         arrow = _ARROW.get(a["trend"], "?")
         typer.echo(f"Search appearances (last ~7d): {a['current']}")
         if a["previous"] is not None:
-            typer.echo(f"  Previous: {a['previous']}  Δ {a['delta']:+}  {arrow} {a['trend']}")
+            typer.echo(
+                f"  Previous: {a['previous']}  Δ {a['delta']:+}  {arrow} {a['trend']}"
+            )
         else:
             typer.echo("  (only 1 snapshot — need ≥2 for trend)")
 

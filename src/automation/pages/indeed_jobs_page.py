@@ -1,13 +1,59 @@
 import re
 from src.config.settings import logger
 from src.automation.pages.base import BaseJobsPage
+from src.automation.pages.selectors import (
+    T_FAST,
+    T_NORMAL,
+    T_SLOW,
+    first_enabled,
+    text_or_empty,
+)
+
+# Candidatos por campo, em ordem de preferência (ver selectors.py).
+_CARDS = ".job_seen_beacon"
+_TITLE = [
+    "h2.jobsearch-JobInfoHeader-title",
+    "[data-testid='jobsearch-JobInfoHeader-title']",
+    "div.jobsearch-JobInfoHeader-title-container h2",
+]
+_COMPANY = [
+    "[data-testid='inlineHeader-companyName']",
+    "[data-testid='jobsearch-CompanyInfoContainer'] a",
+    "div.jobsearch-CompanyInfoContainer a",
+]
+_DESCRIPTION = ["#jobDescriptionText"]
+_APPLY_BTN = [
+    "#indeedApplyButton",
+    "button#indeedApplyButton",
+    "button.indeed-apply-button",
+    "[data-testid='indeedApplyButton']",
+    "button.ia-IndeedApplyButton",
+    "button[class*='IndeedApplyButton']",
+    "div.jobsearch-IndeedApplyButton-newDesign button",
+    "xpath=//button[contains(@class,'indeed-apply') or contains(@class,'IndeedApply')]",
+]
+# Sufixos que o Indeed cola no título e não fazem parte do cargo.
+_TITLE_SUFFIXES = (
+    " - job post",
+    "- job post",
+    " - oferta de emprego",
+    "- oferta de emprego",
+)
+_EXTERNAL_APPLY_MARKERS = (
+    "site da empresa",
+    "company site",
+    "company website",
+    "external",
+    "candidate-se no site",
+    "aplicar no site",
+)
 
 
 class IndeedJobsPage(BaseJobsPage):
     async def get_job_cards(self):
         try:
-            await self.page.wait_for_selector(".job_seen_beacon", timeout=10000)
-            return await self.page.locator(".job_seen_beacon").all()
+            await self.page.wait_for_selector(_CARDS, timeout=T_SLOW)
+            return await self.page.locator(_CARDS).all()
         except Exception:
             logger.info("No job cards found on page")
             return []
@@ -17,7 +63,7 @@ class IndeedJobsPage(BaseJobsPage):
             jk = await card.get_attribute("data-jk")
             if jk:
                 return jk
-            link = card.locator("a[data-jk]")
+            link = card.locator("a[data-jk]").first
             return await link.get_attribute("data-jk") or ""
         except Exception:
             return ""
@@ -27,80 +73,42 @@ class IndeedJobsPage(BaseJobsPage):
         if jk:
             return f"https://br.indeed.com/viewjob?jk={jk}"
         try:
-            link = card.locator("a.jcs-JobTitle, h2.jobTitle a")
+            link = card.locator("a.jcs-JobTitle, h2.jobTitle a").first
             href = await link.get_attribute("href") or ""
             return href
         except Exception:
             return ""
 
     async def get_company_name(self) -> str:
-        try:
-            el = self.page.locator(
-                "[data-testid='inlineHeader-companyName'], "
-                "[data-testid='jobsearch-CompanyInfoContainer'] a, "
-                "div.jobsearch-CompanyInfoContainer a"
-            )
-            return (await el.inner_text()).strip()
-        except Exception:
-            return ""
+        return await text_or_empty(
+            self.page, _COMPANY, field="indeed company name", timeout=T_FAST
+        )
 
     async def get_job_title(self) -> str:
-        try:
-            el = self.page.locator(
-                "h2.jobsearch-JobInfoHeader-title, "
-                "[data-testid='jobsearch-JobInfoHeader-title'], "
-                "div.jobsearch-JobInfoHeader-title-container h2"
-            )
-            await el.wait_for(timeout=10000)
-            text = (await el.inner_text()).strip()
-            for suffix in (
-                " - job post",
-                "- job post",
-                " - oferta de emprego",
-                "- oferta de emprego",
-            ):
-                if text.endswith(suffix):
-                    text = text[: -len(suffix)].strip()
-                    break
-            return text
-        except Exception:
-            return ""
+        text = await text_or_empty(
+            self.page, _TITLE, field="indeed job title", timeout=T_SLOW
+        )
+        for suffix in _TITLE_SUFFIXES:
+            if text.endswith(suffix):
+                return text[: -len(suffix)].strip()
+        return text
 
     async def get_job_description(self) -> str:
-        try:
-            el = self.page.locator("#jobDescriptionText")
-            await el.wait_for(timeout=5000)
-            return (await el.inner_text()).strip()
-        except Exception:
-            return ""
+        return await text_or_empty(
+            self.page, _DESCRIPTION, field="indeed job description", timeout=T_NORMAL
+        )
 
     async def get_apply_btn(self):
-        css_selectors = [
-            "#indeedApplyButton",
-            "button#indeedApplyButton",
-            "button.indeed-apply-button",
-            "[data-testid='indeedApplyButton']",
-            "button.ia-IndeedApplyButton",
-            "button[class*='IndeedApplyButton']",
-            "div.jobsearch-IndeedApplyButton-newDesign button",
-        ]
-        for sel in css_selectors:
-            try:
-                btn = self.page.locator(sel)
-                if await btn.is_visible(timeout=5000) and await btn.is_enabled():
-                    logger.info(f"Found Indeed Apply button via {sel}")
-                    return btn
-            except Exception:
-                continue
-        try:
-            btn = self.page.locator(
-                "xpath=//button[contains(@class,'indeed-apply') or contains(@class,'IndeedApply')]"
-            )
-            if await btn.is_visible(timeout=2000) and await btn.is_enabled():
-                logger.info("Found Indeed Apply button via class match")
-                return btn
-        except Exception:
-            pass
+        # required=False: vaga com apply externo é caso normal, não quebra.
+        btn = await first_enabled(
+            self.page,
+            _APPLY_BTN,
+            field="indeed apply button",
+            timeout=T_NORMAL,
+            required=False,
+        )
+        if btn is not None:
+            return btn
         if await self._has_external_apply():
             logger.info(
                 "External apply detected (company site) — skipping (not Indeed Apply)"
@@ -120,17 +128,7 @@ class IndeedJobsPage(BaseJobsPage):
                 txt = (await el.inner_text() or "").lower()
                 aria = (await el.get_attribute("aria-label") or "").lower()
                 joined = f"{txt} {aria}"
-                if any(
-                    k in joined
-                    for k in (
-                        "site da empresa",
-                        "company site",
-                        "company website",
-                        "external",
-                        "candidate-se no site",
-                        "aplicar no site",
-                    )
-                ):
+                if any(k in joined for k in _EXTERNAL_APPLY_MARKERS):
                     return True
         except Exception:
             pass

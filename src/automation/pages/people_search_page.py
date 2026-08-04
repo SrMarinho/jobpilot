@@ -1,5 +1,28 @@
 from playwright.async_api import Page
 from src.config.settings import logger
+from src.automation.pages.selectors import (
+    T_FAST,
+    T_NORMAL,
+    first_enabled,
+    first_visible,
+)
+
+# Candidatos por campo, em ordem de preferência (ver selectors.py).
+_MODAL_CLOSE = [
+    "button[aria-label='Fechar']",
+    "button[aria-label='Dismiss']",
+    "button[aria-label='Close']",
+]
+_WITHDRAW_MODAL = [
+    "xpath=//button[contains(@aria-label,'Retirar convite') or contains(@aria-label,'Withdraw')]"
+]
+_SEND_INVITE = [
+    "button[aria-label='Enviar sem nota']",
+    "button[aria-label='Send without a note']",
+    "button[aria-label='Send now']",
+    # Fallback: qualquer botão de envio dentro do modal.
+    "xpath=//*[@data-test-modal-container]//button[contains(normalize-space(),'Send') or contains(normalize-space(),'Enviar')]",
+]
 
 
 class PeopleSearchPage:
@@ -17,15 +40,23 @@ class PeopleSearchPage:
             return False
 
     async def close_modal(self) -> None:
-        try:
-            btn = self.page.locator("button[aria-label='Fechar']")
-            await btn.wait_for(timeout=5000)
-            await btn.click()
-        except Exception:
+        btn = await first_visible(
+            self.page,
+            _MODAL_CLOSE,
+            field="invite modal close",
+            timeout=T_NORMAL,
+            required=False,
+        )
+        if btn is not None:
             try:
-                await self.page.keyboard.press("Escape")
+                await btn.click()
+                return
             except Exception:
-                logger.error("No modal to close")
+                pass
+        try:
+            await self.page.keyboard.press("Escape")
+        except Exception:
+            logger.error("No modal to close")
 
     async def get_confirm_invitation_btn(self):
         logger.info("Waiting for invitation modal")
@@ -37,40 +68,21 @@ class PeopleSearchPage:
             logger.error("No modal appeared after clicking Connect")
             return None
 
-        # Check for "withdraw invite" modal (PT or EN)
-        try:
-            withdraw = self.page.locator(
-                "xpath=//button[contains(@aria-label,'Retirar convite') or contains(@aria-label,'Withdraw')]"
-            )
-            if await withdraw.is_visible(timeout=2000):
-                logger.info("Withdraw invite modal detected, skipping")
-                return None
-        except Exception:
-            pass
+        # Modal de "retirar convite" (PT/EN): já convidamos essa pessoa, pula.
+        withdraw = await first_visible(
+            self.page,
+            _WITHDRAW_MODAL,
+            field="withdraw invite modal",
+            timeout=T_FAST,
+            required=False,
+        )
+        if withdraw is not None:
+            logger.info("Withdraw invite modal detected, skipping")
+            return None
 
-        # Look for "Send without note" button (PT or EN)
-        for selector in [
-            "button[aria-label='Enviar sem nota']",
-            "button[aria-label='Send without a note']",
-            "button[aria-label='Send now']",
-        ]:
-            try:
-                btn = self.page.locator(selector)
-                if await btn.is_visible(timeout=1000) and await btn.is_enabled():
-                    return btn
-            except Exception:
-                pass
-
-        # Fallback: any button with "Send" or "Enviar" in the modal
-        try:
-            btn = self.page.locator(
-                "xpath=//*[@data-test-modal-container]//button[contains(normalize-space(),'Send') or contains(normalize-space(),'Enviar')]"
-            )
-            if await btn.is_visible(timeout=1000) and await btn.is_enabled():
-                return btn
-        except Exception as e:
-            logger.error(f"Confirm button not found. {e}")
-        return None
+        return await first_enabled(
+            self.page, _SEND_INVITE, field="send invite button", timeout=T_FAST
+        )
 
     async def requires_message(self) -> bool:
         try:
