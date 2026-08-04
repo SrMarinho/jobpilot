@@ -1,4 +1,3 @@
-import os
 import threading
 from dataclasses import dataclass, field
 
@@ -20,12 +19,13 @@ from src.core.use_cases.content_filters import (
 from src.core.use_cases.resume_loader import load_resume_text
 from src.core.use_cases.engaged_posts_tracker import EngagedPostsTracker
 from src.config.settings import logger
+from src.config.sections import engage as engage_settings
 
 
 # Filtros baratos pré-LLM (tunáveis via env). Default ligado: só engaja post de
 # autor da área de software E que faz uma pergunta (caso fácil de comentar).
-_DEV_ONLY = os.getenv("ENGAGE_AUTHOR_DEV_ONLY", "1") == "1"
-_QUESTION_ONLY = os.getenv("ENGAGE_QUESTION_ONLY", "1") == "1"
+_DEV_ONLY = engage_settings.author_dev_only
+_QUESTION_ONLY = engage_settings.question_only
 
 
 @dataclass

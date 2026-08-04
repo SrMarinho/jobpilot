@@ -5,6 +5,7 @@ from typing import Awaitable, Callable
 from playwright.async_api import Page, async_playwright
 
 from src.automation.checkpoint import CheckpointError
+from src.config import sections as settings_sections
 from src.config.settings import logger
 from src.interfaces.cli.browser import (
     create_context,
@@ -94,10 +95,7 @@ class BrowserTaskRunner:
             "format": fmt,
             "dry_run": False,
             "no_telegram": False,
-            "user_name": os.getenv("USER_NAME", "Matheus Marinho"),
-            "user_headline": os.getenv(
-                "USER_HEADLINE", "Software Engineer focado em Python e Node.js"
-            ),
+            **settings_sections.user.as_dict(),
         }
         from src.interfaces.cli.autopost.logic import run_autopost
 
@@ -208,8 +206,6 @@ class BrowserTaskRunner:
         await self._with_browser("bot_apply", work, error_prefix="❌ Erro")
 
     async def _engage_async(self, max_posts: int, review: bool) -> None:
-        import os
-
         from src.core.ai.llm_provider import get_eval_provider
         from src.core.ai.warmup import warmup_llm_providers
         from src.automation.tasks.engagement_manager import EngagementManager
@@ -230,11 +226,7 @@ class BrowserTaskRunner:
                 page,
                 llm_provider=provider,
                 resume_path=self.resume_path,
-                user_name=os.getenv("USER_NAME", "Matheus Marinho"),
-                user_headline=os.getenv(
-                    "USER_HEADLINE",
-                    "Software Engineer focado em Python e Node.js",
-                ),
+                **settings_sections.user.as_dict(),
                 max_posts=max_posts,
                 stop_event=self.stop_event,
                 targets=load_targets(),

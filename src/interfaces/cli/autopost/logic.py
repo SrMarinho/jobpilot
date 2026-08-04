@@ -2,6 +2,7 @@ import os
 import re
 from typing import Optional
 
+from src.config import sections as settings_sections
 from src.config.settings import logger
 from src.core.ai.llm_provider import get_eval_provider
 from src.core.ai.warmup import warmup_llm_providers
@@ -73,10 +74,7 @@ def resolve_autopost_config(
         "no_telegram": no_telegram,
         "count": max(1, int(count or 1)),
         "expires_hours": int(expires_hours or 0),
-        "user_name": os.getenv("USER_NAME", "Matheus Marinho"),
-        "user_headline": os.getenv(
-            "USER_HEADLINE", "Software Engineer focado em Python e Node.js"
-        ),
+        **settings_sections.user.as_dict(),
     }
 
 
@@ -320,8 +318,8 @@ async def run_autopost(cfg: dict) -> None:
     provider = get_eval_provider()
     # Pipeline multi-modelo opcional (mesmo padrão do comment_pipeline):
     # AUTOPOST_GENERATOR_MODEL gera+reescreve, AUTOPOST_REVIEWER_MODEL critica.
-    gen_model = os.getenv("AUTOPOST_GENERATOR_MODEL")
-    rev_model = os.getenv("AUTOPOST_REVIEWER_MODEL")
+    gen_model = settings_sections.autopost.generator_model
+    rev_model = settings_sections.autopost.reviewer_model
     if gen_model:
         from src.core.ai.llm_provider import ClaudeProvider
 

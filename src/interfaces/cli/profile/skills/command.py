@@ -6,17 +6,17 @@ Três modos de especificação:
   C) Skills tracker     → sync-from-tracker
 """
 
-import os
 from typing import List, Optional
 
 import typer
 
 from src.interfaces.cli.browser import run_browser_task
 from src.core.use_cases.linkedin_profile_skills import LinkedInProfileSkills
+from src.config import sections as settings_sections
 
 
 def _require_profile_slug() -> str:
-    slug = os.getenv("LINKEDIN_PROFILE_SLUG", "").strip()
+    slug = settings_sections.user.profile_slug
     if not slug:
         typer.echo(
             "Error: LINKEDIN_PROFILE_SLUG not set in .env (e.g. LINKEDIN_PROFILE_SLUG=sr-marinho)",

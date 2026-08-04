@@ -1,6 +1,6 @@
-import os
 import requests
 
+from src.config.sections import telegram as telegram_settings
 from src.config.settings import logger
 
 
@@ -17,11 +17,11 @@ class TelegramClient:
     """
 
     def __init__(self) -> None:
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
-        self.admin_id = str(
-            os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID"))
-        )
+        # settings devolve "" quando a env falta — antes era str(None) == "None",
+        # que passava por qualquer teste de verdade e virava chamada silenciosa.
+        self.token = telegram_settings.token
+        self.chat_id = telegram_settings.chat_id
+        self.admin_id = telegram_settings.admin_id
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset = 0
 

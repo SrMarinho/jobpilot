@@ -1,7 +1,6 @@
 import asyncio
 import atexit
 import json as _json
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -9,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+from src.config.sections import telegram as telegram_settings
 from src.config.settings import logger
 
 _API = "https://api.telegram.org/bot{token}/{method}"
@@ -46,19 +46,17 @@ def _thread(topic: str | None) -> int | None:
     return resolve_thread_id(topic)
 
 
-def _token() -> str | None:
-    return os.getenv("TELEGRAM_BOT_TOKEN")
+def _token() -> str:
+    return telegram_settings.token
 
 
-def _chat_id() -> str | None:
-    return os.getenv("TELEGRAM_CHAT_ID")
+def _chat_id() -> str:
+    return telegram_settings.chat_id
 
 
-def _admin_chat_id(thread: int | None) -> str | None:
+def _admin_chat_id(thread: int | None) -> str:
     """Com tópico, roteia pro grupo; sem, mantém o DM ao admin."""
-    if thread:
-        return _chat_id()
-    return os.getenv("TELEGRAM_ADMIN_ID", os.getenv("TELEGRAM_CHAT_ID"))
+    return _chat_id() if thread else telegram_settings.admin_id
 
 
 def _retry_after(resp: requests.Response) -> float:

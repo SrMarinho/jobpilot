@@ -7,8 +7,7 @@ direto na sessão certa. Aqui ficam: a lista de tópicos por feature, o bootstra
 ``DocRepo`` (backend-aware JSON/Postgres).
 """
 
-import os
-
+from src.config.sections import telegram as telegram_settings
 from src.config.settings import files_dir, logger
 from src.core.persistence.doc_repo import DocRepo
 from src.utils.telegram import _post
@@ -27,8 +26,8 @@ TOPIC_KEYS = {k for k, _, _ in TOPICS}
 
 class TelegramTopics:
     def __init__(self) -> None:
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        self.token = telegram_settings.token
+        self.chat_id = telegram_settings.chat_id
         self.repo = DocRepo(
             "telegram_topics", json_file=files_dir / "telegram_topics.json"
         )

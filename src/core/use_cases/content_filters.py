@@ -1,5 +1,5 @@
-import os
 import re
+from src.config.sections import engage as engage_settings
 
 
 _BLACKLIST_KEYWORDS = {
@@ -319,7 +319,7 @@ def content_tokens(text: str) -> set[str]:
 
 # Mínimo de palavras na legenda p/ comentar. Legenda grande = mais contexto =
 # menos alucinação. Tunável via env (ENGAGE_MIN_CAPTION_WORDS).
-_MIN_CAPTION_WORDS = int(os.getenv("ENGAGE_MIN_CAPTION_WORDS", "40"))
+_MIN_CAPTION_WORDS = engage_settings.min_caption_words
 
 
 def is_commentable_post(text: str) -> bool:

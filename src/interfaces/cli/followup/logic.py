@@ -3,6 +3,7 @@ from typing import Optional
 
 from playwright.async_api import Page
 
+from src.config import sections as settings_sections
 from src.config.settings import logger
 from src.core.ai.llm_provider import get_eval_provider
 from src.core.ai.warmup import warmup_llm_providers
@@ -36,10 +37,7 @@ def resolve_followup_config(
     return {
         "resume_path": resume_path,
         "max_dms": max_dms,
-        "user_name": os.getenv("USER_NAME", "Matheus Marinho"),
-        "user_headline": os.getenv(
-            "USER_HEADLINE", "Software Engineer focado em Python e Node.js"
-        ),
+        **settings_sections.user.as_dict(),
     }
 
 

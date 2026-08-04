@@ -1,10 +1,10 @@
-import os
 import random
 import re
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
 from src.core.use_cases.comment_pipeline import CommentPipeline
+from src.config.sections import engage as engage_settings
 from src.core.use_cases.comment_filters import (
     comment_is_grounded,
     foreign_tech_in_comment,
@@ -38,9 +38,7 @@ class EngagementHandler:
         # Pipeline multi-modelo (Sonnet gera → Fable revisa → Haiku comprime).
         # ENGAGE_CLAUDE_PIPELINE=0 desliga e volta ao provider único (self.llm).
         self.pipeline: CommentPipeline | None = (
-            CommentPipeline()
-            if os.getenv("ENGAGE_CLAUDE_PIPELINE", "1") == "1"
-            else None
+            CommentPipeline() if engage_settings.claude_pipeline else None
         )
 
     async def is_relevant(self, post_text: str) -> bool:
@@ -54,8 +52,8 @@ class EngagementHandler:
         if not is_commentable_post(post_text):
             logger.info("is_relevant: post sem substância (link/imagem), pulando")
             return False
-        if os.getenv("ENGAGE_SKIP_RELEVANCE") == "1":
-            logger.info("ENGAGE_SKIP_RELEVANCE=1, assuming relevant")
+        if engage_settings.skip_relevance:
+            logger.info("ENGAGE_SKIP_RELEVANCE ligado, assumindo relevante")
             return True
         # Keyword heuristic first — robust against weak local LLMs that
         # over-reject. Tech keyword present => relevant, skip LLM.

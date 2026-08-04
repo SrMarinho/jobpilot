@@ -11,14 +11,13 @@ Cada estágio é best-effort: falha de um estágio degrada para o texto anterior
 em vez de abortar (o validate final do handler continua sendo o gate).
 """
 
-import os
-
+from src.config.sections import engage as engage_settings
 from src.config.settings import logger
 from src.core.ai.llm_provider import ClaudeProvider, LLMProvider
 
-_GENERATOR_MODEL = os.getenv("ENGAGE_GENERATOR_MODEL", "claude-sonnet-5")
-_REVIEWER_MODEL = os.getenv("ENGAGE_REVIEWER_MODEL", "claude-fable-5")
-_COMPRESSOR_MODEL = os.getenv("ENGAGE_COMPRESSOR_MODEL", "claude-haiku-4-5-20251001")
+_GENERATOR_MODEL = engage_settings.generator_model
+_REVIEWER_MODEL = engage_settings.reviewer_model
+_COMPRESSOR_MODEL = engage_settings.compressor_model
 
 
 def count_words(text: str) -> int:
