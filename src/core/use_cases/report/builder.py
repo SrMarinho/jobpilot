@@ -29,6 +29,7 @@ class ReportBuilder:
         autopost = m.autopost(period)
         failures = m.failures(period)
         funnels = m.funnels(period)
+        job_funnel = m.job_funnel(period)
         latency = m.latency(period)
         goals = self._goals_progress(
             applications=applications,
@@ -60,6 +61,7 @@ class ReportBuilder:
             "goals": goals,
             "failures": failures,
             "funnels": funnels,
+            "job_funnel": job_funnel,
             "latency": latency,
             "ssi": m.ssi(period),
             "prev_applications": prev.get("applications") if prev else None,

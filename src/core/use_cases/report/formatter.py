@@ -165,6 +165,9 @@ class ReportFormatter:
     def _render_latency(self, report: dict) -> str:
         return self._latency_block(report.get("latency"))
 
+    def _render_job_funnel(self, report: dict) -> str:
+        return self._job_funnel_block(report.get("job_funnel"))
+
     # ── shared block builders ────────────────────────────────────
 
     @staticmethod
@@ -360,6 +363,36 @@ class ReportFormatter:
         return f"\n\n📊 <b>Funis (semana):</b>{''.join(parts)}"
 
     @staticmethod
+    def _job_funnel_block(funnel: dict | None) -> str:
+        """Funil da vaga: avaliada → aprovada → aplicada.
+
+        A distância entre aprovada e aplicada é o número que interessa: se há
+        muita aprovada parada, o gargalo é o envio (formulário travando, quota
+        cortando o run), não a busca.
+        """
+        if not funnel or not funnel.get("evaluated"):
+            return ""
+        linhas = [
+            f"\n    • Avaliadas: {funnel['evaluated']}",
+            f"\n    • Aprovadas: {funnel['approved']} "
+            f"({funnel['approval_rate']}% das avaliadas)",
+            f"\n    • Aplicadas: {funnel['applied']} "
+            f"({funnel['apply_rate']}% das aprovadas)",
+        ]
+        if funnel.get("pending"):
+            linhas.append(
+                f"\n    • ⏳ Na fila: {funnel['pending']} "
+                "aprovadas sem candidatura (<code>jobs queue</code>)"
+            )
+        for site, counts in sorted(
+            funnel.get("by_site", {}).items(), key=lambda x: -x[1]["evaluated"]
+        ):
+            linhas.append(
+                f"\n      ↳ {site}: {counts['approved']}/{counts['evaluated']} aprovadas"
+            )
+        return f"\n\n🎯 <b>Funil de vagas:</b>{''.join(linhas)}"
+
+    @staticmethod
     def _latency_block(latency: dict | None) -> str:
         if not latency:
             return ""
@@ -396,6 +429,7 @@ ReportFormatter._SECTIONS = [
     ("rejection", ReportFormatter._render_rejection),
     ("skills", ReportFormatter._render_skills),
     ("failures", ReportFormatter._render_failures),
+    ("job_funnel", ReportFormatter._render_job_funnel),
     ("funnels", ReportFormatter._render_funnels),
     ("latency", ReportFormatter._render_latency),
 ]

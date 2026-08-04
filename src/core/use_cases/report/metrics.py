@@ -245,6 +245,45 @@ class MetricsCalculator:
                 result[feature] = counts
         return result
 
+    def job_funnel(self, period: WeekPeriod) -> dict:
+        """Funil da candidatura: avaliadas → aprovadas → aplicadas.
+
+        Diferente de ``funnels()``, que conta eventos por feature. Aqui o
+        assunto é a vaga: quantas o LLM olhou, quantas passaram e quantas
+        viraram candidatura de fato. A distância entre aprovada e aplicada é o
+        que revela formulário travando ou quota cortando o run.
+        """
+        evaluated = self.repo.evaluated()
+        in_period = [
+            v
+            for v in evaluated.values()
+            if isinstance(v, dict) and period.contains(v.get("evaluated_at") or "")
+        ]
+        approved = [v for v in in_period if v.get("matches")]
+        applied_count = self.count_entries(self.repo.applied(), "applied_at", period)
+
+        def _pct(part: int, whole: int) -> float:
+            return round(part / whole * 100, 1) if whole else 0.0
+
+        by_site: dict[str, dict[str, int]] = {}
+        for job in in_period:
+            site = job.get("site") or "unknown"
+            bucket = by_site.setdefault(site, {"evaluated": 0, "approved": 0})
+            bucket["evaluated"] += 1
+            if job.get("matches"):
+                bucket["approved"] += 1
+
+        return {
+            "evaluated": len(in_period),
+            "approved": len(approved),
+            "applied": applied_count,
+            "approval_rate": _pct(len(approved), len(in_period)),
+            # Aprovadas que não viraram candidatura ficam na fila (jobs queue).
+            "apply_rate": _pct(applied_count, len(approved)),
+            "pending": max(0, len(approved) - applied_count),
+            "by_site": by_site,
+        }
+
     def latency(self, period: WeekPeriod) -> dict[str, dict[str, int]]:
         """Average seconds between paired events, matched by key field."""
         evs = self._events_in_period(period)

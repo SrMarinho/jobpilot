@@ -44,6 +44,9 @@ class ReportRepository:
     def rejected(self) -> dict:
         return self._keyed("rejected_jobs", "job_id", "rejected_jobs.json")
 
+    def evaluated(self) -> dict:
+        return self._keyed("evaluated_jobs", "job_id", "evaluated_jobs.json")
+
     def skills(self) -> dict:
         return load_skills()  # já é backend-aware
 
