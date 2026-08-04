@@ -9,6 +9,7 @@ from src.interfaces.cli.export.command import register_export_command
 from src.interfaces.cli.searches.command import register_searches_commands
 from src.interfaces.cli.goals.command import register_goals_commands
 from src.interfaces.cli.canary.command import register_canary_command
+from src.interfaces.cli.queue.command import register_queue_command
 from src.interfaces.cli.limits.command import register_limits_command
 from src.interfaces.cli.profile.capture.command import register_profile_capture_command
 from src.interfaces.cli.profile.skills.command import register_profile_skills_commands
@@ -64,6 +65,7 @@ def register(app: typer.Typer) -> None:
     app.add_typer(jobs_app, name="jobs")
     register_apply_command(jobs_app)
     register_hired_command(jobs_app)
+    register_queue_command(jobs_app)
     register_export_command(jobs_app)
     register_test_apply_command(jobs_app)
     _add_group(

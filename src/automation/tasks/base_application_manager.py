@@ -7,6 +7,8 @@ from functools import partial
 from typing import Callable
 from playwright.async_api import Page
 from src.core.entities.eval_result import EvalResult
+from src.core.entities.evaluated_job import EvaluatedJob
+from src.core.use_cases.evaluated_jobs_tracker import EvaluatedJobsTracker
 from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _normalize
 from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
@@ -57,6 +59,7 @@ class BaseJobApplicationManager(ABC):
         on_update: Callable[[JobItem], None] | None = None,
         evaluator: JobEvaluator | None = None,
         tracker: AppliedJobsTracker | None = None,
+        evaluations: EvaluatedJobsTracker | None = None,
     ):
         self.page = page
         self.base_url = self._normalize_url(url)
@@ -73,6 +76,8 @@ class BaseJobApplicationManager(ABC):
             resume_path, preferences=preferences, level=level
         )
         self.tracker = tracker or AppliedJobsTracker()
+        # Histórico de avaliações: alimenta o cache e a fila de vagas.
+        self.evaluations = evaluations or EvaluatedJobsTracker()
         self.stop_event = stop_event or threading.Event()
         self.max_applications = max_applications
         self.applied_count = 0
@@ -179,17 +184,29 @@ class BaseJobApplicationManager(ABC):
                 for item in items:
                     item.state = "evaluating"
                     self.on_update(item)
+
+                # Vagas já avaliadas recentemente reusam o veredito — a mesma
+                # vaga reaparece muito entre buscas, e cada uma custa um LLM.
+                cached = {
+                    item.job_url: self.evaluations.cached_result(
+                        self.tracker._job_id(item.job_url)
+                    )
+                    for item in items
+                }
+                pending_items = [i for i in items if cached[i.job_url] is None]
+                if len(pending_items) < len(items):
+                    logger.info(
+                        f"Cache de avaliação: {len(items) - len(pending_items)}/"
+                        f"{len(items)} vagas reaproveitadas"
+                    )
+
                 try:
-                    if batch_size > 1:
-                        jobs = [(item.title, item.description) for item in items]
-                        results = await self.evaluator.evaluate_batch(jobs)
-                    else:
-                        results = [
-                            await self.evaluator.evaluate_async(
-                                item.title, item.description
-                            )
-                            for item in items
-                        ]
+                    fresh = await self._evaluate_items(pending_items, batch_size)
+                    by_url = dict(zip([i.job_url for i in pending_items], fresh))
+                    results = [
+                        cached[i.job_url] or by_url.get(i.job_url, EvalResult())
+                        for i in items
+                    ]
                 except Exception as e:
                     logger.error(f"Eval batch error: {e}")
                     for item in items:
@@ -202,6 +219,7 @@ class BaseJobApplicationManager(ABC):
                     if result.missing_skills:
                         await track_missing_skills_async(result.missing_skills)
                     item.note = result.reason
+                    self._remember_evaluation(item, result)
                     if result.matches:
                         item.state = "approved"
                         self.on_update(item)
@@ -257,6 +275,36 @@ class BaseJobApplicationManager(ABC):
                 continue
             await self._apply_one(item)
             apply_queue.task_done()
+
+    async def _evaluate_items(
+        self, items: list[JobItem], batch_size: int
+    ) -> list[EvalResult]:
+        """Avalia as vagas que não vieram do cache."""
+        if not items:
+            return []
+        if batch_size > 1:
+            jobs = [(item.title, item.description) for item in items]
+            return await self.evaluator.evaluate_batch(jobs)
+        return [
+            await self.evaluator.evaluate_async(item.title, item.description)
+            for item in items
+        ]
+
+    def _remember_evaluation(self, item: JobItem, result: EvalResult) -> None:
+        """Persiste o veredito — best-effort, nunca derruba a candidatura."""
+        try:
+            self.evaluations.save(
+                EvaluatedJob.create(
+                    self.tracker._job_id(item.job_url),
+                    item.job_url,
+                    item.title,
+                    result,
+                    company=item.company,
+                    site=self.site,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Falha ao guardar avaliação de '{item.title[:40]}': {e}")
 
     def _notify_apply_failed(self, item: JobItem, reason: str):
         _manual_file = files_dir / "manual_apply.json"

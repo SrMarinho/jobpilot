@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS rejected_jobs (
     job_id text PRIMARY KEY,
     title text, url text, rejected_at timestamptz, reason text, site text
 );
+CREATE TABLE IF NOT EXISTS evaluated_jobs (
+    job_id text PRIMARY KEY,
+    title text, company text, url text, site text,
+    evaluated_at timestamptz, matches boolean, salary int, contract text,
+    reason text, missing_skills jsonb
+);
 CREATE TABLE IF NOT EXISTS engaged_posts (
     urn text PRIMARY KEY,
     ts timestamptz, author text, actions jsonb, comment text, variant text,

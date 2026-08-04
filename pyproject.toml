@@ -10,8 +10,10 @@ dependencies = [
     "python-dotenv>=1.2.1,<2",
     "playwright>=1.59.0,<2",
     "playwright-stealth>=2.0.0,<3",
-    # 0.0.x: sem contrato de compatibilidade, então pin apertado.
-    "claude-agent-sdk>=0.0.14,<0.1",
+    # Piso em 0.1.50: versões antigas não conhecem o evento `rate_limit_event`
+    # que a API passou a mandar, e estouram "Unknown message type" no meio da
+    # avaliação de vagas.
+    "claude-agent-sdk>=0.1.50,<0.3",
     "pypdf>=5.0.0,<7",
     "requests>=2.33.1,<3",
     "langchain-ollama>=0.2.0,<1",

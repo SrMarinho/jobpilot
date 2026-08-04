@@ -12,5 +12,6 @@ banco — a camada mais interna, que as de fora importam mas nunca o contrário.
 
 from src.core.entities.applied_job import AppliedJob, RejectedJob
 from src.core.entities.eval_result import EvalResult
+from src.core.entities.evaluated_job import EvaluatedJob
 
-__all__ = ["AppliedJob", "RejectedJob", "EvalResult"]
+__all__ = ["AppliedJob", "RejectedJob", "EvalResult", "EvaluatedJob"]
