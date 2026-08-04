@@ -11,8 +11,7 @@ from typing import List, Optional
 
 import typer
 
-from src.utils.async_utils import run_async
-from src.interfaces.cli.browser import run_browser
+from src.interfaces.cli.browser import run_browser_task
 from src.core.use_cases.linkedin_profile_skills import LinkedInProfileSkills
 
 
@@ -59,7 +58,6 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
     def cmd_list(ctx: typer.Context):
         """Scrape e lista todas as competências atuais do perfil LinkedIn."""
         slug = _require_profile_slug()
-        headless = ctx.obj.get("headless", False)
         result: dict = {}
 
         async def _work(page):
@@ -70,7 +68,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             mgr = LinkedInSkillsManager(page, slug)
             result["skills"] = await mgr.list_skills()
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "skills-list", _work)
 
         skills = result.get("skills", [])
         if not skills:
@@ -92,7 +90,6 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
     ):
         """Adiciona competências ao perfil LinkedIn. Idempotente: pula as que já existem."""
         slug = _require_profile_slug()
-        headless = ctx.obj.get("headless", False)
         result: dict = {}
 
         async def _work(page):
@@ -103,7 +100,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             mgr = LinkedInSkillsManager(page, slug)
             result["out"] = await mgr.add_skills(list(skills), force=force)
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "skills-add", _work)
         _print_add_outcome(result.get("out", {}))
 
     @app.command("delete")
@@ -113,7 +110,6 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
     ):
         """Deleta uma ou mais competências do perfil LinkedIn."""
         slug = _require_profile_slug()
-        headless = ctx.obj.get("headless", False)
         result: dict = {}
 
         async def _work(page):
@@ -124,7 +120,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             mgr = LinkedInSkillsManager(page, slug)
             result["deleted"] = await mgr.delete_skills(list(skills))
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "skills-delete", _work)
         _print_results("Deleted", result.get("deleted", {}))
 
     # ── A: config file ───────────────────────────────────────────────
@@ -161,7 +157,6 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
         Deleta competências não desejadas, adiciona as que faltam.
         """
         slug = _require_profile_slug()
-        headless = ctx.obj.get("headless", False)
         store = LinkedInProfileSkills()
         desired = store.load()
 
@@ -182,7 +177,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             mgr = LinkedInSkillsManager(page, slug)
             result["sync"] = await mgr.sync_skills(desired)
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "skills-sync", _work)
 
         sync = result.get("sync", {})
         typer.echo(f"Profile had {len(sync.get('current', []))} skills.")
@@ -220,7 +215,6 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             return
 
         slug = _require_profile_slug()
-        headless = ctx.obj.get("headless", False)
         result: dict = {}
 
         async def _work(page):
@@ -231,7 +225,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             mgr = LinkedInSkillsManager(page, slug)
             result["sync"] = await mgr.sync_skills(from_tracker)
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "skills-sync-tracker", _work)
 
         sync = result.get("sync", {})
         typer.echo(f"\nProfile had {len(sync.get('current', []))} skills.")
@@ -290,7 +284,6 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             return
 
         slug = _require_profile_slug()
-        headless = ctx.obj.get("headless", False)
         result: dict = {}
 
         async def _work(page):
@@ -304,7 +297,7 @@ def register_profile_skills_commands(app: typer.Typer) -> None:
             else:
                 result["out"] = await mgr.sync_skills(desired)
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "skills-seed", _work)
 
         out = result.get("out", {})
         if "current" in out:  # sync

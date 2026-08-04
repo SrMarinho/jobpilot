@@ -6,6 +6,8 @@ from playwright_stealth import Stealth
 from filelock import FileLock, Timeout
 
 from src.automation.checkpoint import CheckpointError
+from src.utils.async_utils import run_async
+from src.utils.logger import set_run_context
 from src.config.settings import logger
 import src.config.settings as setting
 from src.interfaces.cli.persistence import BOT_PROFILE_DIR
@@ -202,6 +204,18 @@ async def run_logout(site: str):
                 await context.close()
     finally:
         _release_browser_lock(lock, "logout")
+
+
+def run_browser_task(ctx, name: str, work) -> None:
+    """Entrada padrão de todo comando CLI que precisa de browser.
+
+    Faz o que os 13 comandos repetiam linha por linha: nomeia o run no log,
+    lê ``--headless`` do contexto do Typer e roda ``work(page)`` sob o browser
+    lock. Não é decorator de propósito — o Typer inspeciona a assinatura da
+    função de comando, e envolvê-la exigiria preservar assinatura à mão.
+    """
+    set_run_context(name)
+    run_async(run_browser(work, headless=ctx.obj.get("headless", False)))
 
 
 async def run_browser(work, *, headless: bool = False):

@@ -2,9 +2,7 @@ from typing import Optional, List
 
 import typer
 
-from src.utils.async_utils import run_async
-from src.utils.logger import set_run_context
-from src.interfaces.cli.browser import run_browser
+from src.interfaces.cli.browser import run_browser_task
 from src.interfaces.cli.enums import NetworkDegree
 from src.interfaces.cli.connect.logic import resolve_connect_config, run_connect_browser
 
@@ -49,8 +47,6 @@ def register_connect_command(app: typer.Typer) -> None:
         ),
     ):
         """Send connection requests (LinkedIn people search)."""
-        set_run_context("connect")
-        headless = ctx.obj.get("headless", False)
 
         cfg = resolve_connect_config(
             url,
@@ -73,4 +69,4 @@ def register_connect_command(app: typer.Typer) -> None:
                 cfg["on_page_change"],
             )
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "connect", _work)

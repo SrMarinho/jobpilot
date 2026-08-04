@@ -2,9 +2,7 @@ from typing import List, Optional
 
 import typer
 
-from src.utils.async_utils import run_async
-from src.utils.logger import set_run_context
-from src.interfaces.cli.browser import run_browser
+from src.interfaces.cli.browser import run_browser_task
 from src.interfaces.cli.hired.logic import run_hired_browser
 
 
@@ -52,8 +50,6 @@ def register_hired_command(app: typer.Typer) -> None:
         p/ ler as competências principais, deduplica por perfil e imprime o
         ranking de skills mais frequentes — benchmark p/ ajustar seu perfil.
         """
-        set_run_context("hired")
-        headless = ctx.obj.get("headless", False)
 
         async def _work(page):
             await run_hired_browser(
@@ -70,4 +66,4 @@ def register_hired_command(app: typer.Typer) -> None:
                 no_dedup,
             )
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "hired", _work)

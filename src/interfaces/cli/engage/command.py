@@ -2,9 +2,7 @@ from typing import List, Optional
 
 import typer
 
-from src.utils.async_utils import run_async
-from src.utils.logger import set_run_context
-from src.interfaces.cli.browser import run_browser
+from src.interfaces.cli.browser import run_browser_task
 from src.interfaces.cli.engage.logic import (
     resolve_engage_config,
     resolve_posts_count,
@@ -54,8 +52,6 @@ def register_engage_command(app: typer.Typer) -> None:
         ),
     ):
         """Engage with LinkedIn feed posts (like + comment + share via LLM)."""
-        set_run_context("engage")
-        headless = ctx.obj.get("headless", False)
 
         max_posts = resolve_posts_count(posts_number, min_post, max_post)
 
@@ -77,4 +73,4 @@ def register_engage_command(app: typer.Typer) -> None:
         async def _work(page):
             await run_engage_browser(page, cfg)
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "engage", _work)

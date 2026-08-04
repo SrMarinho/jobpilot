@@ -2,10 +2,8 @@ from typing import Optional, List
 
 import typer
 
-from src.utils.logger import set_run_context
-from src.utils.async_utils import run_async
 from src.automation.tasks.job_application_manager import create_application_manager
-from src.interfaces.cli.browser import run_browser
+from src.interfaces.cli.browser import run_browser_task
 from src.interfaces.cli.enums import DatePosted, WorkplaceType, ExperienceLevel
 from src.interfaces.cli.apply.logic import prepare_apply_config
 
@@ -121,8 +119,6 @@ def register_apply_command(app: typer.Typer) -> None:
         ),
     ):
         """Apply to jobs (LinkedIn, Glassdoor, Indeed). By default includes all job types."""
-        set_run_context("apply")
-        headless = ctx.obj.get("headless", False)
 
         cfg = prepare_apply_config(
             url,
@@ -188,4 +184,4 @@ def register_apply_command(app: typer.Typer) -> None:
                 )
                 await manager.run()
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "apply", _work)

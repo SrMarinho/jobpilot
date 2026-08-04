@@ -1,8 +1,6 @@
 import typer
 
-from src.utils.async_utils import run_async
-from src.utils.logger import set_run_context
-from src.interfaces.cli.browser import run_browser
+from src.interfaces.cli.browser import run_browser_task
 from src.interfaces.cli.engage.logic import capture_metrics
 
 
@@ -22,8 +20,6 @@ def register_profile_capture_command(app: typer.Typer) -> None:
         ),
     ):
         """Captura métricas do perfil (SSI, views, aparições). Sem flags = todas."""
-        set_run_context("profile-capture")
-        headless = ctx.obj.get("headless", False)
 
         selected = frozenset(
             m
@@ -39,4 +35,4 @@ def register_profile_capture_command(app: typer.Typer) -> None:
         async def _work(page):
             await capture_metrics(page, force=force, targets=targets)
 
-        run_async(run_browser(_work, headless=headless))
+        run_browser_task(ctx, "profile-capture", _work)
