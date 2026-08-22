@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 # TUI. Um major novo entrando sozinho quebraria runs agendados sem aviso.
 dependencies = [
     "python-dotenv>=1.2.1,<2",
-    "playwright>=1.59.0,<2",
+    "playwright>=1.62.0,<2",
     "playwright-stealth>=2.0.0,<3",
     # Piso em 0.1.50: versões antigas não conhecem o evento `rate_limit_event`
     # que a API passou a mandar, e estouram "Unknown message type" no meio da
