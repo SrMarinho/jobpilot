@@ -7,6 +7,7 @@ from src.core.use_cases.selector_canary import (
     CanaryReport,
     check_linkedin_feed,
     check_linkedin_jobs,
+    check_linkedin_people,
     check_profile_analytics,
 )
 from src.interfaces.cli.browser import run_browser_task
@@ -16,6 +17,9 @@ console = Console()
 DEFAULT_SEARCH_URL = (
     "https://www.linkedin.com/jobs/search/?keywords=desenvolvedor%20backend"
     "&f_AL=true&f_WT=2"
+)
+DEFAULT_PEOPLE_URL = (
+    "https://www.linkedin.com/search/results/people/?keywords=recrutador%20tech"
 )
 
 
@@ -27,6 +31,9 @@ def register_canary_command(app: typer.Typer) -> None:
             DEFAULT_SEARCH_URL, "--url", help="Busca de vagas usada na verificação"
         ),
         skip_feed: bool = typer.Option(False, "--skip-feed", help="Pula o feed"),
+        skip_people: bool = typer.Option(
+            False, "--skip-people", help="Pula a busca de pessoas"
+        ),
         skip_analytics: bool = typer.Option(
             False, "--skip-analytics", help="Pula as páginas de analytics"
         ),
@@ -49,6 +56,8 @@ def register_canary_command(app: typer.Typer) -> None:
             await check_linkedin_jobs(page, report, url)
             if not skip_feed:
                 await check_linkedin_feed(page, report)
+            if not skip_people:
+                await check_linkedin_people(page, report, DEFAULT_PEOPLE_URL)
             if not skip_analytics:
                 await check_profile_analytics(page, report)
 

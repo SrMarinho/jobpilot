@@ -13,6 +13,11 @@ _MODAL_CLOSE = [
     "button[aria-label='Dismiss']",
     "button[aria-label='Close']",
 ]
+_INVITE_MODAL = [
+    "[data-test-modal-container]",
+    "[role='dialog']",
+    ".artdeco-modal",
+]
 _WITHDRAW_MODAL = [
     "xpath=//button[contains(@aria-label,'Retirar convite') or contains(@aria-label,'Withdraw')]"
 ]
@@ -60,12 +65,24 @@ class PeopleSearchPage:
 
     async def get_confirm_invitation_btn(self):
         logger.info("Waiting for invitation modal")
-        try:
-            await self.page.wait_for_selector(
-                "[data-test-modal-container]", timeout=5000
-            )
-        except Exception:
-            logger.error("No modal appeared after clicking Connect")
+        modal = await first_visible(
+            self.page,
+            _INVITE_MODAL,
+            field="invite modal",
+            timeout=T_NORMAL,
+            required=False,
+        )
+        if modal is None:
+            # Sem modal pode ser layout novo (nenhum candidato casou) ou o
+            # LinkedIn recusando o convite. Só o segundo caso é falha de
+            # plataforma — o primeiro é bug nosso e não deve abrir o breaker.
+            if await self.is_invite_limit_reached():
+                logger.error("Limite de convites atingido")
+            else:
+                logger.warning(
+                    "campo=invite modal: nenhum candidato casou após o Connect "
+                    "— selector pode ter mudado"
+                )
             return None
 
         # Modal de "retirar convite" (PT/EN): já convidamos essa pessoa, pula.

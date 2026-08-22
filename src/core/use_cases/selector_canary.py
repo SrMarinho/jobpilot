@@ -141,6 +141,31 @@ async def check_linkedin_feed(page, report: CanaryReport) -> None:
         await _probe_text(report, "feed", "post_urn", feed.get_post_urn(posts[0]))
 
 
+async def check_linkedin_people(page, report: CanaryReport, search_url: str) -> None:
+    """Busca de pessoas: o botão Connect ainda é encontrado?
+
+    O modal de convite fica de fora de propósito: ele só existe depois de
+    clicar em Connect, e clicar manda convite de verdade. O que dá pra checar
+    sem efeito colateral é o botão — que é onde a quebra costuma começar.
+    """
+    from src.automation.pages.people_search_page import PeopleSearchPage
+
+    people = PeopleSearchPage(page, search_url)
+    try:
+        await page.goto(search_url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
+        btn = await people.get_connect_btn()
+    except Exception as e:
+        report.add("linkedin_people", "connect_btn", False, f"erro: {type(e).__name__}")
+        return
+    report.add(
+        "linkedin_people",
+        "connect_btn",
+        btn is not None,
+        "" if btn is not None else "nenhum botão Connect na página",
+    )
+
+
 async def check_profile_analytics(page, report: CanaryReport) -> None:
     """Páginas de analytics do perfil (SSI, views, aparições)."""
     from src.automation.pages.profile_views_page import ProfileViewsPage
