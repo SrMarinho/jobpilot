@@ -13,7 +13,10 @@ load_dotenv(interpolate=False)
 _log_settings = {
     "app_name": os.getenv("APP_NAME", "APP"),
     "log_level": os.getenv("LOG_LEVEL", "INFO"),
-    "log_dir": Path("logs"),
+    # LOG_DIR existe pros testes: sem ele a suite grava em logs/YYYY/MM junto
+    # com os runs de verdade, e erros de fixture (breaker fake, resume
+    # inexistente) viram falso incidente na analise dos logs.
+    "log_dir": Path(os.getenv("LOG_DIR", "logs")),
 }
 
 logger = CustomLogger(_log_settings).get_logger()
