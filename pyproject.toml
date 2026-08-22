@@ -22,7 +22,7 @@ dependencies = [
     "rich>=15.0,<16",
     "textual>=8.0,<9",
     "filelock>=3.0,<4",
-    "feedparser>=6.0,<7",
+    "feedparser>=6.0.14,<7",
     "psycopg[binary]>=3.2,<4",
     "psycopg-pool>=3.2,<4",
 ]
