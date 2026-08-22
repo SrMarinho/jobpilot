@@ -46,3 +46,11 @@ def test_permanente_ganha_de_transitorio_na_mesma_mensagem():
     exc = RuntimeError("model not found (404) after timeout")
     assert is_model_unavailable(exc)
     assert not is_transient(exc)
+
+
+def test_ollama_ainda_subindo_e_transitorio():
+    # Os dois providers chamam _ensure_ollama_running em paralelo; o segundo
+    # desiste enquanto o primeiro ainda inicializa. Repetir resolve.
+    exc = RuntimeError("Ollama did not start within 15s at http://localhost:11434")
+    assert is_transient(exc)
+    assert not is_model_unavailable(exc)

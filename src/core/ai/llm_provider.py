@@ -13,7 +13,10 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_S = 2
 
 
-def _ensure_ollama_running(base_url: str, timeout: int = 15):
+# Subir o serviço é rápido, mas o primeiro /api/tags só responde depois que o
+# Ollama termina de se inicializar — 15s não bastavam num boot frio, e com o
+# warmup agora fatal isso derrubaria o run.
+def _ensure_ollama_running(base_url: str, timeout: int = 60):
     health = f"{base_url.rstrip('/')}/api/tags"
     try:
         urllib.request.urlopen(health, timeout=3)

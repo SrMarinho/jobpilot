@@ -36,6 +36,9 @@ _TRANSIENT_MARKERS = (
     "connection",
     "temporarily",
     "unknown message type",
+    # Ollama subindo: os dois providers chamam _ensure_ollama_running em
+    # paralelo e o segundo desiste enquanto o primeiro ainda inicializa.
+    "did not start",
 )
 
 
