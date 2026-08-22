@@ -2,8 +2,10 @@ from typing import List, Optional
 
 import typer
 
+from src.core.ai.warmup import LLMUnavailableError
 from src.interfaces.cli.browser import run_browser_task
 from src.interfaces.cli.engage.logic import (
+    capture_metrics,
     resolve_engage_config,
     resolve_posts_count,
     run_engage_browser,
@@ -55,18 +57,27 @@ def register_engage_command(app: typer.Typer) -> None:
 
         max_posts = resolve_posts_count(posts_number, min_post, max_post)
 
-        cfg = resolve_engage_config(
-            resume=resume,
-            max_posts=max_posts,
-            enable_like=not no_like,
-            enable_comment=not no_comment,
-            enable_share=not no_share,
-            dry_run=dry_run,
-            scheduled=scheduled,
-            force=force,
-            targets=target,
-            save_targets=save_targets,
-        )
+        try:
+            cfg = resolve_engage_config(
+                resume=resume,
+                max_posts=max_posts,
+                enable_like=not no_like,
+                enable_comment=not no_comment,
+                enable_share=not no_share,
+                dry_run=dry_run,
+                scheduled=scheduled,
+                force=force,
+                targets=target,
+                save_targets=save_targets,
+            )
+        except LLMUnavailableError:
+            # Sem LLM não há como comentar, mas SSI/views não dependem de LLM —
+            # o agendamento diário não pode perder a série histórica por isso.
+            async def _metrics_only(page):
+                await capture_metrics(page)
+
+            run_browser_task(ctx, "engage", _metrics_only)
+            raise typer.Exit(1)
         if cfg is None:
             return  # skip-today exit 0
 
