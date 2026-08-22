@@ -21,13 +21,17 @@ def _to_int(raw: str) -> int | None:
 # nos últimos 90 dias" com o número ANTES do rótulo ("... 90 dias 77 Quem viu
 # seu perfil nos últimos 90 dias") — só a variante número-antes é segura, a
 # número-depois casaria o "90" de "últimos 90 dias".
+# O grupo comeca com \d obrigatorio: sem isso ele casa so o "\n" que
+# antecede o rotulo do cabecalho ("...novamente\nQuem viu seu perfil"),
+# devolve None, e a contagem real — que vem numa ocorrencia posterior —
+# nunca chega a ser lida.
 _PATTERNS = (
-    r"([\d.,\s]{1,12})\s*visualizaç\w*\s+do\s+perfil",
-    r"visualizaç\w*\s+do\s+perfil[^\d]{0,40}([\d.,\s]{1,12})",
-    r"([\d.,\s]{1,12})\s*profile views",
-    r"profile views[^\d]{0,40}([\d.,\s]{1,12})",
-    r"([\d.,\s]{1,12})\s*quem\s+viu\s+seu\s+perfil",
-    r"([\d.,\s]{1,12})\s*who\s+viewed\s+your\s+profile",
+    r"(\d[\d.,\s]{0,11})\s*visualizaç\w*\s+do\s+perfil",
+    r"visualizaç\w*\s+do\s+perfil[^\d]{0,40}(\d[\d.,\s]{0,11})",
+    r"(\d[\d.,\s]{0,11})\s*profile views",
+    r"profile views[^\d]{0,40}(\d[\d.,\s]{0,11})",
+    r"(\d[\d.,\s]{0,11})\s*quem\s+viu\s+seu\s+perfil",
+    r"(\d[\d.,\s]{0,11})\s*who\s+viewed\s+your\s+profile",
 )
 
 
@@ -96,9 +100,10 @@ class ProfileViewsPage:
                 f"(url={cur}); text head: {snippet!r}"
             )
             return None
+        # finditer, nao search: o rotulo aparece varias vezes na pagina (menu,
+        # cabecalho, legenda) e so uma dessas ocorrencias tem o numero colado.
         for pat in _PATTERNS:
-            m = re.search(pat, low)
-            if m:
+            for m in re.finditer(pat, low):
                 val = _to_int(m.group(1))
                 if val is not None:
                     logger.info(f"Profile views scraped: {val} (90d)")
