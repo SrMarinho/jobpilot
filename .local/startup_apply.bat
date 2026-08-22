@@ -1,5 +1,12 @@
 @echo off
 set PYTHONIOENCODING=utf-8
+rem Provider e modelo andam juntos: --llm-provider langchain sem fixar o
+rem modelo cai no .env, e um model id da Anthropic no backend Ollama da 404
+rem em todo batch de avaliacao (foi assim por 41 dias).
+set LANGCHAIN_BACKEND=ollama
+set LANGCHAIN_BACKEND_EVAL=ollama
+set LANGCHAIN_MODEL=qwen3:8b
+set LANGCHAIN_MODEL_EVAL=qwen3:8b
 cd /d "F:\Documentos\Projetos\Code\jobpilot"
 
 echo === BACKEND ===
