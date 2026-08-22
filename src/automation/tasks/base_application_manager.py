@@ -82,6 +82,9 @@ class BaseJobApplicationManager(ABC):
         self.max_applications = max_applications
         self.applied_count = 0
         self.evaluated_count = 0
+        # Um run que avalia zero vagas parece bem-sucedido nos logs; só o
+        # contador de falhas distingue "nao havia vaga nova" de "o LLM caiu".
+        self.failed_batches = 0
         self.handler = self._build_handler(page, resume=self.evaluator.resume)
 
     # ── site hooks ────────────────────────────────────────────────────────────
@@ -132,6 +135,28 @@ class BaseJobApplicationManager(ABC):
         logger.info(
             f"Finished. Evaluated: {self.evaluated_count} | Applied: {self.applied_count}"
         )
+        self._alert_if_evaluated_nothing()
+
+    def _alert_if_evaluated_nothing(self) -> None:
+        """Avisa quando o run terminou sem avaliar nada por causa de erro.
+
+        Zero avaliacoes com zero falhas e normal (nenhuma vaga nova); zero
+        avaliacoes com falhas e o pipeline quebrado — foi assim que 41 dias de
+        eval morto passaram despercebidos.
+        """
+        if self.evaluated_count or not self.failed_batches:
+            return
+        logger.error(f"Run avaliou 0 vagas com {self.failed_batches} batches falhados")
+        try:
+            send_telegram(
+                "\u26a0\ufe0f <b>Apply rodou sem avaliar nenhuma vaga</b>\n"
+                f"Site: <code>{self.site}</code>\n"
+                f"Batches de avaliacao falhados: <b>{self.failed_batches}</b>\n\n"
+                "Provavel falha do LLM — confira o log do dia.",
+                topic="alerts",
+            )
+        except Exception as e:
+            logger.debug(f"Falha ao alertar run vazio no Telegram: {e}")
 
     async def _extract_all(self, eval_queue: asyncio.Queue):
         seen_page_ids: list[frozenset] = []
@@ -209,6 +234,9 @@ class BaseJobApplicationManager(ABC):
                     ]
                 except Exception as e:
                     logger.error(f"Eval batch error: {e}")
+                    self.failed_batches += 1
+                    # `failed` (e nao `rejected`): a vaga nao foi julgada, foi
+                    # perdida — gravar rejeicao aqui a tiraria do funil pra sempre.
                     for item in items:
                         item.state = "failed"
                         item.note = str(e)[:50]
