@@ -9,7 +9,7 @@ from playwright.async_api import Page
 
 from src.config.settings import logger
 from src.core.ai.llm_provider import LLMProvider
-from src.core.use_cases.apply.field_filler import FieldFiller, PLACEHOLDER_VALUES
+from src.core.use_cases.apply.field_filler import FieldFiller, is_placeholder
 from src.core.use_cases.apply.form_answerer import FormAnswerer
 from src.core.use_cases.apply.modal_driver import ModalDriver
 from src.core.use_cases.form_answer_cache import SALARY_KEYWORDS
@@ -75,7 +75,7 @@ class EasyApplyHandler:
 
         cached = self.answerer.resolve(question)
         if cached:
-            await self.fields.fill(element, cached)
+            await self.fields.fill(element, cached, question=question)
             logger.info(f"Filled '{question[:40]}' with cached: '{cached}'")
             return
 
@@ -85,7 +85,7 @@ class EasyApplyHandler:
 
         answer = await self.answerer.ask(question, job_title, job_description)
         if answer:
-            await element.fill(answer)
+            await self.fields.fill(element, answer, question=question)
             self.answerer.store(question, answer)
             logger.info(f"LLM filled '{question[:40]}' with '{answer[:40]}'")
 
@@ -195,7 +195,7 @@ class EasyApplyHandler:
                     logger.warning(f"Select not displayed (hidden?): id={select_id!r}")
                     continue
                 current = await element.evaluate("el => el.value")
-                if current not in PLACEHOLDER_VALUES:
+                if not is_placeholder(current):
                     logger.info(f"Select already filled (val={current!r}), skipping")
                     continue
                 label = await self.fields.label_of(element, scope)
@@ -399,9 +399,11 @@ class EasyApplyHandler:
                 if signature and signature == last_signature:
                     repeats += 1
                     if repeats >= STUCK_LIMIT:
+                        motivo = await self._validation_errors()
                         logger.error(
                             f"Formulário travado na mesma etapa {repeats}x "
                             f"(step {step + 1}) — algum campo não foi aceito"
+                            + (f": {motivo}" if motivo else "")
                         )
                         return False
                 else:
@@ -443,6 +445,32 @@ class EasyApplyHandler:
         except Exception:
             logger.exception("Easy Apply error")
             return False
+
+    async def _validation_errors(self) -> str:
+        """Mensagens de erro que o LinkedIn mostra ao lado dos campos.
+
+        Sem isso, "travou" não diz qual campo travou — e a diferença entre um
+        select com opção inválida e um campo obrigatório vazio é justamente o
+        que decide a correção.
+        """
+        selectors = (
+            "[role='alert']",
+            ".artdeco-inline-feedback--error",
+            ".fb-dash-form-element__error-text",
+            "[data-test-form-element-error-messages]",
+        )
+        found: list[str] = []
+        for selector in selectors:
+            try:
+                for node in await self.page.locator(selector).all():
+                    if not await node.is_visible():
+                        continue
+                    text = " ".join((await node.inner_text()).split())
+                    if text and text not in found:
+                        found.append(text[:120])
+            except Exception:
+                continue
+        return " | ".join(found[:5])
 
     async def _step_signature(self) -> str:
         """Identidade da etapa atual, pra detectar que o modal não avançou."""

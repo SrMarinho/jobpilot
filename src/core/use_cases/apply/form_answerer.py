@@ -29,6 +29,8 @@ _REFUSAL_MARKERS = (
     "not provided",
     "no phone number",
     "need actual",
+    "no real number",
+    "not saved",
     "as an ai",
     "i'm unable",
     "i am unable",
@@ -87,9 +89,16 @@ class FormAnswerer:
     def resolve(self, question: str) -> str | None:
         """Resposta já conhecida pra essa pergunta, ou ``None``.
 
+        Ponto único de leitura — o handler do Easy Apply chama ``resolve``
+        direto, sem passar por ``answer``, então é aqui que o dado de config
+        precisa entrar para valer nos dois caminhos.
+
         Recusas gravadas antes do filtro existir continuam no cache; descartar
         na leitura conserta o histórico sem precisar mexer no banco.
         """
+        known = personal_answer(question)
+        if known:
+            return known
         cached = self._cache.resolve(question)
         if cached and looks_like_refusal(cached):
             logger.warning(
@@ -150,12 +159,10 @@ class FormAnswerer:
         Com ``options``, a lista entra no prompt pro LLM escolher entre elas.
         O ``from_cache`` importa porque só resposta nova precisa ser gravada.
         """
-        known = personal_answer(question)
-        if known:
-            # True: já é um valor definitivo, não precisa ser regravado.
-            return known, True
         cached = self.resolve(question)
         if cached:
+            # Inclui o dado de config resolvido em ``resolve``: valor
+            # definitivo, não precisa ser regravado.
             return cached, True
         prompt_question = f"{question} (options: {options})" if options else question
         return await self.ask(prompt_question, job_title, job_description), False

@@ -7,6 +7,9 @@ em quatro métodos da classe monolítica, cada um cobrindo um subconjunto
 diferente da cadeia; aqui é uma só.
 """
 
+import re
+import unicodedata
+
 from playwright.async_api import Page
 
 from src.automation.pages.selectors import T_FAST, first_visible
@@ -53,7 +56,81 @@ _SALARY_INPUT = [
 ]
 
 # Valores que um select mostra quando ainda não foi respondido.
-PLACEHOLDER_VALUES = ("", "Select...", "Selecione...")
+# Placeholder de <select>, normalizado (sem acento, minusculo, sem "..."):
+# um select nessas opcoes esta VAZIO, ainda que element.value devolva texto.
+# Tratar "Selecionar opcao" como valor preenchido fazia o handler pular tres
+# campos obrigatorios e o formulario nunca avancava da etapa de revisao.
+_PLACEHOLDER_TEXTS = frozenset(
+    {
+        "",
+        "select",
+        "select an option",
+        "selecione",
+        "selecione uma opcao",
+        "selecionar opcao",
+        "choose",
+        "choose an option",
+        "escolha",
+        "escolher",
+        "none",
+        "nenhum",
+    }
+)
+
+
+def _strip_accents(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+_THOUSAND_SEP = re.compile(r"(?<=\d)\.(?=\d{3}(?:\D|$))")
+_FIRST_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def numeric_value(text: str) -> str:
+    """So o numero de uma resposta em texto livre. ``""`` se nao houver.
+
+    O LinkedIn valida campos de "quantos anos" e de pretensao como decimal e
+    rejeita a resposta inteira ("Insira um numero de decimal com mais de 0.0")
+    quando vai junto a unidade — "3 anos" e "R$ 8.000" travavam o formulario.
+    """
+    normalized = _THOUSAND_SEP.sub("", text.strip()).replace(",", ".")
+    match = _FIRST_NUMBER.search(normalized)
+    return match.group(0) if match else ""
+
+
+# O input desses campos e type="text" puro, sem pattern nem inputMode — nao ha
+# sinal no DOM. O enunciado e o unico indicador de que so numero e aceito.
+_NUMERIC_QUESTION_MARKERS = (
+    "quantos anos",
+    "quanto anos",
+    "quantos meses",
+    "how many years",
+    "how many months",
+    "years of experience",
+    "anos de experiencia",
+    "pretensao",
+    "pretensao salarial",
+    "remuneracao",
+    "salario",
+    "salary",
+    "expected compensation",
+)
+
+
+def looks_numeric_question(question: str) -> bool:
+    """``True`` quando o campo so aceita numero, pelo enunciado da pergunta."""
+    q = _strip_accents(question).strip().lower()
+    return any(m in q for m in _NUMERIC_QUESTION_MARKERS)
+
+
+def is_placeholder(value: str | None) -> bool:
+    """``True`` quando o valor do select e um rotulo de "escolha algo"."""
+    if value is None:
+        return True
+    norm = _strip_accents(value).strip().lower().rstrip(".").strip()
+    return norm in _PLACEHOLDER_TEXTS
+
 
 REQUIRED_FIELDS_XPATH = (
     "xpath=//input[@required and @type!='hidden'] "
@@ -71,15 +148,42 @@ class FieldFiller:
     async def tag_of(element) -> str:
         return await element.evaluate("el => el.tagName.toLowerCase()")
 
-    async def fill(self, element, value: str) -> None:
-        """Escreve ``value`` respeitando o tipo do campo. Ignora readonly."""
+    async def fill(self, element, value: str, question: str = "") -> None:
+        """Escreve ``value`` respeitando o tipo do campo. Ignora readonly.
+
+        ``question`` permite adaptar a resposta ao que o campo aceita quando o
+        DOM não diz o tipo — ver ``_coerce``.
+        """
         tag = await self.tag_of(element)
         if tag == "select":
             await element.select_option(value=value)
         elif await element.get_attribute("readonly"):
             return
         else:
-            await element.fill(value)
+            await element.fill(await self._coerce(element, value, question))
+
+    async def _coerce(self, element, value: str, question: str = "") -> str:
+        """Adapta a resposta ao que o campo aceita.
+
+        O LLM responde em linguagem natural ("3 anos"); campos numericos
+        rejeitam qualquer coisa que nao seja numero e o modal nao avanca.
+        """
+        try:
+            is_numeric = await element.evaluate(
+                "el => el.type === 'number' "
+                "|| ['numeric', 'decimal'].includes(el.inputMode || '')"
+            )
+        except Exception:
+            is_numeric = False
+        if not is_numeric and not looks_numeric_question(question):
+            return value
+        number = numeric_value(value)
+        if not number:
+            logger.warning(f"Campo numerico sem numero na resposta: {value[:40]!r}")
+            return value
+        if number != value.strip():
+            logger.info(f"Campo numerico: {value[:30]!r} -> {number!r}")
+        return number
 
     async def fill_react_select(self, element, value: str) -> None:
         """Escreve num select controlado por React (dispara 'change')."""
