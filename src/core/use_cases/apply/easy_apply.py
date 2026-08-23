@@ -30,6 +30,9 @@ FINAL_SUBMIT_BUTTONS = SUBMIT_BUTTONS[:3]
 SUBMIT_WORDS = ("submit", "enviar", "send")
 
 MAX_STEPS = 30
+# Mesma etapa repetida e sinal de campo rejeitado: o modal nao avanca e o loop
+# gasta os 30 passos pra terminar sem enviar nada.
+STUCK_LIMIT = 3
 STEP_SETTLE_MS = 1500
 AFTER_SUBMIT_MS = 2000
 
@@ -386,8 +389,24 @@ class EasyApplyHandler:
                 logger.info("no_submit: modal aberto, nada preenchido")
                 return True
 
+            last_signature: str | None = None
+            repeats = 0
+
             for step in range(MAX_STEPS):
                 await self.page.wait_for_timeout(STEP_SETTLE_MS)
+
+                signature = await self._step_signature()
+                if signature and signature == last_signature:
+                    repeats += 1
+                    if repeats >= STUCK_LIMIT:
+                        logger.error(
+                            f"Formulário travado na mesma etapa {repeats}x "
+                            f"(step {step + 1}) — algum campo não foi aceito"
+                        )
+                        return False
+                else:
+                    repeats = 0
+                    last_signature = signature
 
                 if not salary_filled and salary_expectation:
                     salary_filled = await self.fields.fill_salary(salary_expectation)
@@ -413,11 +432,26 @@ class EasyApplyHandler:
                     logger.info(f"No more buttons to click (step {step + 1})")
                     break
 
-            await self._final_submit()
-            return True
+            # O retorno tem que refletir o envio: dar True aqui contava como
+            # candidatura enviada um formulário que parou no meio.
+            sent = await self._final_submit()
+            if not sent:
+                logger.error(
+                    "Easy Apply terminou sem enviar — nenhum botão de envio ativo"
+                )
+            return sent
         except Exception:
             logger.exception("Easy Apply error")
             return False
+
+    async def _step_signature(self) -> str:
+        """Identidade da etapa atual, pra detectar que o modal não avançou."""
+        try:
+            scope = await self.modal.current()
+            text = await scope.inner_text()
+        except Exception:
+            return ""
+        return " ".join(text.split())[:400]
 
 
 # Nome antigo — os managers de LinkedIn/Glassdoor ainda importam por ele.

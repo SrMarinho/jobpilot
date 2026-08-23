@@ -13,6 +13,46 @@ from src.core.use_cases.form_answer_cache import FormAnswerCache
 
 MAX_DESCRIPTION_CHARS = 1500
 
+# O prompt pede "only the value", mas quando falta o dado o modelo escreve uma
+# recusa em vez de um valor. Sem esse filtro a recusa vira "resposta", vai pro
+# cache e passa a ser digitada em todo formulario — foi o que travou o Easy
+# Apply preenchendo "No phone number in profile data..." no campo de celular.
+_REFUSAL_MARKERS = (
+    "can't fabricate",
+    "cannot fabricate",
+    "can't provide",
+    "cannot provide",
+    "can't fill",
+    "cannot fill",
+    "don't have",
+    "do not have",
+    "not provided",
+    "no phone number",
+    "need actual",
+    "as an ai",
+    "i'm unable",
+    "i am unable",
+    "nao posso",
+    "não posso",
+    "nao tenho",
+    "não tenho",
+    "nao informado",
+    "não informado",
+)
+
+# Valor de formulario e curto. Um paragrafo e explicacao, nao resposta.
+_MAX_ANSWER_CHARS = 300
+
+
+def looks_like_refusal(answer: str) -> bool:
+    """``True`` quando o texto e recusa/explicacao, nao um valor preenchivel."""
+    text = answer.strip().lower()
+    if not text:
+        return False
+    if any(m in text for m in _REFUSAL_MARKERS):
+        return True
+    return len(text) > _MAX_ANSWER_CHARS
+
 
 class FormAnswerer:
     def __init__(
@@ -25,8 +65,18 @@ class FormAnswerer:
     # ── Cache ────────────────────────────────────────────────────────────────
 
     def resolve(self, question: str) -> str | None:
-        """Resposta já conhecida pra essa pergunta, ou ``None``."""
-        return self._cache.resolve(question)
+        """Resposta já conhecida pra essa pergunta, ou ``None``.
+
+        Recusas gravadas antes do filtro existir continuam no cache; descartar
+        na leitura conserta o histórico sem precisar mexer no banco.
+        """
+        cached = self._cache.resolve(question)
+        if cached and looks_like_refusal(cached):
+            logger.warning(
+                f"Cache de formulário tem uma recusa em '{question[:50]}', ignorando"
+            )
+            return None
+        return cached
 
     def store(self, question: str, answer: str, options: list | None = None) -> None:
         self._cache.store(question, answer, options=options)
@@ -53,10 +103,19 @@ class FormAnswerer:
             f"Answer with only the value, no explanation."
         )
         try:
-            return await model.complete(prompt)
+            answer = await model.complete(prompt)
         except Exception as e:
             logger.error(f"LLM error on '{question[:50]}': {e}")
             return ""
+        if looks_like_refusal(answer):
+            # Melhor campo vazio que campo com a recusa escrita dentro: o
+            # LinkedIn rejeita o valor e o formulario nunca avanca.
+            logger.warning(
+                f"LLM nao respondeu com um valor para '{question[:50]}': "
+                f"{answer.strip()[:80]!r}"
+            )
+            return ""
+        return answer
 
     async def answer(
         self,

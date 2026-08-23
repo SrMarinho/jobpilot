@@ -66,6 +66,8 @@ def register_test_apply_command(app: typer.Typer) -> None:
 
         run_async(run_browser_simple(_work, headless=False, post_wait_ms=3000))
         if no_submit:
-            print("Dry run complete — form was filled but not submitted.")
+            # no_submit para no modal aberto, antes de preencher: dizer que
+            # o formulario foi preenchido esconde que nada foi exercitado.
+            print("Modal aberto. Nada preenchido nem enviado (--no-submit).")
         else:
             print(f"Result: {'SUCCESS' if result['success'] else 'FAILED'}")
