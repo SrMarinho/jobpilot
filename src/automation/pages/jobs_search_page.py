@@ -22,11 +22,23 @@ _COMPANY = [
     ".job-details-jobs-unified-top-card__primary-description a",
 ]
 _DESCRIPTION = ["#job-details", ".jobs-description__content"]
+# LinkedIn 2026: o botao virou <a> e o aria-label virou "Usar a candidatura
+# simplificada para esta vaga" — minusculo. contains() do XPath e
+# case-sensitive, entao o selector antigo (//button + 'Candidatura') nao casava
+# nem a tag nem o texto, e toda vaga aprovada parava na fila.
+_LOWER = (
+    "translate(@aria-label,"
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÂÊÔÃÕÇ',"
+    "'abcdefghijklmnopqrstuvwxyzáéíóúâêôãõç')"
+)
 _EASY_APPLY = [
-    "xpath=//button["
-    "contains(@aria-label,'Easy Apply to') or "
-    "(contains(@aria-label,'Candidatura simplificada') and not(contains(@aria-label,'Filtro')))"
-    "]"
+    # aria-label, PT + EN, sem depender de caixa nem da tag.
+    f"xpath=//*[(self::button or self::a) and "
+    f"(contains({_LOWER},'candidatura simplificada') or contains({_LOWER},'easy apply')) "
+    f"and not(contains({_LOWER},'filtro')) and not(contains({_LOWER},'filter'))]",
+    # Fallback pelo texto visivel, para quando o aria-label mudar de novo.
+    "xpath=//*[(self::button or self::a) and ("
+    "normalize-space()='Candidatura simplificada' or normalize-space()='Easy Apply')]",
 ]
 
 
