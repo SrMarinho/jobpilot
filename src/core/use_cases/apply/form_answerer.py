@@ -40,6 +40,26 @@ _REFUSAL_MARKERS = (
     "não informado",
 )
 
+# Dado pessoal nao passa pelo LLM: ou esta configurado, ou o campo fica vazio.
+# Telefone e o caso que trava o Easy Apply — campo obrigatorio, sem fonte no
+# curriculo, e o modelo respondendo com uma recusa em vez de um numero.
+_PHONE_MARKERS = ("celular", "telefone", "phone", "mobile", "whatsapp")
+# "Codigo do pais do telefone" e outro campo (um select), nao o numero.
+_PHONE_EXCLUSIONS = ("codigo", "código", "country code", "ddi")
+
+
+def personal_answer(question: str) -> str | None:
+    """Resposta vinda da config do usuario, ou ``None`` se nao for esse caso."""
+    from src.config import sections as settings_sections
+
+    q = question.strip().lower()
+    if any(x in q for x in _PHONE_EXCLUSIONS):
+        return None
+    if any(m in q for m in _PHONE_MARKERS):
+        return settings_sections.user.phone or None
+    return None
+
+
 # Valor de formulario e curto. Um paragrafo e explicacao, nao resposta.
 _MAX_ANSWER_CHARS = 300
 
@@ -130,6 +150,10 @@ class FormAnswerer:
         Com ``options``, a lista entra no prompt pro LLM escolher entre elas.
         O ``from_cache`` importa porque só resposta nova precisa ser gravada.
         """
+        known = personal_answer(question)
+        if known:
+            # True: já é um valor definitivo, não precisa ser regravado.
+            return known, True
         cached = self.resolve(question)
         if cached:
             return cached, True

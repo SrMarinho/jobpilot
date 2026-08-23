@@ -52,6 +52,15 @@ class UserSettings:
         )
 
     @property
+    def phone(self) -> str:
+        """Celular usado nos formulários de candidatura.
+
+        Opcional, mas sem ele o Easy Apply trava: o campo é obrigatório, o LLM
+        não tem como inventar o número e o modal não avança sem valor válido.
+        """
+        return env_str("USER_PHONE")
+
+    @property
     def profile_slug(self) -> str:
         """Parte final do URL do perfil: ``/in/<slug>/``."""
         return env_str("LINKEDIN_PROFILE_SLUG")
