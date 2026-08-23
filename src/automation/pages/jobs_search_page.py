@@ -21,7 +21,14 @@ _COMPANY = [
     ".jobs-unified-top-card__subtitle-primary-grouping a",
     ".job-details-jobs-unified-top-card__primary-description a",
 ]
-_DESCRIPTION = ["#job-details", ".jobs-description__content"]
+_DESCRIPTION = [
+    "#job-details",
+    ".jobs-description__content",
+    # LinkedIn 2026 (/jobs/view/<id>): as classes sao ofuscadas, mas o
+    # container da descricao mantem um id previsivel por vaga.
+    "[id^='JobDetails_AboutTheJob']",
+    "[data-testid='expandable-text-box']",
+]
 # LinkedIn 2026: o botao virou <a> e o aria-label virou "Usar a candidatura
 # simplificada para esta vaga" — minusculo. contains() do XPath e
 # case-sensitive, entao o selector antigo (//button + 'Candidatura') nao casava
@@ -40,6 +47,21 @@ _EASY_APPLY = [
     "xpath=//*[(self::button or self::a) and ("
     "normalize-space()='Candidatura simplificada' or normalize-space()='Easy Apply')]",
 ]
+
+
+def title_from_tab_text(raw: str) -> str:
+    """Extrai o titulo da vaga do <title> da aba ("VAGA | EMPRESA | LinkedIn").
+
+    O proprio nome da vaga costuma conter "|" ("Desenvolvedor Python | Django -
+    Pleno"), entao cortar no primeiro separador trunca. O que e fixo sao os
+    dois ultimos segmentos: empresa e "LinkedIn".
+    """
+    parts = [p.strip() for p in raw.split("|")]
+    if len(parts) >= 3 and parts[-1].lower() == "linkedin":
+        head = " | ".join(parts[:-2]).strip()
+    else:
+        head = parts[0]
+    return "" if head.lower() in ("", "linkedin") else head
 
 
 class JobsSearchPage(BaseJobsPage):
@@ -63,9 +85,28 @@ class JobsSearchPage(BaseJobsPage):
             return None
 
     async def get_job_title(self) -> str:
-        return await text_or_empty(
+        title = await text_or_empty(
             self.page, _TITLE, field="linkedin job title", timeout=T_SLOW
         )
+        if title:
+            return title
+        return await self._title_from_tab()
+
+    async def _title_from_tab(self) -> str:
+        """Titulo pelo <title> da aba, so na pagina de vaga individual.
+
+        Em /jobs/view/<id> o LinkedIn 2026 nao tem <h1> e as classes sao
+        ofuscadas — nao sobra ancora de DOM. A aba segue o formato
+        "VAGA | EMPRESA | LinkedIn". Na busca a aba traz "Vagas de ...", que
+        nao e o titulo da vaga, entao o fallback fica restrito ao detalhe.
+        """
+        try:
+            if "/jobs/view/" not in self.page.url:
+                return ""
+            raw = await self.page.title()
+        except Exception:
+            return ""
+        return title_from_tab_text(raw)
 
     async def get_company_name(self) -> str:
         return await text_or_empty(
