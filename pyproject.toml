@@ -29,9 +29,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.6.0",
+    "pre-commit>=4.6.2",
     # ruff era dependência de runtime — ia junto pra quem instalasse o pacote.
-    "ruff>=0.14.5",
+    "ruff>=0.16.4",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
 ]
