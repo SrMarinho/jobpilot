@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-09-15T00:23:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT1H</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>wscript.exe</Command>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.localun_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_drain.bat"</Arguments>
+    </Exec>
+  </Actions>
+  <Settings>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Enabled>true</Enabled>
+  </Settings>
+  <RegistrationInfo>
+    <Description>JobPilot - Drena aprovacoes/rejeicoes de post no Telegram (de hora em hora). Nao usa browser.</Description>
+  </RegistrationInfo>
+</Task>

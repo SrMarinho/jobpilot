@@ -70,6 +70,15 @@ temp/
 !.local/jobpilot_connect_task.xml
 !.local/jobpilot_report_task.xml
 !.local/jobpilot_engage_task.xml
+!.local/jobpilot_autopost_task.xml
+!.local/jobpilot_hired_task.xml
+!.local/jobpilot_drain_task.xml
+!.local/startup_autopost.bat
+!.local/startup_autopost.ps1
+!.local/startup_hired.bat
+!.local/startup_hired.ps1
+!.local/startup_drain.bat
+!.local/reimport_tasks.ps1
 
 # Dados e caches locais (runtime, nao versionar)
 .playwright-mcp/
