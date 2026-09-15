@@ -25,7 +25,11 @@ _LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 # instead of colliding with the live Chrome and dying. filelock releases
 # automatically if the holding process crashes (OS-level handle).
 _APP_LOCK_PATH = str(Path(BOT_PROFILE_DIR).parent / "bot_profile.lock")
-_LOCK_MAX_WAIT_S = 3600  # give up after 1h in queue
+# 10min, nao 1h. Uma hora na fila nao "espera o outro terminar": queima o run
+# inteiro em silencio — o engage ficou 5 dias assim, esperando o apply e
+# morrendo no timeout enquanto o log parecia saudavel. Melhor falhar rapido,
+# avisar e deixar o retry do agendamento pegar a proxima janela.
+_LOCK_MAX_WAIT_S = 600
 _LOCK_POLL_S = 5
 
 
@@ -51,9 +55,20 @@ async def acquire_browser_lock(label: str = "browser") -> FileLock:
             if waited % 30 == 0:
                 logger.info(f"{label} ainda na fila... ({waited}s)")
             if waited >= _LOCK_MAX_WAIT_S:
-                raise RuntimeError(
-                    f"Espera de browser lock excedeu {_LOCK_MAX_WAIT_S}s ({label})"
+                msg = (
+                    f"Espera de browser lock excedeu {_LOCK_MAX_WAIT_S}s ({label}) "
+                    "— outro run esta segurando o browser"
                 )
+                logger.warning(msg)
+                # Sem o alerta, esse RuntimeError sumia no retry do .ps1 e o
+                # dia passava sem ninguem notar que a tarefa nao rodou.
+                try:
+                    from src.utils.telegram import send_telegram
+
+                    send_telegram(f"⚠️ <b>{label}</b>: {msg}")
+                except Exception:
+                    pass
+                raise RuntimeError(msg)
 
 
 def _release_browser_lock(lock: FileLock, label: str = "browser") -> None:

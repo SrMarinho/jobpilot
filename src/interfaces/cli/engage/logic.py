@@ -71,9 +71,6 @@ def resolve_engage_config(
     os.environ.setdefault("LLM_PROVIDER_EVAL", "langchain")
     warmup_llm_providers()
 
-    if scheduled and not force:
-        save_ran_today("engage")
-
     # Alvos: usa os --target ou os salvos; persiste se pedido.
     from src.core.use_cases.engage_targets import load_targets, save_targets as _save
 
@@ -89,6 +86,11 @@ def resolve_engage_config(
         "enable_share": enable_share,
         "dry_run": dry_run,
         "targets": resolved_targets,
+        # Marcar "rodou hoje" aqui seria cedo demais: o browser lock ainda nem
+        # foi adquirido. Um run que morre na fila marcaria o dia como feito e
+        # as retentativas sairiam com exit 0 sem engajar nada (foi assim de
+        # 10/09 a 14/09). Quem marca e run_engage_browser, no fim.
+        "mark_ran_today": scheduled and not force,
         **settings_sections.user.as_dict(),
     }
 
@@ -110,6 +112,9 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
         targets=cfg.get("targets") or [],
     )
     result = await manager.run()
+
+    if cfg.get("mark_ran_today"):
+        save_ran_today("engage")
 
     await capture_metrics(page)
 

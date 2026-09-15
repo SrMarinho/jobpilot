@@ -61,11 +61,11 @@ def resolve_autopost_config(
     os.environ.setdefault("LLM_PROVIDER_EVAL", "langchain")
     warmup_llm_providers()
 
-    if scheduled and not force:
-        save_ran_today("autopost")
-
     return {
         "resume_path": resume_path,
+        # Marcado so depois de gerar de verdade: marcar antes queimaria o dia
+        # quando o LLM falha (mesmo bug que matou o engage por 5 dias).
+        "mark_ran_today": scheduled and not force,
         "source": source,
         "topic": topic,
         "brief": brief,
@@ -367,6 +367,8 @@ async def run_autopost(cfg: dict) -> None:
         made += 1
 
     logger.info(f"Autopost batch: {made}/{count} draft(s) gerado(s)")
+    if made and cfg.get("mark_ran_today"):
+        save_ran_today("autopost")
     if made == 0:
         try:
             from src.utils.telegram import send_telegram

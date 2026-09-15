@@ -31,12 +31,11 @@ def resolve_followup_config(
     os.environ.setdefault("LLM_PROVIDER_EVAL", "langchain")
     warmup_llm_providers()
 
-    if scheduled and not force:
-        save_ran_today("followup")
-
     return {
         "resume_path": resume_path,
         "max_dms": max_dms,
+        # So depois do run — ver a nota em engage/logic.py.
+        "mark_ran_today": scheduled and not force,
         **settings_sections.user.as_dict(),
     }
 
@@ -53,3 +52,6 @@ async def run_followup_browser(page: Page, cfg: dict) -> None:
         max_dms=cfg["max_dms"],
     )
     await manager.scan()
+
+    if cfg.get("mark_ran_today"):
+        save_ran_today("followup")

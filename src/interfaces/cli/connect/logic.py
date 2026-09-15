@@ -37,8 +37,6 @@ def resolve_connect_config(
     if not verdict:
         logger.info(f"Connect não vai rodar — {verdict.reason}")
         return None
-    if scheduled:
-        save_ran_today()
 
     # ── rotação de saved-searches ──
     if rotate and not url:
@@ -114,11 +112,19 @@ def resolve_connect_config(
         "url": resolved_url,
         "start_page": resolved_start_page,
         "on_page_change": on_page_change,
+        # Marcado so depois do run: marcar aqui e morrer na fila do browser
+        # lock queimaria o dia inteiro sem enviar um convite.
+        "mark_ran_today": scheduled,
     }
 
 
 async def run_connect_browser(
-    page, url: str, max_pages: int, start_page: int, on_page_change
+    page,
+    url: str,
+    max_pages: int,
+    start_page: int,
+    on_page_change,
+    mark_ran_today: bool = False,
 ) -> None:
     from src.core.use_cases.report import ReportService
 
@@ -130,6 +136,8 @@ async def run_connect_browser(
         on_page_change=on_page_change,
     )
     await manager.run()
+    if mark_ran_today:
+        save_ran_today()
     sent = manager.connect_people.invite_sended
     if sent:
         ReportService().save_connections(sent)

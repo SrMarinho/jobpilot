@@ -67,6 +67,7 @@ def register_connect_command(app: typer.Typer) -> None:
                 max_pages,
                 cfg["start_page"],
                 cfg["on_page_change"],
+                cfg["mark_ran_today"],
             )
 
         run_browser_task(ctx, "connect", _work)
