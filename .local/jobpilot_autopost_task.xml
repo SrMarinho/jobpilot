@@ -2,7 +2,7 @@
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <CalendarTrigger>
-      <StartBoundary>2026-06-23T09:00:00</StartBoundary>
+      <StartBoundary>2026-09-15T09:00:00</StartBoundary>
       <Enabled>true</Enabled>
       <RandomDelay>PT30M</RandomDelay>
       <ScheduleByWeek>
@@ -17,7 +17,7 @@
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_autopost.bat"</Arguments>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.localun_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_autopost.bat"</Arguments>
     </Exec>
   </Actions>
   <Settings>
@@ -25,6 +25,7 @@
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
     <Enabled>true</Enabled>
   </Settings>
   <RegistrationInfo>

@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
-    <LogonTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2026-09-15T12:00:00</StartBoundary>
       <Enabled>true</Enabled>
-    </LogonTrigger>
+      <RandomDelay>PT30M</RandomDelay>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
   </Triggers>
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_apply.bat"</Arguments>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.localun_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_apply.bat"</Arguments>
     </Exec>
   </Actions>
   <Settings>
@@ -16,9 +21,10 @@
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
     <Enabled>true</Enabled>
   </Settings>
   <RegistrationInfo>
-    <Description>JobPilot - Apply to LinkedIn jobs on startup (daily fresh search)</Description>
+    <Description>JobPilot - Candidaturas no LinkedIn (diario 12h). Segura o browser por ate 4h, por isso roda longe das outras tarefas.</Description>
   </RegistrationInfo>
 </Task>
