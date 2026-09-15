@@ -1,5 +1,4 @@
 import asyncio
-import json
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from src.core.use_cases.job_evaluator import JobEvaluator, _LEVEL_KEYWORDS, _nor
 from src.core.use_cases.skills_tracker import track_missing_skills_async
 from src.core.use_cases.applied_jobs_tracker import AppliedJobsTracker
 from src.utils.telegram import send_telegram
-from src.config.settings import files_dir, logger
+from src.config.settings import logger
 
 
 def detect_level(title: str, description: str = "") -> str:
@@ -335,16 +334,22 @@ class BaseJobApplicationManager(ABC):
             logger.warning(f"Falha ao guardar avaliação de '{item.title[:40]}': {e}")
 
     def _notify_apply_failed(self, item: JobItem, reason: str):
-        _manual_file = files_dir / "manual_apply.json"
-        _manual: dict = {}
-        if _manual_file.exists():
-            try:
-                _manual = json.loads(_manual_file.read_text(encoding="utf-8"))
-            except Exception:
-                _manual = {}
-        if item.job_url in _manual:
-            return
+        from src.core.use_cases import manual_apply
+
         result = item.eval_result or EvalResult()
+        # Registra antes de avisar: se ja estava na fila, o alerta ja saiu.
+        novo = manual_apply.add(
+            item.job_url,
+            {
+                "title": item.title,
+                "company": item.company,
+                "salary": result.salary,
+                "contract": result.contract,
+                "reason": reason,
+            },
+        )
+        if not novo:
+            return
         salary_str = f"{result.salary:,.0f}".replace(",", ".") if result.salary else ""
         salary_line = (
             f"\n💰 Pretensão: R$ {salary_str}{result.contract_tag}"
@@ -360,17 +365,6 @@ class BaseJobApplicationManager(ABC):
             f"{salary_line}\n"
             f"🔗 <a href='{item.job_url}'>Abrir vaga e finalizar</a>",
             topic="status",
-        )
-        _manual[item.job_url] = {
-            "title": item.title,
-            "company": item.company,
-            "salary": result.salary,
-            "contract": result.contract,
-            "reason": reason,
-        }
-        _manual_file.parent.mkdir(parents=True, exist_ok=True)
-        _manual_file.write_text(
-            json.dumps(_manual, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
     async def _apply_one(self, item: JobItem):

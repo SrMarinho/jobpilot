@@ -110,6 +110,15 @@ class FormAnswerer:
     def store(self, question: str, answer: str, options: list | None = None) -> None:
         self._cache.store(question, answer, options=options)
 
+    def known(self) -> dict:
+        """Banco de Q&A inteiro, cru.
+
+        O caminho campo-a-campo nao precisa disso, mas o formulario externo
+        manda o banco todo no prompt: a chave do cache e match exato
+        normalizado, e e o LLM que faz o casamento semantico que falta.
+        """
+        return self._cache.load()
+
     # ── LLM ──────────────────────────────────────────────────────────────────
 
     async def provider(self) -> LLMProvider:

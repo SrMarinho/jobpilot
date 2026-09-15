@@ -1,6 +1,7 @@
 import typer
 
 from src.interfaces.cli.apply.command import register_apply_command
+from src.interfaces.cli.apply_external.command import register_apply_external_command
 from src.interfaces.cli.connect.command import register_connect_command
 from src.interfaces.cli.engage.command import register_engage_command
 from src.interfaces.cli.autopost.command import register_autopost_command
@@ -65,6 +66,7 @@ def register(app: typer.Typer) -> None:
     jobs_app = typer.Typer(help="Job search & applications")
     app.add_typer(jobs_app, name="jobs")
     register_apply_command(jobs_app)
+    register_apply_external_command(jobs_app)
     register_hired_command(jobs_app)
     register_queue_command(jobs_app)
     register_triage_command(jobs_app)
