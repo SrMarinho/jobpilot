@@ -20,12 +20,12 @@ def _to_int(raw: str) -> int | None:
 # Número adjacente ao rótulo, antes OU depois ("14 Ocorrências em resultados de
 # pesquisa" e "Ocorrências em resultados de pesquisa\n14"). PT + EN.
 _PATTERNS = (
-    r"([\d.,\s]{1,12})\s*ocorr\w*\s+em\s+resultados?\s+de\s+pesquisa",
-    r"ocorr\w*\s+em\s+resultados?\s+de\s+pesquisa[^\d]{0,40}([\d.,\s]{1,12})",
-    r"([\d.,\s]{1,12})\s*apariç\w*\s+em\s+pesquisa",
-    r"apariç\w*\s+em\s+pesquisa[^\d]{0,40}([\d.,\s]{1,12})",
-    r"([\d.,\s]{1,12})\s*search appearances",
-    r"search appearances[^\d]{0,40}([\d.,\s]{1,12})",
+    r"(\d[\d.,\s]{0,11})\s*ocorr\w*\s+em\s+resultados?\s+de\s+pesquisa",
+    r"ocorr\w*\s+em\s+resultados?\s+de\s+pesquisa[^\d]{0,40}(\d[\d.,\s]{0,11})",
+    r"(\d[\d.,\s]{0,11})\s*apariç\w*\s+em\s+pesquisa",
+    r"apariç\w*\s+em\s+pesquisa[^\d]{0,40}(\d[\d.,\s]{0,11})",
+    r"(\d[\d.,\s]{0,11})\s*search appearances",
+    r"search appearances[^\d]{0,40}(\d[\d.,\s]{0,11})",
 )
 
 
@@ -73,11 +73,22 @@ class SearchAppearancesPage:
             and "apariç" not in low
             and "search appearances" not in low
         ):
-            logger.warning("Search-appearances page did not load expected content")
+            # diagnostico: revela redirect/paywall/wording novo na proxima run
+            try:
+                cur = self.page.url
+            except Exception:
+                cur = "?"
+            snippet = re.sub(r"\s+", " ", text).strip()[:300]
+            logger.warning(
+                f"Search-appearances page did not load expected content "
+                f"(url={cur}); text head: {snippet!r}"
+            )
             return None
+        # finditer, nao search: mesmo motivo do profile_views_page — o rotulo
+        # aparece varias vezes (menu, cabecalho, legenda) e so uma ocorrencia
+        # tem o numero colado.
         for pat in _PATTERNS:
-            m = re.search(pat, low)
-            if m:
+            for m in re.finditer(pat, low):
                 val = _to_int(m.group(1))
                 if val is not None:
                     logger.info(f"Search appearances scraped: {val}")
