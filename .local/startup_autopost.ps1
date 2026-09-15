@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Continue'
+﻿$ErrorActionPreference = 'Continue'
 $env:PYTHONIOENCODING = 'utf-8'
 Set-Location 'F:\Documentos\Projetos\Code\jobpilot'
 

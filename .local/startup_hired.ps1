@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Continue'
+﻿$ErrorActionPreference = 'Continue'
 $env:PYTHONIOENCODING = 'utf-8'
 # Eval provider = Claude só p/ esta tarefa (extração de skills melhor que ollama
 # local). Scoped ao processo — NÃO altera o .env global.

@@ -1,4 +1,4 @@
-# Fonte unica de verdade das tarefas agendadas do JobPilot.
+﻿# Fonte unica de verdade das tarefas agendadas do JobPilot.
 #
 # Antes esse script cobria 4 tarefas e o resto era criado a mao. Autopost,
 # Hired e Followup nunca chegaram a ser registrados: os XMLs existiam no repo,
@@ -14,6 +14,17 @@
 
 $ErrorActionPreference = 'Continue'
 $Local = 'F:\Documentos\Projetos\Code\jobpilot\.local'
+
+# Sem elevacao o /delete falha calado e o /create seguinte devolve "arquivo ja
+# existente" — sete paredes de vermelho que nao dizem o que realmente faltou.
+$id = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($id)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host 'Este script precisa de Administrador.'
+    Write-Host 'Abra o PowerShell como Admin e rode de novo:'
+    Write-Host '  powershell -ExecutionPolicy Bypass -File .local\reimport_tasks.ps1'
+    exit 1
+}
 
 # Nome antigo com hifen, criado a mao fora deste script.
 $Legacy = @('JobPilot-Engage')
@@ -46,7 +57,7 @@ function Test-TaskXmlPaths {
     foreach ($exec in $doc.Task.Actions.Exec) {
         $raw = [string]$exec.Arguments
         if ($raw -match "[`r`n]") {
-            Write-Host "  quebra de linha dentro de <Arguments> — path corrompido"
+            Write-Host "  quebra de linha dentro de <Arguments> - path corrompido"
             $ok = $false
         }
         foreach ($m in [regex]::Matches($raw, '"([^"]+)"')) {
