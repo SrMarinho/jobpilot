@@ -32,10 +32,42 @@ foreach ($name in $Legacy) {
     schtasks /delete /tn $name /f 2>$null | Out-Null
 }
 
+# Um path quebrado dentro do <Arguments> registra a tarefa sem erro nenhum:
+# schtasks devolve 0, a tarefa aparece no Agendador, e so no dia seguinte voce
+# descobre que toda execucao terminou em exit 1 sem escrever uma linha de log,
+# porque o wscript nunca achou o .vbs. Ja aconteceu: um "\r" no XML virou
+# carriage return e ".local\run_hidden.vbs" virou ".local" + quebra de linha +
+# "un_hidden.vbs". Por isso a validacao roda ANTES do registro.
+function Test-TaskXmlPaths {
+    param([string]$XmlPath)
+
+    [xml]$doc = Get-Content -Raw -Path $XmlPath
+    $ok = $true
+    foreach ($exec in $doc.Task.Actions.Exec) {
+        $raw = [string]$exec.Arguments
+        if ($raw -match "[`r`n]") {
+            Write-Host "  quebra de linha dentro de <Arguments> — path corrompido"
+            $ok = $false
+        }
+        foreach ($m in [regex]::Matches($raw, '"([^"]+)"')) {
+            $p = $m.Groups[1].Value
+            if (-not (Test-Path -LiteralPath $p)) {
+                Write-Host "  arquivo nao existe: $p"
+                $ok = $false
+            }
+        }
+    }
+    return $ok
+}
+
 foreach ($t in $Tasks) {
     $xml = Join-Path $Local $t.Xml
     if (-not (Test-Path $xml)) {
         Write-Host "SKIP $($t.Name): $xml nao existe"
+        continue
+    }
+    if (-not (Test-TaskXmlPaths $xml)) {
+        Write-Host "SKIP $($t.Name): $($t.Xml) aponta para arquivo invalido"
         continue
     }
     schtasks /delete /tn $t.Name /f 2>$null | Out-Null

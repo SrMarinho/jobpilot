@@ -16,7 +16,7 @@
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.localun_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_drain.bat"</Arguments>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_drain.bat"</Arguments>
     </Exec>
   </Actions>
   <Settings>
