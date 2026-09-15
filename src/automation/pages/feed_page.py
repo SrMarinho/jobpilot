@@ -15,6 +15,47 @@ FEED_URL = "https://www.linkedin.com/feed/"
 _COMMENT_SELECTOR = "button[aria-label='Comentar'], button[aria-label='Comment']"
 _SHARE_SELECTOR = "button[aria-label='Compartilhar'], button[aria-label='Share']"
 
+# Onde o dropdown de compartilhar é procurado. Restringir ao menu aberto evita
+# que o próprio botão-gatilho ("Compartilhar") vire candidato a item de menu.
+_SHARE_MENU_SELECTOR = (
+    "[role='menu'], .artdeco-dropdown__content--is-open, "
+    "div[class*='dropdown'][class*='is-open'], div[data-view-name*='share']"
+)
+
+_SHARE_MENU_TEXT_JS = """
+(sel) => {
+    const menu = document.querySelector(sel);
+    if (!menu) return '(nenhum dropdown aberto)';
+    return (menu.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300);
+}
+"""
+
+_REPOST_ITEM_JS = """
+(sel) => {
+    const root = document.querySelector(sel) || document;
+    const wanted = /repost|compartilh/i;
+    // O quote-share abre o composer em vez de repostar direto.
+    const quote = /suas ideias|your thoughts|com comentario|com comentário|write/i;
+    const nodes = Array.from(
+        root.querySelectorAll("[role='menuitem'], [role='button'], button, li")
+    ).filter(el => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        const txt = (el.innerText || '').trim();
+        // Item de menu é curto; texto longo é container, não opção.
+        if (!txt || txt.length > 60) return false;
+        if (quote.test(txt)) return false;
+        return wanted.test(txt) || wanted.test(el.getAttribute('aria-label') || '');
+    });
+    // Mais profundo primeiro: um wrapper que contém o item também casaria, e
+    // clicar no wrapper não dispara a ação.
+    for (const el of nodes) {
+        if (!nodes.some(other => other !== el && el.contains(other))) return el;
+    }
+    return nodes[0] || null;
+}
+"""
+
 _WALK_UP_JS = """
 (el, shareSelector) => {
     let cur = el;
@@ -331,7 +372,10 @@ class FeedPage:
             await elem.click(timeout=5000)
             return True
         except Exception as e:
-            logger.debug(f"Normal click on {what} failed ({e}); trying JS click")
+            # INFO, nao DEBUG: o log roda em INFO e um JS click num botao de
+            # dropdown com frequencia nao abre o popover — sem essa linha a
+            # falha do repost fica indistinguivel de rotulo errado.
+            logger.info(f"Normal click on {what} failed ({e}); trying JS click")
         try:
             await elem.evaluate("el => el.click()")
             return True
@@ -491,6 +535,13 @@ class FeedPage:
         await self.page.wait_for_timeout(2000)
         return True
 
+    async def _share_menu_text(self) -> str:
+        """Texto do dropdown aberto, para o log quando o repost não é achado."""
+        try:
+            return await self.page.evaluate(_SHARE_MENU_TEXT_JS, _SHARE_MENU_SELECTOR)
+        except Exception:
+            return ""
+
     async def share_post(self, post: ElementHandle) -> bool:
         await self.dismiss_overlays()
         await self._scroll_into_view(post)
@@ -502,43 +553,30 @@ class FeedPage:
             return False
         await self.page.wait_for_timeout(1500)
 
-        # LinkedIn 2026: share menu has 2 div[role=button] items.
-        # Item 1 = "Compartilhe com suas ideias" (quote-share, opens composer)
-        # Item 2 = "Compartilhar / Compartilhe a publicação ..." (direct repost)
-        # We want the direct repost: match by "Compartilhe a publicação" text.
-        repost_handle = await self.page.evaluate_handle("""
-() => {
-    const items = document.querySelectorAll("div[role='button'], div[role='menuitem'], button");
-    for (const el of items) {
-        const r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) continue;
-        const txt = (el.innerText || '').toLowerCase();
-        if (/compartilhe a publica|share .* post|repostar agora|repost now|repost$/.test(txt)) {
-            return el;
-        }
-    }
-    return null;
-}
-        """)
+        # O menu de compartilhar tem dois itens: o quote-share, que abre o
+        # composer, e o repost direto. Queremos o segundo.
+        #
+        # A versão anterior casava por frases literais
+        # (/compartilhe a publica|repostar agora|repost now|repost$/) e nenhuma
+        # delas existe na UI PT-BR atual — "repost$" ainda erra por âncora, já
+        # que o rótulo real é "Repostar". Resultado: 8 tentativas em setembro,
+        # 0 reposts. Agora casa o radical e descarta o quote-share pelo texto.
+        repost_handle = await self.page.evaluate_handle(
+            _REPOST_ITEM_JS, _SHARE_MENU_SELECTOR
+        )
         repost_elem = repost_handle.as_element()
-        if not repost_elem:
-            # Fallback: legacy labels
-            for label in ("Repostar agora", "Repost agora", "Repost now"):
-                try:
-                    opt = await self.page.query_selector(
-                        f"button:has-text('{label}'), div[role='button']:has-text('{label}')"
-                    )
-                    if opt and await opt.is_visible():
-                        repost_elem = opt
-                        break
-                except Exception:
-                    continue
         if not repost_elem:
             try:
                 await self.page.keyboard.press("Escape")
             except Exception:
                 pass
-            logger.warning("Repost option not found in share menu")
+            # Sem o texto do menu aberto não há como saber se o dropdown nem
+            # chegou a abrir ou se o rótulo mudou de novo — foi o que manteve
+            # essa falha invisível.
+            logger.warning(
+                f"Repost option not found in share menu; menu text: "
+                f"{await self._share_menu_text()!r}"
+            )
             return False
         if await self._safe_click(repost_elem, "repost option"):
             logger.info("Reposted (compartilhar direto)")
