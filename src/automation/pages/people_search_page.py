@@ -16,8 +16,17 @@ _MODAL_CLOSE = [
 _INVITE_MODAL = [
     "[data-test-modal-container]",
     "[role='dialog']",
+    "[role='alertdialog']",
     ".artdeco-modal",
 ]
+# Estado pós-convite. O LinkedIn 2026 envia boa parte dos convites direto, sem
+# abrir modal nenhum: o botão vira "Pendente". Sem contar isso, o run enviava
+# convites de verdade e reportava "Total connections sent: 0" — foi assim a
+# semana toda de 08/09 a 14/09.
+_PENDING_XPATH = (
+    "xpath=//*[self::button or self::span or self::a]"
+    "[normalize-space()='Pendente' or normalize-space()='Pending']"
+)
 _WITHDRAW_MODAL = [
     "xpath=//button[contains(@aria-label,'Retirar convite') or contains(@aria-label,'Withdraw')]"
 ]
@@ -43,6 +52,23 @@ class PeopleSearchPage:
             return True
         except Exception:
             return False
+
+    async def _head_text(self, limit: int = 200) -> str:
+        """Head do innerText, só para diagnóstico em WARNING."""
+        import re
+
+        try:
+            text = await self.page.evaluate("() => document.body.innerText || ''")
+        except Exception:
+            return "?"
+        return re.sub(r"\s+", " ", text).strip()[:limit]
+
+    async def pending_count(self) -> int:
+        """Quantos botões estão em estado 'Pendente' na página agora."""
+        try:
+            return await self.page.locator(_PENDING_XPATH).count()
+        except Exception:
+            return 0
 
     async def close_modal(self) -> None:
         btn = await first_visible(
@@ -81,7 +107,7 @@ class PeopleSearchPage:
             else:
                 logger.warning(
                     "campo=invite modal: nenhum candidato casou após o Connect "
-                    "— selector pode ter mudado"
+                    f"— selector pode ter mudado; página: {await self._head_text()!r}"
                 )
             return None
 

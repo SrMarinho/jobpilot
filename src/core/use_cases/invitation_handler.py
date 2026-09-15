@@ -43,6 +43,9 @@ class ConnectionHandler:
                 await btn_connect.get_attribute("aria-label")
                 or await btn_connect.inner_text()
             )
+            # Convite sem modal: o LinkedIn 2026 manda direto e so troca o
+            # botao para "Pendente". Contamos comparando antes/depois.
+            pending_before = await self.page.pending_count()
             try:
                 await btn_connect.click()
             except Exception:
@@ -69,7 +72,26 @@ class ConnectionHandler:
                     f"restam {self.limiter.remaining_today('connect')} hoje"
                 )
                 await short_pause()
+            elif await self._sent_without_modal(pending_before):
+                self.invite_sended += 1
+                self.limiter.record("connect")
+                skip_labels.add(label)
+                logger.info(
+                    f"Invitation sent sem modal ({self.invite_sended}) — "
+                    f"restam {self.limiter.remaining_today('connect')} hoje"
+                )
+                await short_pause()
             else:
                 logger.info("Could not confirm invitation, trying next")
                 skip_labels.add(label)
                 await self.page.close_modal()
+
+    async def _sent_without_modal(self, pending_before: int) -> bool:
+        """Convite saiu direto, sem modal de confirmacao?
+
+        Evidencia: apareceu um botao "Pendente" a mais na pagina depois do
+        clique. Sem isso o handler tratava sucesso como falha e o run inteiro
+        reportava zero convites enviados.
+        """
+        await short_pause()
+        return await self.page.pending_count() > pending_before
