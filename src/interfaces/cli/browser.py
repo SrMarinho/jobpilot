@@ -233,6 +233,35 @@ def run_browser_task(ctx, name: str, work) -> None:
     run_async(run_browser(work, headless=ctx.obj.get("headless", False)))
 
 
+def _install_healer(page) -> None:
+    """Liga a cura de selector neste run, se o dono habilitou.
+
+    É aqui e não nos managers porque este é o ponto único por onde todo comando
+    com browser passa — inclusive os do bot. Nos managers seriam ~10 edições, e
+    cada page object passaria a saber o que é LLM.
+
+    Sem ``EVOLVE_HEAL`` ligado, `install` devolve None e nada muda.
+    """
+    try:
+        from src.automation.evolve.healer import install
+
+        install(page)
+    except Exception as e:
+        # Falha ao instalar a cura não pode custar o run: sem gancho, o
+        # resolver se comporta como sempre se comportou.
+        logger.warning(f"[evolve] não foi possível instalar a cura: {e}")
+
+
+def _uninstall_healer() -> None:
+    """Remove o gancho e grava a contabilidade de selectors do run."""
+    try:
+        from src.automation.evolve.healer import uninstall
+
+        uninstall()
+    except Exception as e:
+        logger.warning(f"[evolve] falha ao encerrar a cura: {e}")
+
+
 async def run_browser(work, *, headless: bool = False):
     """Run ``work(page)`` inside a Playwright context with screenshot + cleanup.
 
@@ -244,6 +273,7 @@ async def run_browser(work, *, headless: bool = False):
     try:
         async with async_playwright() as pw:
             context, page = await create_context(pw, force_headless=headless)
+            _install_healer(page)
             try:
                 await work(page)
                 try:
@@ -274,6 +304,7 @@ async def run_browser(work, *, headless: bool = False):
                     pass
                 raise
             finally:
+                _uninstall_healer()
                 try:
                     await context.close()
                 except Exception:
@@ -293,9 +324,11 @@ async def run_browser_simple(work, *, headless: bool = False, post_wait_ms: int 
     try:
         async with async_playwright() as pw:
             context, page = await create_context(pw, force_headless=headless)
+            _install_healer(page)
             try:
                 await work(page)
             finally:
+                _uninstall_healer()
                 if post_wait_ms > 0:
                     try:
                         await page.wait_for_timeout(post_wait_ms)
