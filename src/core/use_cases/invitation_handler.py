@@ -82,7 +82,20 @@ class ConnectionHandler:
                 )
                 await short_pause()
             else:
-                logger.info("Could not confirm invitation, trying next")
+                # Aqui sim é falha: não abriu modal E o contador de "Pendente"
+                # não subiu, então o convite não saiu. É o único ponto que tem
+                # as duas evidências, e por isso é onde o aviso mora.
+                #
+                # O aviso ficava na page, disparando sempre que o modal não
+                # aparecia — 711 vezes em 15 dias, quase todas com o convite
+                # enviado com sucesso. `campo=invite modal` está na mensagem de
+                # propósito: é o que liga este aviso ao campo no evolve scan,
+                # agora que ele indica quebra de verdade.
+                logger.warning(
+                    "campo=invite modal: convite não confirmado — sem modal e "
+                    f"sem novo 'Pendente' na página; head: "
+                    f"{await self.page.head_text()!r}"
+                )
                 skip_labels.add(label)
                 await self.page.close_modal()
 

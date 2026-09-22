@@ -53,8 +53,13 @@ class PeopleSearchPage:
         except Exception:
             return False
 
-    async def _head_text(self, limit: int = 200) -> str:
-        """Head do innerText, só para diagnóstico em WARNING."""
+    async def head_text(self, limit: int = 200) -> str:
+        """Head do innerText, só para diagnóstico em WARNING.
+
+        Público porque quem emite o aviso de falha de convite é o
+        ``ConnectionHandler`` — ele é o único que sabe, via ``pending_count``,
+        se a ausência do modal foi sucesso ou falha.
+        """
         import re
 
         try:
@@ -99,15 +104,21 @@ class PeopleSearchPage:
             required=False,
         )
         if modal is None:
-            # Sem modal pode ser layout novo (nenhum candidato casou) ou o
-            # LinkedIn recusando o convite. Só o segundo caso é falha de
-            # plataforma — o primeiro é bug nosso e não deve abrir o breaker.
+            # Ausência de modal NÃO é falha: o LinkedIn 2026 envia boa parte
+            # dos convites direto, sem abrir confirmação, e o botão só vira
+            # "Pendente". Quem decide se deu certo é o ConnectionHandler, que
+            # compara `pending_count()` antes e depois do clique.
+            #
+            # Isto já foi um WARNING, e gerou 711 avisos em 15 dias — todos no
+            # caminho de SUCESSO, porque o convite tinha sido enviado. O aviso
+            # agora mora no handler, onde existe a evidência para distinguir
+            # envio-sem-modal de falha de verdade.
             if await self.is_invite_limit_reached():
                 logger.error("Limite de convites atingido")
             else:
-                logger.warning(
-                    "campo=invite modal: nenhum candidato casou após o Connect "
-                    f"— selector pode ter mudado; página: {await self._head_text()!r}"
+                logger.info(
+                    "Sem modal de confirmação — LinkedIn pode ter enviado direto; "
+                    "confirmação vem do pending_count"
                 )
             return None
 
