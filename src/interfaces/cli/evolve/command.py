@@ -53,6 +53,11 @@ def register_evolve_commands(app: typer.Typer) -> None:
             "--once-a-day",
             help="Sai sem fazer nada se já rodou hoje (para o drain horário)",
         ),
+        diagnose: bool = typer.Option(
+            False,
+            "--diagnose",
+            help="Classifica os crônicos via LLM e enfileira o que der",
+        ),
     ):
         """Agrupa falhas recorrentes dos logs em incidentes. Não age em nada."""
         if once_a_day:
@@ -99,10 +104,14 @@ def register_evolve_commands(app: typer.Typer) -> None:
             silenciados=len(incidents) - len(visiveis),
         )
 
+        decisoes: list[tuple[str, str, str]] = []
+        if diagnose and cronicos and store is not None:
+            decisoes = _diagnose(cronicos, store)
+
         if telegram and (cronicos or not scheduled):
             from src.utils.telegram import send_telegram
 
-            send_telegram(_as_telegram(cronicos, days), topic="alerts")
+            send_telegram(_as_telegram(cronicos, days, decisoes), topic="alerts")
 
         if cronicos:
             logger.warning(
@@ -273,6 +282,110 @@ def register_evolve_commands(app: typer.Typer) -> None:
         console.print("[green]Cooldown zerado.[/green]")
 
 
+def _diagnose(cronicos: list[Incident], store: IncidentStore) -> list[tuple]:
+    """Classifica os crônicos e enfileira o que virar trabalho.
+
+    Devolve ``(sig, categoria, decisão)`` pra tabela e pro Telegram. Erro de
+    LLM não derruba o scan: o relatório de observação vale por si, e é dele
+    que o dono depende quando a classificação falha.
+    """
+    from src.core.ai.llm_provider import get_eval_provider
+    from src.core.use_cases.evolve.diagnosis import (
+        CAT_NOISE,
+        build_diagnosis_prompt,
+        parse_diagnoses,
+        plan_action,
+    )
+    from src.core.use_cases.evolve.queue import EvolutionQueue
+    from src.utils.async_utils import run_async
+
+    try:
+        provider = get_eval_provider()
+        raw = run_async(provider.complete(build_diagnosis_prompt(cronicos)))
+    except Exception as e:
+        logger.warning(f"[evolve] diagnóstico falhou: {e}")
+        console.print(f"[yellow]Diagnóstico indisponível: {e}[/yellow]")
+        return []
+
+    por_sig = {i.sig: i for i in cronicos}
+    fila = EvolutionQueue()
+    decisoes: list[tuple] = []
+
+    for diag in parse_diagnoses(raw):
+        incident = por_sig.get(diag.sig)
+        if incident is None:
+            continue
+        kind, motivo = plan_action(incident, diag)
+        store.set_status(
+            diag.sig,
+            store.state(diag.sig).status,
+            diagnosis=f"{diag.category} ({diag.confidence:.2f}): {diag.reason}",
+        )
+        if diag.category == CAT_NOISE and diag.confident:
+            store.ignore(diag.sig, note=f"diagnóstico: {diag.reason}")
+        if kind:
+            job = fila.enqueue(
+                kind,
+                {
+                    "template": incident.template,
+                    "task": incident.task,
+                    "field": next(iter(sorted(incident.fields)), None),
+                    "mission": _mission_for(kind, incident, diag),
+                },
+                sig=diag.sig,
+            )
+            motivo = f"{motivo} → job {job.id}" if job else f"{motivo} (já na fila)"
+        decisoes.append((diag.sig, diag.category, motivo))
+
+    _render_decisoes(decisoes)
+    return decisoes
+
+
+def _mission_for(kind: str, incident: Incident, diag) -> str:
+    """Missão do ``claude -p`` para o job, com o contexto da categoria."""
+    from src.core.use_cases.evolve.patch_mission import (
+        build_patch_mission,
+        demote_log_detail,
+        retire_feature_detail,
+    )
+    from src.core.use_cases.evolve.queue import KIND_DEMOTE_LOG, KIND_RETIRE_FEATURE
+
+    evidencia = "\n".join(incident.samples[:2]) or incident.template
+
+    if kind == KIND_RETIRE_FEATURE:
+        detalhe = retire_feature_detail(
+            feature=incident.template[:80], evidence=evidencia
+        )
+    elif kind == KIND_DEMOTE_LOG:
+        detalhe = demote_log_detail(
+            evidence=evidencia, occurrences=incident.count, days=incident.days_seen
+        )
+    else:
+        detalhe = f"{diag.reason}\n\nEvidência nos logs:\n{evidencia}"
+
+    return build_patch_mission(
+        kind=kind,
+        summary=f"[{incident.task}] {incident.template}",
+        detail=detalhe,
+        # Sem arquivo declarado o agente tem que descobrir — e a denylist
+        # continua sendo a palavra final sobre o que ele pode ter mexido.
+        allowed_files=["(descubra com Grep; respeite a lista de proibidos)"],
+        test_hint="Acrescente ou ajuste um teste em tests/ que cubra o caso.",
+    )
+
+
+def _render_decisoes(decisoes: list[tuple]) -> None:
+    if not decisoes:
+        return
+    table = Table(title="Diagnóstico")
+    table.add_column("Sig")
+    table.add_column("Categoria")
+    table.add_column("Decisão")
+    for sig, categoria, motivo in decisoes:
+        table.add_row(sig, categoria, motivo[:80])
+    console.print(table)
+
+
 def _render(
     incidents: list[Incident],
     stats,
@@ -322,18 +435,32 @@ def _render(
     )
 
 
-def _as_telegram(cronicos: list[Incident], days: int) -> str:
+def _as_telegram(
+    cronicos: list[Incident], days: int, decisoes: list[tuple] | None = None
+) -> str:
     if not cronicos:
         return f"✅ <b>Evolve scan</b>: nenhum incidente crônico em {days} dias."
-    linhas = "\n".join(
-        f"• <code>{i.sig}</code> <b>{i.count}×</b> em {i.days_seen}d "
-        f"[{','.join(sorted(i.tasks))}]\n  {_escape(i.template[:90])}"
-        for i in cronicos[:10]
-    )
+
+    # A decisão importa mais que a contagem: "711 avisos" sem "e o que vou
+    # fazer com isso" é o relatório que ninguém lê duas vezes.
+    por_sig = {sig: (cat, motivo) for sig, cat, motivo in (decisoes or [])}
+    blocos = []
+    for incident in cronicos[:10]:
+        cabecalho = (
+            f"• <code>{incident.sig}</code> <b>{incident.count}×</b> em "
+            f"{incident.days_seen}d [{','.join(sorted(incident.tasks))}]"
+        )
+        corpo = f"\n  {_escape(incident.template[:90])}"
+        decidido = por_sig.get(incident.sig)
+        if decidido:
+            categoria, motivo = decidido
+            corpo += f"\n  → <b>{categoria}</b>: {_escape(motivo[:110])}"
+        blocos.append(cabecalho + corpo)
+
     extra = f"\n\n<i>+{len(cronicos) - 10} outros</i>" if len(cronicos) > 10 else ""
     return (
         f"🔁 <b>Evolve scan</b>: {len(cronicos)} incidente(s) crônico(s) "
-        f"em {days} dias\n\n{linhas}{extra}"
+        f"em {days} dias\n\n" + "\n".join(blocos) + extra
     )
 
 
