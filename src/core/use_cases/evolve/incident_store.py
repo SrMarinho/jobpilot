@@ -181,6 +181,42 @@ def load_incidents_store() -> IncidentStore:
     return IncidentStore()
 
 
+#: Task sintética das falhas vindas do canário. Fica separada da task do run
+#: de propósito: "o canário não achou o campo" e "o run não achou o campo" são
+#: observações diferentes — a primeira é um teste controlado, a segunda é
+#: prejuízo real — e misturá-las esconderia qual das duas está acontecendo.
+PROBE_TASK = "canary"
+
+
+def record_probe_failures(
+    failures: list[tuple[str, str, str]], *, now: datetime | None = None
+) -> list[str]:
+    """Registra falhas do canário como incidentes. Devolve as assinaturas.
+
+    Recebe ``(página, campo, detalhe)`` em vez de ``ProbeResult`` para não
+    acoplar o store ao canário: quem monta a tupla é o comando.
+    """
+    from src.core.use_cases.evolve.log_scan import Incident, signature, template_of
+
+    store = IncidentStore()
+    incidents: list[Incident] = []
+    for page, field, detail in failures:
+        msg = f"campo={field!r} não resolveu no canário ({page}): {detail}"
+        incidents.append(
+            Incident(
+                sig=signature("WARNING", PROBE_TASK, msg),
+                level="WARNING",
+                task=PROBE_TASK,
+                template=template_of(msg),
+                count=1,
+                fields={field},
+                samples=[msg],
+            )
+        )
+    store.record(incidents, now=now)
+    return [i.sig for i in incidents]
+
+
 # Caminho JSON usado pelo modo local; exposto pra quem precisa citar o arquivo.
 def incidents_path() -> Path:
     return INCIDENTS_FILE
