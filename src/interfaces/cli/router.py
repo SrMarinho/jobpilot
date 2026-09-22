@@ -21,6 +21,7 @@ from src.interfaces.cli.profile.appearances.command import (
     register_profile_appearances_commands,
 )
 from src.interfaces.cli.db.command import register_db_commands
+from src.interfaces.cli.evolve.command import register_evolve_commands
 from src.interfaces.cli.dashboard.command import register_dashboard_command
 from src.interfaces.cli.followup.command import register_followup_command
 from src.interfaces.cli.hired.command import register_hired_command
@@ -160,6 +161,12 @@ def register(app: typer.Typer) -> None:
         "db",
         "Postgres backend: check/init/migrate/status",
         register_db_commands,
+    )
+    _add_group(
+        config_app,
+        "evolve",
+        "Autoevolução: incidentes crônicos dos logs",
+        register_evolve_commands,
     )
     provider_app = _add_group(
         config_app, "provider", "LLM provider settings", register_provider_commands

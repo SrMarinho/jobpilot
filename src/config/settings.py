@@ -21,6 +21,11 @@ _log_settings = {
 
 logger = CustomLogger(_log_settings).get_logger()
 
+# Onde os logs foram escritos de fato. Exposto porque o evolve LÊ os logs pra
+# achar falha recorrente, e não pode reimplementar o default de LOG_DIR (se os
+# dois divergirem, o scan varre a pasta errada e não acha nada).
+log_dir = _log_settings["log_dir"]
+
 # Persistência: vazio => modo JSON local (.local/files). Setado => Postgres.
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
