@@ -20,7 +20,7 @@
     </Exec>
   </Actions>
   <Settings>
-    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>

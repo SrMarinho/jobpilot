@@ -48,8 +48,28 @@ def register_evolve_commands(app: typer.Typer) -> None:
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Não grava nada no store de incidentes"
         ),
+        once_a_day: bool = typer.Option(
+            False,
+            "--once-a-day",
+            help="Sai sem fazer nada se já rodou hoje (para o drain horário)",
+        ),
     ):
         """Agrupa falhas recorrentes dos logs em incidentes. Não age em nada."""
+        if once_a_day:
+            # O drain roda de hora em hora. Sem esta trava, um crônico que
+            # persiste (e é da natureza dele persistir) geraria 24 mensagens
+            # por dia no Telegram — o alerta viraria ruído e pararia de ser
+            # lido, que é o modo de falha que este sistema existe pra evitar.
+            from src.interfaces.cli.persistence import (
+                is_already_ran_today,
+                save_ran_today,
+            )
+
+            if is_already_ran_today("evolve-scan"):
+                logger.info("[evolve] scan já rodou hoje — saindo")
+                return
+            save_ran_today("evolve-scan")
+
         incidents, stats = scan(
             log_dir,
             days=days,
