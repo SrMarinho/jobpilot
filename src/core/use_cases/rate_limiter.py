@@ -54,6 +54,10 @@ DEFAULT_QUOTAS: dict[str, tuple[int, int]] = {
     "apply": (30, 150),
     "engage": (20, 100),
     "dm": (15, 60),
+    # Cura de selector (autoevolução). Não é limite do LinkedIn: é teto de
+    # gasto de LLM e de tempo de browser — a cura acontece com o lock do
+    # browser na mão, e o lock tem teto de 600s que já foi estourado.
+    "heal": (5, 20),
 }
 
 
