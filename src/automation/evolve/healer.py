@@ -243,9 +243,51 @@ class SelectorHealer:
             f"(nome={aprovado.name!r})"
         )
         self._record_quota()
+        self._enqueue_promotion(spec, aprovado)
         self._notify(spec.field, aprovado)
 
         return candidate_validator.resolve(root, aprovado.selector).first
+
+    def _enqueue_promotion(self, spec, validation) -> None:
+        """Pede que o drain leve o selector aprendido pro código-fonte.
+
+        Sem isso o override vive só no banco, e o código-fonte passa a mentir:
+        quem lê a page vê a lista antiga, o git não registra nada, e uma máquina
+        nova começa com o selector morto. Enfileirar aqui e promover no drain é
+        o que mantém banco e código convergindo — sem segurar o lock do browser
+        pelos minutos que ruff, pytest e smoke levam.
+        """
+        try:
+            from src.core.use_cases.evolve.queue import (
+                KIND_PROMOTE_SELECTOR,
+                EvolutionQueue,
+            )
+
+            EvolutionQueue().enqueue(
+                KIND_PROMOTE_SELECTOR,
+                {
+                    "field": spec.field,
+                    "selector": validation.selector,
+                    "module": spec.module,
+                    "constant": spec.constant,
+                    "evidence": {
+                        "matches": validation.matches,
+                        "name": validation.name,
+                    },
+                    "commit_subject": f"promove selector aprendido de {spec.field}",
+                    "commit_body": (
+                        f"O candidato declarado de {spec.field!r} parou de casar e a "
+                        f"cura em runtime validou {validation.selector!r} contra o DOM "
+                        f"(1 elemento visível, nome acessível {validation.name!r}).\n\n"
+                        "Entra como primeiro candidato porque é o layout atual; os "
+                        "declarados abaixo seguem como fallback histórico."
+                    ),
+                },
+            )
+        except Exception as e:
+            # Falhar aqui não desfaz a cura: o override já está valendo, só a
+            # promoção pro código fica pendente.
+            logger.warning(f"[evolve] não enfileirei a promoção: {e}")
 
     def _record_quota(self) -> None:
         try:

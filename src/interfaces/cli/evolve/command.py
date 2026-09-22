@@ -131,6 +131,127 @@ def register_evolve_commands(app: typer.Typer) -> None:
             f"Volta a aparecer depois disso se continuar acontecendo."
         )
 
+    @app.command("queue")
+    def cmd_queue():
+        """Fila de trabalho: o que a cura pediu e o drain ainda não fez."""
+        from src.core.use_cases.evolve.queue import EvolutionQueue
+
+        fila = EvolutionQueue()
+        jobs = fila.all()
+        if not jobs:
+            console.print("[yellow]Fila vazia.[/yellow]")
+            return
+        table = Table(title=f"Fila da evolução — {fila.counts()}")
+        table.add_column("Job")
+        table.add_column("Tipo")
+        table.add_column("Status")
+        table.add_column("Tent.")
+        table.add_column("Assunto")
+        table.add_column("Último erro")
+        for job in jobs:
+            table.add_row(
+                job.id,
+                job.kind,
+                job.status,
+                str(job.attempts),
+                str(job.payload.get("field") or job.sig or "—"),
+                (job.last_error or "")[:50],
+            )
+        console.print(table)
+
+    @app.command("drain")
+    def cmd_drain(
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Roda os gates sem chamar o agente de patch"
+        ),
+    ):
+        """Executa um job da fila em worktree isolado. Sem browser.
+
+        Um por execução: o drain agendado tem teto de tempo no Agendador, e um
+        patch pode levar minutos entre LLM, ruff, pytest e smoke.
+        """
+        from src.core.use_cases.evolve.patcher import Patcher
+
+        result = Patcher(dry_run=dry_run).drain_one()
+        if result is None:
+            console.print("[dim]Nada a fazer.[/dim]")
+            return
+
+        cor = "green" if result.ok else "red"
+        console.print(
+            f"[{cor}]{'Patch aplicado' if result.ok else 'Patch reprovado'}[/{cor}]"
+        )
+        for step in result.steps:
+            marca = "[green]✓[/green]" if step.ok else "[red]✗[/red]"
+            console.print(
+                f"  {marca} {step.name}"
+                + (f" — {step.detail[:90]}" if step.detail else "")
+            )
+        if result.branch:
+            console.print(
+                f"Branch: [cyan]{result.branch}[/cyan]"
+                + ("" if result.pushed else " (não empurrada)")
+            )
+        if not result.ok:
+            raise typer.Exit(code=1)
+
+    @app.command("status")
+    def cmd_status():
+        """Orçamento, freios e kill switches da evolução."""
+        import os
+
+        from src.core.use_cases.evolve.evolve_state import EvolveState
+        from src.core.use_cases.evolve.patcher import (
+            evolve_enabled,
+            open_evolve_branches,
+            push_enabled,
+        )
+        from src.core.use_cases.evolve.queue import EvolutionQueue
+
+        snap = EvolveState().snapshot()
+        cura = os.getenv("EVOLVE_HEAL", "false")
+        table = Table(title="Estado da autoevolução")
+        table.add_column("Item")
+        table.add_column("Valor")
+        for item, valor in (
+            ("cura in-run (EVOLVE_HEAL)", cura),
+            ("patch (EVOLVE_ENABLED)", str(evolve_enabled())),
+            ("push (EVOLVE_PUSH)", str(push_enabled())),
+            ("pausado", str(snap.paused)),
+            ("em cooldown", f"{snap.in_cooldown} ({snap.cooldown_until or '—'})"),
+            ("falhas seguidas", str(snap.consecutive_failures)),
+            ("patches hoje", str(snap.patches_today)),
+            ("patches na semana", str(snap.patches_week)),
+            ("custo hoje", f"US$ {snap.usd_today:.4f}"),
+            ("branches evolve/* abertas", str(len(open_evolve_branches()))),
+            ("fila", str(EvolutionQueue().counts() or "vazia")),
+        ):
+            table.add_row(item, valor)
+        console.print(table)
+
+    @app.command("pause")
+    def cmd_pause(
+        off: bool = typer.Option(False, "--off", help="Retoma em vez de pausar"),
+    ):
+        """Kill switch do patch, sem precisar mexer no .env."""
+        from src.core.use_cases.evolve.evolve_state import EvolveState
+
+        state = EvolveState()
+        state.pause(not off)
+        console.print(
+            "[green]Evolução retomada.[/green]"
+            if off
+            else "[yellow]Evolução pausada.[/yellow] Nenhum patch será aplicado."
+        )
+
+    @app.command("reset-cooldown")
+    def cmd_reset_cooldown():
+        """Zera o cooldown aberto por falhas seguidas de gate."""
+        from src.core.use_cases.evolve.evolve_state import EvolveState
+
+        EvolveState().clear_cooldown()
+        console.print("[green]Cooldown zerado.[/green]")
+
 
 def _render(
     incidents: list[Incident],
