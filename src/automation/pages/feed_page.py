@@ -22,20 +22,44 @@ _SHARE_MENU_SELECTOR = (
     "div[class*='dropdown'][class*='is-open'], div[data-view-name*='share']"
 )
 
-_SHARE_MENU_TEXT_JS = """
-(sel) => {
-    const menu = document.querySelector(sel);
-    if (!menu) return '(nenhum dropdown aberto)';
-    return (menu.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300);
-}
+# querySelector devolvia o PRIMEIRO match do seletor na página, e no feed 2026
+# esse é o card "Visualizações do perfil" da barra lateral — o menu aberto
+# (portal no fim do <body>) nunca era olhado. Agora varre todos os matches
+# visíveis, do último (aberto mais recentemente) para o primeiro.
+_SHARE_MENU_ROOTS_JS = """
+    const roots = Array.from(document.querySelectorAll(sel)).filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }).reverse();
 """
 
-_REPOST_ITEM_JS = """
-(sel) => {
-    const root = document.querySelector(sel) || document;
+_SHARE_MENU_TEXT_JS = (
+    """
+(sel) => {"""
+    + _SHARE_MENU_ROOTS_JS
+    + """
+    if (!roots.length) return '(nenhum dropdown aberto)';
+    return roots.map(m => (m.innerText || '').replace(/\\s+/g, ' ').trim())
+        .join(' | ').slice(0, 300);
+}
+"""
+)
+
+_REPOST_ITEM_JS = (
+    """
+(sel) => {"""
+    + _SHARE_MENU_ROOTS_JS
+    + """
     const wanted = /repost|compartilh/i;
     // O quote-share abre o composer em vez de repostar direto.
     const quote = /suas ideias|your thoughts|com comentario|com comentário|write/i;
+    for (const root of roots) {
+        const item = pick(root);
+        if (item) return item;
+    }
+    return null;
+
+    function pick(root) {
     const nodes = Array.from(
         root.querySelectorAll("[role='menuitem'], [role='button'], button, li")
     ).filter(el => {
@@ -53,8 +77,10 @@ _REPOST_ITEM_JS = """
         if (!nodes.some(other => other !== el && el.contains(other))) return el;
     }
     return nodes[0] || null;
+    }
 }
 """
+)
 
 _WALK_UP_JS = """
 (el, shareSelector) => {
