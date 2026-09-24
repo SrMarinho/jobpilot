@@ -11,11 +11,25 @@ Set-Location 'F:\Documentos\Projetos\Code\jobpilot'
 #
 # Cada etapa chama o startup_* que ja existia, entao env de provider e retries
 # continuam isolados por etapa. Falha de uma etapa nao interrompe as seguintes.
-# Rodar de novo no mesmo dia e seguro: connect/engage/autopost tem guarda de
-# "ja rodou hoje"; report so envia uma vez por mes.
+#
+# Uma vez por dia: a tarefa dispara no logon E as 08h (o PC pode ficar ligado
+# dias sem logon). Cada etapa concluida vai para daily_done.txt com a data de
+# hoje e e pulada nos disparos seguintes do dia. Se o PC desligar no meio, o
+# proximo logon retoma da etapa que faltou. Etapa que falhou tambem conta como
+# feita: os scripts ja tem retry proprio, e repetir a cada logon so martelaria
+# o LinkedIn.
 
 $Local = 'F:\Documentos\Projetos\Code\jobpilot\.local'
 $Day = (Get-Date).DayOfWeek
+$Today = Get-Date -Format 'yyyy-MM-dd'
+$DoneFile = Join-Path $Local 'daily_done.txt'
+
+$done = @()
+if (Test-Path $DoneFile) {
+    $done = @(Get-Content $DoneFile | Where-Object { $_ -like "$Today *" })
+}
+# Reescreve so com as linhas de hoje: o arquivo nunca cresce.
+Set-Content -Path $DoneFile -Value $done -Encoding ascii
 
 # Ordem: report (sem browser, rapido) -> autopost (post cedo alcanca mais) ->
 # connect -> apply (o mais longo) -> engage + metricas -> hired (semanal, por
@@ -35,11 +49,16 @@ foreach ($s in $Steps) {
         Write-Host "[daily] skip $($s.Name) (hoje e $Day)"
         continue
     }
+    if ($done -contains "$Today $($s.Name)") {
+        Write-Host "[daily] skip $($s.Name) (ja rodou hoje)"
+        continue
+    }
     $script = Join-Path $Local $s.Script
     Write-Host "[daily] $(Get-Date -Format 'HH:mm:ss') inicio $($s.Name)"
     & cmd.exe /c "`"$script`""
     $code = $LASTEXITCODE
     Write-Host "[daily] $(Get-Date -Format 'HH:mm:ss') fim $($s.Name) (exit $code)"
+    Add-Content -Path $DoneFile -Value "$Today $($s.Name)" -Encoding ascii
     if ($code -ne 0) { $failed += $s.Name }
 }
 

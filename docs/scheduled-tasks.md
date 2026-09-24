@@ -5,7 +5,7 @@ Automate JobPilot to run on every Windows login — no terminal visible, Chrome 
 ## Task overview
 
 Duas tarefas agendadas. Tudo que usa browser roda numa **cadeia única e
-sequencial**, a `JobPilot Daily` (`.local/startup_daily.ps1`, diária às 08h,
+sequencial**, a `JobPilot Daily` (`.local/startup_daily.ps1`, 1×/dia no logon ou às 08h,
 `jobpilot_daily_task.xml`). Cada etapa só começa quando a anterior termina:
 
 | # | Etapa | Script | Dias | What it does |
@@ -114,7 +114,7 @@ Open `taskschd.msc`, check under `JobPilot` folder. Right-click each task → Ru
 
 | Setting | Daily | Drain |
 |---------|-------|-------|
-| Trigger | Diário 08h (+ até 30 min aleatório) | De hora em hora |
+| Trigger | Logon (+2 min) e diário 08h (+ até 30 min); roda 1×/dia | De hora em hora |
 | Time limit | 10 hours (soma das etapas; apply sozinho chega a ~4h) | 30 min |
 | Missed run | `StartWhenAvailable`: roda no boot se o PC estava desligado | idem |
 | Multiple instances | Ignore | Ignore |
