@@ -123,7 +123,7 @@ def register(app: typer.Typer) -> None:
     _add_group(
         profile_app,
         "ssi",
-        "Social Selling Index: show score + history",
+        "Social Selling Index (descontinuado pelo LinkedIn): histórico",
         register_profile_ssi_commands,
     )
     _add_group(

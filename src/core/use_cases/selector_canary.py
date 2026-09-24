@@ -167,13 +167,12 @@ async def check_linkedin_people(page, report: CanaryReport, search_url: str) -> 
 
 
 async def check_profile_analytics(page, report: CanaryReport) -> None:
-    """Páginas de analytics do perfil (SSI, views, aparições)."""
+    """Páginas de analytics do perfil (views, aparições). SSI saiu: o LinkedIn
+    descontinuou a página e o canário acusaria quebra falsa todo dia."""
     from src.automation.pages.profile_views_page import ProfileViewsPage
     from src.automation.pages.search_appearances_page import SearchAppearancesPage
-    from src.automation.pages.ssi_page import SSIPage
 
     for nome, scraper in (
-        ("ssi", SSIPage(page)),
         ("profile_views", ProfileViewsPage(page)),
         ("search_appearances", SearchAppearancesPage(page)),
     ):

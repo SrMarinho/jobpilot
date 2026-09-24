@@ -17,7 +17,7 @@ Automated job application bot with AI-powered evaluation. Currently supports Lin
   - Scheduled mode: runs once per day, respects weekly invite limits
 - **Engage** — Likes/comments/shares feed posts with senior-level, grounded comments (anti-junior/anti-hallucination filters)
 - **Autopost** — Generates authored posts via LLM with a critic loop (generator drafts → reviewer critiques → generator rewrites; models configurable via `AUTOPOST_GENERATOR_MODEL`/`AUTOPOST_REVIEWER_MODEL`). Free-form topic/direction via `--brief`, approval via Telegram, publishes with an **on-brand image card** rendered locally (HTML→PNG, no Canva needed). Batch generation (`--count`) with topic dedup + optional approval TTL. Rejected drafts are fed back as negative style examples
-- **Metrics** — Captures SSI, profile views (90d) and search appearances (7d); shown in the dashboard (`profile capture` command)
+- **Metrics** — Captures profile views (90d) and search appearances (7d) and computes a presence index (SSI replacement); shown in the report and dashboard (`profile capture` command)
 - **Persistence** — Backend-swappable via `DATABASE_URL`: JSON files (default) or remote Postgres/Supabase
 - **Search Builder** — Build LinkedIn/Indeed search URLs from CLI flags instead of pasting URLs
 - **Skills Tracker** — Identifies missing skills rejected by AI evaluations (`skills list` / `skills top`)
@@ -113,7 +113,7 @@ Commands are grouped: `jobs`, `network`, `content`, `profile`, `insights`, `conf
 | `network followup` | Post-connection follow-up DMs |
 | `content engage` | Like/comment/share feed posts (senior-level comments) |
 | `content autopost` | Generate authored post + image card, approve via Telegram (`--brief` for free-form topic/direction) |
-| `profile capture` | Capture SSI + profile views + search appearances |
+| `profile capture` | Capture profile views + search appearances |
 | `insights dashboard` | Live TUI of applications, engagement, visibility, goals |
 | `insights report` | Weekly/monthly statistics and reports |
 | `config provider show/set` | View or change LLM backends |

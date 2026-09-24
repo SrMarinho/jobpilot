@@ -324,26 +324,74 @@ class MetricsCalculator:
                 result.setdefault(feature, {})[label] = int(sum(deltas) / len(deltas))
         return result
 
-    # ── SSI ──────────────────────────────────────────────────────
-    def ssi(self, period: WeekPeriod) -> dict | None:
-        from src.core.use_cases.ssi_tracker import SSITracker
+    # ── Índice de presença (substituto do SSI) ────────────────────
+    #: Semanas anteriores que formam a régua ("sua média").
+    PRESENCE_BASELINE_WEEKS = 4
 
-        tracker = SSITracker()
-        cur = tracker.latest_in_week(period.year, period.week)
-        if not cur:
-            return None
-        prev = tracker.latest_before_week(period.year, period.week)
+    def presence_inputs(self, period: WeekPeriod, snapshots: dict) -> dict:
+        """Métricas brutas da semana que alimentam o índice de presença.
 
-        def delta(key: str) -> float | None:
-            if not prev or key not in prev or key not in cur:
-                return None
-            return round(cur[key] - prev[key], 1)
-
-        return {
-            "current": cur,
-            "delta_total": delta("total"),
-            "delta_brand": delta("brand"),
-            "delta_find_people": delta("find_people"),
-            "delta_engage_insights": delta("engage_insights"),
-            "delta_relationships": delta("relationships"),
+        ``snapshots`` = {"views": [...], "appearances": [...]} já carregados,
+        para não reler o histórico a cada semana calculada.
+        """
+        eng = self.engagement(period)
+        engaged_people = {
+            p.get("author")
+            for p in self.repo.engaged()
+            if isinstance(p, dict) and p.get("week") == period.key and p.get("author")
         }
+        return {
+            "views": _latest_value(snapshots["views"], period, "views"),
+            "appearances": _latest_value(snapshots["appearances"], period, "count"),
+            "posts": self.autopost(period).get("published", 0),
+            "invites": self.connections(period),
+            "comments": eng["comments"],
+            "shares": eng["shares"],
+            "likes": eng["likes"],
+            "dms": self.followup(period).get("sent", 0),
+            "people": len(engaged_people),
+        }
+
+    def presence(self, period: WeekPeriod) -> dict | None:
+        """Índice da semana, deltas vs semana anterior e as métricas brutas.
+
+        Mesmo formato que o bloco de SSI tinha (``current`` + ``delta_<pilar>``),
+        então quem renderizava o SSI renderiza isto sem outra adaptação.
+        """
+        from src.core.use_cases.presence_index import baseline, score
+        from src.core.use_cases.profile_views_tracker import ProfileViewsTracker
+        from src.core.use_cases.search_appearances_tracker import (
+            SearchAppearancesTracker,
+        )
+
+        snapshots = {
+            "views": ProfileViewsTracker().sorted_snapshots(),
+            "appearances": SearchAppearancesTracker().sorted_snapshots(),
+        }
+        n = self.PRESENCE_BASELINE_WEEKS
+        weeks = [period]
+        for _ in range(n + 1):
+            weeks.append(weeks[-1].previous())
+        inputs = [self.presence_inputs(w, snapshots) for w in weeks]
+
+        cur_values = inputs[0]
+        if not any(cur_values.values()):
+            return None
+        cur = score(cur_values, baseline(inputs[1 : n + 1]))
+        prev = score(inputs[1], baseline(inputs[2 : n + 2]))
+
+        out: dict = {"current": cur, "inputs": cur_values}
+        for key in cur:
+            out[f"delta_{key}"] = round(cur[key] - prev[key], 1)
+        return out
+
+
+def _latest_value(snaps: list[dict], period: WeekPeriod, field: str) -> int | None:
+    """Último valor capturado dentro da semana; ``None`` se não houve captura."""
+    start, end = period.range
+    value = None
+    for s in snaps:
+        d = s.get("date") or ""
+        if start.isoformat() <= d <= end.isoformat() and s.get(field) is not None:
+            value = s[field]
+    return value

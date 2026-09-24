@@ -350,19 +350,3 @@ class BrowserTaskRunner:
             return
         self.client.send("📨 Aplicando...")
         self._spawn(lambda: self.apply_single(url))
-
-    async def _capture_ssi(self, page) -> None:
-        """Best-effort SSI snapshot after publishing (never fatal)."""
-        try:
-            from src.automation.pages.ssi_page import SSIPage
-            from src.core.use_cases.ssi_tracker import SSITracker
-
-            tracker = SSITracker()
-            if tracker.already_captured_today():
-                return
-            snap = await SSIPage(page).scrape_with_goto()
-            if snap:
-                tracker.save(snap)
-                logger.info(f"SSI captured: total={snap['total']}/100")
-        except Exception as e:
-            logger.warning(f"SSI capture failed (non-fatal): {e}")

@@ -29,7 +29,7 @@ def gather_stats() -> dict:
 
     engagement = metrics.engagement(period)
     autopost = metrics.autopost(period)
-    ssi = metrics.ssi(period)
+    presence = metrics.presence(period)
     connections = metrics.connections(period)
     qa_pending = metrics.qa_pending()
 
@@ -60,7 +60,7 @@ def gather_stats() -> dict:
         "qa_pending": qa_pending,
         "engagement": engagement,
         "autopost": autopost,
-        "ssi": ssi.get("current") if ssi else None,
+        "presence": presence.get("current") if presence else None,
         "profile_views": profile_views,
         "search_appearances": search_appearances,
         "goals": goals,

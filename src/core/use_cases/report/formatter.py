@@ -124,8 +124,8 @@ class ReportFormatter:
             f"{qa_line}"
         )
 
-    def _render_ssi(self, report: dict) -> str:
-        return self._ssi_block(report.get("ssi"))
+    def _render_presence(self, report: dict) -> str:
+        return self._presence_block(report.get("presence"))
 
     def _render_engagement(self, report: dict) -> str:
         return self._engagement_block(report.get("engagement"))
@@ -299,13 +299,14 @@ class ReportFormatter:
         return f"\n\n🎯 <b>Metas (semana):</b>{''.join(lines)}{alert}"
 
     @staticmethod
-    def _ssi_block(ssi: dict | None) -> str:
-        if not ssi or not ssi.get("current"):
-            return "\n\n📈 <b>SSI:</b> — (sem captura esta semana)"
-        cur = ssi["current"]
+    def _presence_block(presence: dict | None) -> str:
+        if not presence or not presence.get("current"):
+            return "\n\n📈 <b>Presença:</b> — (sem atividade esta semana)"
+        cur = presence["current"]
+        raw = presence.get("inputs") or {}
 
         def dstr(key: str) -> str:
-            d = ssi.get(f"delta_{key}")
+            d = presence.get(f"delta_{key}")
             if d is None:
                 return ""
             if d > 0:
@@ -314,24 +315,24 @@ class ReportFormatter:
                 return f" (↓{abs(d)})"
             return " (=)"
 
-        rank_parts = []
-        if cur.get("rank_industry_pct") is not None:
-            rank_parts.append(f"Top {cur['rank_industry_pct']}% no setor")
-        if cur.get("rank_network_pct") is not None:
-            rank_parts.append(f"Top {cur['rank_network_pct']}% na rede")
-        rank_line = f"\n    📊 {' · '.join(rank_parts)}" if rank_parts else ""
+        def n(key: str) -> str:
+            v = raw.get(key)
+            return "—" if v is None else str(v)
 
         return (
-            f"\n\n📈 <b>SSI (Social Selling Index): "
+            f"\n\n📈 <b>Índice de presença: "
             f"{cur['total']}/100{dstr('total')}</b>\n"
-            f"    🏷️ Marca profissional:   {cur['brand']}/25{dstr('brand')}\n"
-            f"    🔍 Pessoas certas:        {cur['find_people']}/25"
-            f"{dstr('find_people')}\n"
-            f"    💡 Interagir c/ insights: {cur['engage_insights']}/25"
-            f"{dstr('engage_insights')}\n"
-            f"    🤝 Relacionamentos:       {cur['relationships']}/25"
+            f"    🏷️ Marca:           {cur['brand']}/25{dstr('brand')}"
+            f"  <i>({n('views')} views 90d, {n('posts')} posts)</i>\n"
+            f"    🔍 Ser encontrado:  {cur['find_people']}/25{dstr('find_people')}"
+            f"  <i>({n('appearances')} aparições, {n('invites')} convites)</i>\n"
+            f"    💡 Engajamento:     {cur['engage_insights']}/25"
+            f"{dstr('engage_insights')}"
+            f"  <i>({n('comments')} coment., {n('shares')} reposts)</i>\n"
+            f"    🤝 Relacionamentos: {cur['relationships']}/25"
             f"{dstr('relationships')}"
-            f"{rank_line}"
+            f"  <i>({n('dms')} DMs, {n('people')} pessoas)</i>\n"
+            f"    <i>12,5/pilar = na sua média de 4 semanas; 25 = o dobro</i>"
         )
 
     @staticmethod
@@ -419,7 +420,7 @@ class ReportFormatter:
 # populate registry after class body (methods can't reference class during definition)
 ReportFormatter._SECTIONS = [
     ("summary", ReportFormatter._render_summary),
-    ("ssi", ReportFormatter._render_ssi),
+    ("presence", ReportFormatter._render_presence),
     ("engagement", ReportFormatter._render_engagement),
     ("autopost", ReportFormatter._render_autopost),
     ("followup", ReportFormatter._render_followup),

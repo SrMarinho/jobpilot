@@ -64,7 +64,7 @@ def _build_html(report: dict) -> str:  # noqa: PLR0912, PLR0914
     ap = report.get("autopost") or {}
     fu = report.get("followup") or {}
     eng = report.get("engagement") or {}
-    ssi_data = report.get("ssi") or {}
+    ssi_data = report.get("presence") or {}
     ssi = ssi_data.get("current") or {}
     goals = report.get("goals") or {}
     failures = report.get("failures") or {}
@@ -161,7 +161,8 @@ def _build_html(report: dict) -> str:  # noqa: PLR0912, PLR0914
     col_a += _card("Por nível", level_body or '<span style="color:#555">—</span>')
     col_a += _card("Top skills", skills_body or '<span style="color:#555">—</span>')
 
-    # ── Col B: SSI + Autopost + Followup ─────────────────────────
+    # ── Col B: Presença + Autopost + Followup ────────────────────
+    # Presença = índice próprio que substituiu o SSI; mesmo formato de dict.
     if ssi:
         total = ssi.get("total", 0)
 
@@ -179,9 +180,9 @@ def _build_html(report: dict) -> str:  # noqa: PLR0912, PLR0914
             f'<div style="margin-top:12px">'
         )
         for comp, label in (
-            ("brand", "Marca profissional"),
-            ("find_people", "Pessoas certas"),
-            ("engage_insights", "Interagir c/ insights"),
+            ("brand", "Marca"),
+            ("find_people", "Ser encontrado"),
+            ("engage_insights", "Engajamento"),
             ("relationships", "Relacionamentos"),
         ):
             v = ssi.get(comp, 0)
@@ -192,17 +193,13 @@ def _build_html(report: dict) -> str:  # noqa: PLR0912, PLR0914
                 f"<span>{label}</span><span>{v}/25{_dstr(comp)}</span></div>"
                 f"{_bar(pct25, '#facc15')}</div>"
             )
-        rank_parts = []
-        if ssi.get("rank_industry_pct") is not None:
-            rank_parts.append(f"Top {ssi['rank_industry_pct']}% setor")
-        if ssi.get("rank_network_pct") is not None:
-            rank_parts.append(f"Top {ssi['rank_network_pct']}% rede")
-        if rank_parts:
-            ssi_body += f'<div style="color:#888;font-size:11px;margin-top:6px">{" · ".join(rank_parts)}</div>'
-        ssi_body += "</div>"
+        ssi_body += (
+            '<div style="color:#888;font-size:11px;margin-top:6px">'
+            "12,5 = na sua média de 4 semanas</div></div>"
+        )
     else:
-        ssi_body = '<span style="color:#555">Sem captura esta semana</span>'
-    col_b = _card("SSI", ssi_body)
+        ssi_body = '<span style="color:#555">Sem atividade esta semana</span>'
+    col_b = _card("Presença", ssi_body)
 
     ap_gen = ap.get("generated", 0)
     ap_aprov = round(ap.get("approved", 0) / ap_gen * 100) if ap_gen else 0

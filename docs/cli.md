@@ -336,11 +336,11 @@ Drafts rejeitados (janela 30d, últimos 2) entram no prompt como exemplo negativ
 
 ### `profile capture`
 
-Captura snapshots de SSI + profile views + aparições em pesquisa. Once-per-day por padrão.
+Captura snapshots de profile views + aparições em pesquisa. Once-per-day por padrão. SSI só com `--ssi` (o LinkedIn descontinuou o SSI; ver índice de presença em `insights report`).
 Sem flags = captura todas as métricas.
 
 ```bash
-uv run main.py profile capture                  # todas (SSI + views + appearances)
+uv run main.py profile capture                  # views + appearances
 uv run main.py profile capture --ssi            # só SSI
 uv run main.py profile capture --views          # só profile views
 uv run main.py profile capture --appearances    # só aparições em pesquisa
@@ -429,7 +429,7 @@ uv run main.py profile appearances list      # histórico de snapshots
 
 ### `insights report`
 
-Relatório semanal com candidaturas, conexões, engagement, autopost, follow-up, SSI, metas, funis de eventos e latência.
+Relatório semanal com candidaturas, conexões, engagement, autopost, follow-up, índice de presença, metas, funis de eventos e latência.
 
 ```bash
 uv run main.py insights report                              # semana atual
@@ -439,11 +439,24 @@ uv run main.py insights report --year 2026                  # resumo anual
 uv run main.py insights report --telegram                   # envia via Telegram
 uv run main.py insights report --scheduled                  # Telegram uma vez por semana
 uv run main.py insights report --only summary,autopost,goals
-uv run main.py insights report --skip ssi,latency
+uv run main.py insights report --skip presence,latency
 uv run main.py insights report --image --telegram           # envia como imagem PNG
 ```
 
-**Seções disponíveis:** `summary`, `ssi`, `engagement`, `autopost`, `followup`, `goals`, `site`, `level`, `rejection`, `skills`, `failures`, `funnels`, `latency`
+**Seções disponíveis:** `summary`, `presence`, `engagement`, `autopost`, `followup`, `goals`, `site`, `level`, `rejection`, `skills`, `failures`, `funnels`, `latency`
+
+**Índice de presença** (`presence`, substitui o SSI que o LinkedIn descontinuou):
+quatro pilares de 0-25, total 0-100, calculados só com dados que o JobPilot já
+registra (`src/core/use_cases/presence_index.py`). Cada métrica é comparada com a
+sua própria média das 4 semanas anteriores: 12,5 num pilar = semana na média,
+25 = o dobro ou mais. Não é comparável com o SSI antigo; serve para tendência.
+
+| Pilar | Métricas (peso) |
+|-------|-----------------|
+| Marca | views do perfil 90d (0,6) · posts publicados (0,4) |
+| Ser encontrado | aparições em pesquisa (0,6) · convites enviados (0,4) |
+| Engajamento | comentários (0,6) · reposts (0,2) · likes (0,2) |
+| Relacionamentos | DMs de follow-up (0,6) · pessoas distintas engajadas (0,4) |
 
 | Flag | Descrição |
 |------|-----------|
@@ -457,7 +470,7 @@ uv run main.py insights report --image --telegram           # envia como imagem 
 
 ### `insights dashboard`
 
-Dashboard TUI ao vivo (textual): candidaturas, engagement, autopost, SSI e
+Dashboard TUI ao vivo (textual): candidaturas, engagement, autopost, presença e
 progresso de metas. `r` atualiza, `q` sai.
 
 ```bash

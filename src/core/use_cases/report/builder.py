@@ -63,7 +63,7 @@ class ReportBuilder:
             "funnels": funnels,
             "job_funnel": job_funnel,
             "latency": latency,
-            "ssi": m.ssi(period),
+            "presence": m.presence(period),
             "prev_applications": prev.get("applications") if prev else None,
             "prev_connections": prev.get("connections") if prev else None,
             "prev_site_applications": (prev.get("site_applications") if prev else None)

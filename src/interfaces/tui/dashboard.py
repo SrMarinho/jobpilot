@@ -1,7 +1,7 @@
 """Dashboard TUI ao vivo (textual).
 
 View read-only do estado do JobPilot: candidaturas, conexões, engagement,
-autopost, SSI e progresso de metas — sem abrir os JSONs na mão. Atualiza
+autopost, índice de presença e progresso de metas — sem abrir os JSONs na mão. Atualiza
 sozinha a cada 30s; tecla 'r' força refresh, 'q' sai.
 """
 
@@ -58,7 +58,7 @@ class DashboardApp(App):
                 yield self.p_engage
             with Horizontal():
                 self.p_autopost = _Panel("📝 Autopost")
-                self.p_ssi = _Panel("📈 SSI")
+                self.p_ssi = _Panel("📈 Presença")
                 yield self.p_autopost
                 yield self.p_ssi
             with Horizontal():
@@ -115,7 +115,7 @@ class DashboardApp(App):
             f"✅ {ap.get('approved', 0)}  ❌ {ap.get('rejected', 0)}  "
             f"⏰ {ap.get('expired', 0)}"
         )
-        ssi = s["ssi"]
+        ssi = s["presence"]
         if ssi:
             self.p_ssi.body = (
                 f"Total: {ssi.get('total', '?')}/100\n"
@@ -124,7 +124,7 @@ class DashboardApp(App):
                 f"🤝 {ssi.get('relationships', '?')}"
             )
         else:
-            self.p_ssi.body = "sem captura esta semana"
+            self.p_ssi.body = "sem atividade esta semana"
 
         pv = s["profile_views"]
         sa = s["search_appearances"]
