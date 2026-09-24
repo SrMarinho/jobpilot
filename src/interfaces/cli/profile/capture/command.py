@@ -19,7 +19,8 @@ def register_profile_capture_command(app: typer.Typer) -> None:
             False, "--appearances", help="Captura apenas aparições em pesquisa"
         ),
     ):
-        """Captura métricas do perfil (SSI, views, aparições). Sem flags = todas."""
+        """Captura métricas do perfil. Sem flags = views + aparições (SSI foi
+        descontinuado pelo LinkedIn; use --ssi para tentar mesmo assim)."""
 
         selected = frozenset(
             m

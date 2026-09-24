@@ -143,7 +143,10 @@ async def run_engage_browser(page: Page, cfg: dict) -> None:
         logger.debug(f"Telegram notify failed (non-fatal): {e}")
 
 
-_ALL_METRICS = frozenset({"ssi", "views", "appearances"})
+# SSI fora do padrão: o LinkedIn descontinuou o acesso ("Seu acesso ao Social
+# Selling Index (SSI) foi descontinuado") e a captura diária só gerava WARNING.
+# Continua disponível explicitamente via ``profile capture --ssi``.
+_ALL_METRICS = frozenset({"views", "appearances"})
 
 
 async def capture_metrics(
@@ -154,7 +157,7 @@ async def capture_metrics(
     """Captura snapshots de métricas do perfil LinkedIn.
 
     ``targets`` filtra quais métricas capturar: ``{"ssi", "views", "appearances"}``.
-    ``None`` (padrão) captura todas. Best-effort: falhas são não-fatais.
+    ``None`` (padrão) captura views e aparições — SSI só se pedido. Best-effort: falhas são não-fatais.
     Once-per-day por métrica (``force=True`` recaptura no mesmo dia).
     """
     active = targets if targets is not None else _ALL_METRICS

@@ -164,6 +164,10 @@ class SSIPage:
             logger.warning(f"SSI page read failed: {e}")
             return None
 
+        if re.search(r"descontinuad|discontinued", text, re.I):
+            logger.info("SSI indisponível: o LinkedIn descontinuou o acesso ao SSI")
+            return None
+
         result = parse_ssi_text(text)
         if result is None:
             self._log_unparsed(text, "conteúdo esperado não encontrado")
