@@ -126,7 +126,17 @@ class ClaudeProvider(ResilientProvider):
             options=ClaudeAgentOptions(max_turns=1, model=model),
         ):
             if isinstance(message, ResultMessage):
-                result = message.result.strip()
+                if message.is_error:
+                    # Sem isto o SDK acaba levantando "error result: success",
+                    # que não diz nada e não casa com nenhum marcador de
+                    # llm_errors — o 429/529 que merecia retry virava falha
+                    # definitiva. O status HTTP vem no próprio ResultMessage.
+                    detail = "; ".join(message.errors or []) or message.result or ""
+                    raise RuntimeError(
+                        f"Claude API error {message.api_error_status or '?'} "
+                        f"({message.subtype}): {detail}".rstrip(": ")
+                    )
+                result = (message.result or "").strip()
         return result
 
 
