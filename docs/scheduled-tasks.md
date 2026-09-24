@@ -15,8 +15,20 @@ Six scheduled tasks, all triggered at user logon:
 | `JobPilot Report` | `.local/startup_report.bat` | Relatório mensal via Telegram (`insights report --scheduled`) |
 | `JobPilot Hired` | `.local/startup_hired.ps1` | Benchmark de skills de contratados + gap/trend (`jobs hired`). **Roda por último** (logon + delay de 1h) |
 
-Há ainda `.local/startup_drain.bat`, que não é tarefa agendada: dreno manual das
-aprovações do Telegram (`content autopost --drain`), sem browser.
+Há ainda a task `JobPilot Drain` (`.local/startup_drain.bat`,
+`jobpilot_drain_task.xml`), que roda **de hora em hora** e é a única sem
+browser. Faz três coisas, nessa ordem:
+
+1. dreno das aprovações do Telegram (`content autopost --drain`);
+2. um job da fila de autoevolução (`config evolve drain`);
+3. varredura de log 1×/dia (`config evolve scan --once-a-day`).
+
+⚠️ O `ExecutionTimeLimit` dessa task é **`PT30M`**, não `PT10M`: o patch da
+autoevolução leva minutos entre LLM, ruff, pytest e smoke, e com dez minutos o
+Agendador cortava no meio deixando worktree órfão. Reimportar um XML antigo
+reintroduz o problema. Ver [Autoevolução](evolution.md).
+
+Os itens 2 e 3 são inertes sem `EVOLVE_ENABLED=true` no `.env`.
 
 > **Ordem "por último":** a task `Hired` usa `LogonTrigger` com `<Delay>PT1H</Delay>`, então
 > dispara 1h após o logon — depois das demais. Mesmo que coincidam, o *browser lock* serializa
