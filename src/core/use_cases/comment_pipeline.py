@@ -1,6 +1,6 @@
 """Pipeline multi-modelo p/ comentário de engage.
 
-Fluxo: Sonnet GERA → Fable REVISA (pontos objetivos de melhoria) → Sonnet
+Fluxo: Sonnet GERA → Opus REVISA (pontos objetivos de melhoria) → Sonnet
 REGERA aplicando os pontos → contagem de palavras em Python → se estourou,
 Haiku COMPRIME para caber no limite. Motivação: o modelo local (qwen3:8b) não
 sabe contar palavras — comentários bons eram rejeitados por "too long" e o
@@ -25,7 +25,7 @@ def count_words(text: str) -> int:
 
 
 class CommentPipeline:
-    """Gera comentário via Sonnet + revisão Fable + compressão Haiku."""
+    """Gera comentário via Sonnet + revisão Opus + compressão Haiku."""
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ class CommentPipeline:
     async def _review(
         self, post_text: str, draft: str, min_words: int, max_words: int
     ) -> str | None:
-        """Fable avalia o rascunho. Retorna ``None`` se aprovado, senão os
+        """Opus avalia o rascunho. Retorna ``None`` se aprovado, senão os
         pontos de melhoria (texto curto, 1 linha por ponto)."""
         prompt = (
             "Você é um revisor sênior de comentários do LinkedIn.\n\n"

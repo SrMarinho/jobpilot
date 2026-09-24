@@ -282,7 +282,7 @@ use `/engage` no bot (human-in-loop).
 Filtros pré-LLM (env): `ENGAGE_AUTHOR_DEV_ONLY=1` (só autor da área de software;
 headline ilegível não bloqueia) e `ENGAGE_QUESTION_ONLY=1` (só post que faz pergunta).
 Comentário usa pipeline multi-modelo (`ENGAGE_GENERATOR_MODEL`/`ENGAGE_REVIEWER_MODEL`/
-`ENGAGE_COMPRESSOR_MODEL`; default Sonnet→Fable→Haiku). Run que engaja 0 posts manda
+`ENGAGE_COMPRESSOR_MODEL`; default Sonnet→Opus 5.5→Haiku). Run que engaja 0 posts manda
 alerta ⚠️ no Telegram (feed esgotado ou filtros bloqueando).
 
 ---
@@ -325,9 +325,9 @@ uv run main.py content autopost --publish <draft_id>      # publica um draft esp
 | `--regen-image <id>` | Regera o card PNG de um draft |
 | `--daily` | Orquestrador diário: publica aprovado, avisa pendente ou gera novo |
 
-**Pipeline multi-modelo (critic loop):** gera → Fable revisa (com o brief como critério) → regera.
+**Pipeline multi-modelo (critic loop):** gera → revisor critica (com o brief como critério) → regera.
 `AUTOPOST_GENERATOR_MODEL` (gera+reescreve) e `AUTOPOST_REVIEWER_MODEL` (critica), ex.:
-`claude-opus-4-8` + `claude-fable-5`. Sem os envs: auto-crítica com o provider único.
+`claude-sonnet-5` + `claude-opus-5-5`. Sem os envs: auto-crítica com o provider único.
 Drafts rejeitados (janela 30d, últimos 2) entram no prompt como exemplo negativo de estilo.
 
 ---

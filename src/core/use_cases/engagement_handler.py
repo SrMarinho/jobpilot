@@ -35,7 +35,7 @@ class EngagementHandler:
         self.user_headline = (
             user_headline or "Software Engineer focado em Python e Node.js"
         )
-        # Pipeline multi-modelo (Sonnet gera → Fable revisa → Haiku comprime).
+        # Pipeline multi-modelo (Sonnet gera → Opus revisa → Haiku comprime).
         # ENGAGE_CLAUDE_PIPELINE=0 desliga e volta ao provider único (self.llm).
         self.pipeline: CommentPipeline | None = (
             CommentPipeline() if engage_settings.claude_pipeline else None
@@ -229,7 +229,7 @@ class EngagementHandler:
     ) -> tuple[str | None, str]:
         """Gera comentário. Retorna ``(texto|None, variant)``.
 
-        Com pipeline ativo (default): Sonnet gera → Fable revisa (pontos
+        Com pipeline ativo (default): Sonnet gera → Opus revisa (pontos
         objetivos) → Sonnet regera → contagem de palavras em Python → Haiku
         comprime se estourar. Sem pipeline: provider único (self.llm).
         """

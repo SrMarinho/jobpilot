@@ -72,12 +72,12 @@ class UserSettings:
 class EngageSettings:
     """Ajustes do engajamento no feed (todos opcionais).
 
-    O pipeline multi-modelo é o padrão: um modelo forte gera o comentário, um
-    barato critica e um mínimo comprime — daí os três defaults distintos.
+    O pipeline multi-modelo é o padrão: um modelo forte gera o comentário, o
+    mais forte critica e um mínimo comprime — daí os três defaults distintos.
     """
 
     GENERATOR_DEFAULT = "claude-sonnet-5"
-    REVIEWER_DEFAULT = "claude-fable-5"
+    REVIEWER_DEFAULT = "claude-opus-5-5"
     COMPRESSOR_DEFAULT = "claude-haiku-4-5-20251001"
 
     @property
