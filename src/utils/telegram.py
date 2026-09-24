@@ -70,6 +70,45 @@ def _retry_after(resp: requests.Response) -> float:
     return min(wait, _MAX_RETRY_AFTER_S) if wait > 0 else 0
 
 
+def _redact(text: str, token: str) -> str:
+    """Tira o token da mensagem: o HTTPError do requests inclui a URL inteira,
+    e a URL da Bot API carrega o token — que ia parar em texto puro no log."""
+    return text.replace(token, "<token>") if token else text
+
+
+def _description(resp: requests.Response) -> str:
+    try:
+        return str(resp.json().get("description", ""))
+    except Exception:
+        return ""
+
+
+_MAX_TEXT = 4096
+
+
+def _repair_400(description: str, json: dict | None, data: dict | None) -> bool:
+    """Ajusta o payload para os 400 que têm conserto. True se mudou algo.
+
+    Repetir um 400 idêntico só dá o mesmo 400; os dois casos recorrentes são
+    HTML que o Telegram não parseia (texto dinâmico com ``<``/``&``) e texto
+    acima do limite de 4096 caracteres.
+    """
+    desc = description.lower()
+    changed = False
+    for payload in (json, data):
+        if not payload:
+            continue
+        if "parse entities" in desc and payload.pop("parse_mode", None):
+            changed = True
+        if "too long" in desc:
+            for key in ("text", "caption"):
+                value = payload.get(key)
+                if isinstance(value, str) and len(value) > _MAX_TEXT - 100:
+                    payload[key] = value[: _MAX_TEXT - 100] + "\n…(cortado)"
+                    changed = True
+    return changed
+
+
 def _post(
     method: str,
     *,
@@ -109,17 +148,31 @@ def _post(
                     )
                     time.sleep(wait)
                     continue
+            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                description = _description(resp)
+                if attempt < _RETRIES - 1 and _repair_400(description, json, data):
+                    logger.warning(
+                        f"Telegram {label}: HTTP {resp.status_code} "
+                        f"({description}), reenviando com payload ajustado"
+                    )
+                    continue
+                logger.warning(
+                    f"Telegram {label} failed: HTTP {resp.status_code} "
+                    f"({description or 'sem descrição'})"
+                )
+                return None
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
+            err = _redact(str(e), token)
             if attempt < _RETRIES - 1:
                 wait = _BACKOFF_S * (2**attempt)
-                logger.warning(f"Telegram {label} falhou ({e}), retry em {wait}s")
+                logger.warning(f"Telegram {label} falhou ({err}), retry em {wait}s")
                 time.sleep(wait)
                 continue
-            logger.warning(f"Telegram {label} failed: {e}")
+            logger.warning(f"Telegram {label} failed: {err}")
         except Exception as e:
-            logger.warning(f"Telegram {label} failed: {e}")
+            logger.warning(f"Telegram {label} failed: {_redact(str(e), token)}")
             break
     return None
 
