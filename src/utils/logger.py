@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -21,10 +22,28 @@ class RunContextFilter(logging.Filter):
         return True
 
 
+# Token do bot do Telegram (``<id numérico>:<35 chars>``). Aparece sempre que
+# uma exceção do requests inclui a URL da Bot API — e a URL carrega o token.
+# Mascarar na saída do formatter cobre qualquer caminho de log, inclusive
+# traceback, sem depender de cada call site lembrar de limpar. Sem ``\b`` na
+# frente: na URL o token vem colado em "bot" (``/bot123:AA…``), e entre "t" e
+# "1" não há fronteira de palavra.
+_TELEGRAM_TOKEN_RE = re.compile(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}")
+
+
+def redact_secrets(text: str) -> str:
+    return _TELEGRAM_TOKEN_RE.sub("<telegram-token>", text)
+
+
+class RedactingFormatter(logging.Formatter):
+    def format(self, record):
+        return redact_secrets(super().format(record))
+
+
 # -------------------------------------------------------------
 # Formatter opcional — elimina quebras de linha nos logs
 # -------------------------------------------------------------
-class SingleLineFormatter(logging.Formatter):
+class SingleLineFormatter(RedactingFormatter):
     def format(self, record):
         msg = super().format(record)
         return msg.replace("\n", " ")
@@ -68,7 +87,7 @@ class CustomLogger:
         file_handler = logging.FileHandler(file_path, mode="a", encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(
-            logging.Formatter(
+            RedactingFormatter(
                 "%(asctime)s - [%(run_id)s] - [%(run_type)s] - %(levelname)s - %(message)s"
             )
         )
