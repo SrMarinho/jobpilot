@@ -147,11 +147,17 @@ class FeedComposerPage:
             return False, ""
         await self.page.wait_for_timeout(1500)
 
-        # 2) editor (textbox com nome "Editor de texto"; fallback: 1º textbox)
+        # 2) editor (textbox com nome "Editor de texto"; fallback: textbox do
+        # diálogo do composer). O fallback era o 1º textbox da PÁGINA — com o
+        # nome do editor mudado, casava a busca "Pesquisar" do topo, que fica
+        # atrás do <dialog> aberto: o clique esperava 8s e morria.
         editor = self.page.get_by_role("textbox", name=_EDITOR_RE)
         try:
             if not await editor.count():
-                editor = self.page.get_by_role("textbox")
+                dialog = self.page.locator("dialog[open], [role='dialog']").last
+                editor = dialog.get_by_role("textbox")
+                if not await editor.count():
+                    editor = dialog.locator("[contenteditable='true']")
             await editor.first.click(timeout=8000)
             await type_like_human(editor.first, text)
         except Exception as e:
