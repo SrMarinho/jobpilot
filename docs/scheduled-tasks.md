@@ -4,16 +4,27 @@ Automate JobPilot to run on every Windows login — no terminal visible, Chrome 
 
 ## Task overview
 
-Six scheduled tasks, all triggered at user logon:
+Duas tarefas agendadas. Tudo que usa browser roda numa **cadeia única e
+sequencial**, a `JobPilot Daily` (`.local/startup_daily.ps1`, diária às 08h,
+`jobpilot_daily_task.xml`). Cada etapa só começa quando a anterior termina:
 
-| Task | Script | What it does |
-|------|--------|-------------|
-| `JobPilot Apply` | `.local/startup_apply.bat` | Busca vagas e candidata (`jobs apply`) |
-| `JobPilot Connect` | `.local/startup_connect.ps1` | Envia convites de conexão (`network connect --scheduled`) |
-| `JobPilot Engage` | `.local/startup_engage.ps1` | Engaja no feed + captura métricas do perfil (`content engage`, `profile capture`) |
-| `JobPilot Autopost` | `.local/startup_autopost.ps1` | Gera post autoral do dia (`content autopost --daily`) |
-| `JobPilot Report` | `.local/startup_report.bat` | Relatório mensal via Telegram (`insights report --scheduled`) |
-| `JobPilot Hired` | `.local/startup_hired.ps1` | Benchmark de skills de contratados + gap/trend (`jobs hired`). **Roda por último** (logon + delay de 1h) |
+| # | Etapa | Script | Dias | What it does |
+|---|-------|--------|------|-------------|
+| 1 | report | `.local/startup_report.bat` | segunda | Relatório mensal via Telegram (`insights report --scheduled`) |
+| 2 | autopost | `.local/startup_autopost.ps1` | ter/sex | Gera post autoral do dia (`content autopost --daily`) |
+| 3 | connect | `.local/startup_connect.ps1` | todo dia | Envia convites de conexão (`network connect --scheduled`) |
+| 4 | apply | `.local/startup_apply.bat` | todo dia | Busca vagas e candidata (`jobs apply`) |
+| 5 | engage | `.local/startup_engage.ps1` | todo dia | Engaja no feed + captura métricas do perfil (`content engage`, `profile capture`) |
+| 6 | hired | `.local/startup_hired.ps1` | sábado | Benchmark de skills de contratados + gap/trend (`jobs hired`) |
+
+Falha numa etapa não interrompe as seguintes; o exit final é 1 se alguma falhou.
+Cada etapa chama o `startup_*` próprio, então o env de provider de cada uma
+continua isolado.
+
+> **Por que cadeia e não uma tarefa por comando:** eram seis tarefas com
+> horário próprio e `StartWhenAvailable`. Com o PC desligado no horário, o
+> Agendador disparava todas as perdidas no mesmo segundo do boot; o apply
+> segurava o browser lock e o engage estourava a espera e morria na fila.
 
 Há ainda a task `JobPilot Drain` (`.local/startup_drain.bat`,
 `jobpilot_drain_task.xml`), que roda **de hora em hora** e é a única sem
@@ -30,11 +41,6 @@ reintroduz o problema. Ver [Autoevolução](evolution.md).
 
 Os itens 2 e 3 são inertes sem `EVOLVE_ENABLED=true` no `.env`.
 
-> **Ordem "por último":** a task `Hired` usa `LogonTrigger` com `<Delay>PT1H</Delay>`, então
-> dispara 1h após o logon — depois das demais. Mesmo que coincidam, o *browser lock* serializa
-> (uma sessão Chrome por vez; quem chega depois aguarda na fila — ver
-> [Browser lock](browser-lock.md)).
->
 > **Provider:** `startup_hired.ps1` seta `LLM_PROVIDER_EVAL=claude` **apenas no escopo do processo**
 > (extração de skills melhor que o ollama local). Não altera o `.env` global.
 
@@ -90,26 +96,15 @@ Run **as Administrator** (schtasks requires elevation). O helper
 .\.local\reimport_tasks.ps1
 ```
 
+O script também apaga as tarefas avulsas antigas (`JobPilot Apply`, `Connect`,
+`Report`, `Autopost`, `Hired`, `Engage`), que viraram etapas da `Daily`.
+
 Ou manualmente:
 
 ```powershell
-# Delete existing (if re-importing)
-schtasks /delete /tn "JobPilot Apply" /f
-schtasks /delete /tn "JobPilot Connect" /f
-schtasks /delete /tn "JobPilot Report" /f
-schtasks /delete /tn "JobPilot Hired" /f
-
-# Import
-schtasks /create /xml ".local\jobpilot_task.xml" /tn "JobPilot Apply"
-schtasks /create /xml ".local\jobpilot_connect_task.xml" /tn "JobPilot Connect"
-schtasks /create /xml ".local\jobpilot_engage_task.xml" /tn "JobPilot Engage"
-schtasks /create /xml ".local\jobpilot_autopost_task.xml" /tn "JobPilot Autopost"
-schtasks /create /xml ".local\jobpilot_report_task.xml" /tn "JobPilot Report"
-schtasks /create /xml ".local\jobpilot_hired_task.xml" /tn "JobPilot Hired"
+schtasks /create /xml ".local\jobpilot_daily_task.xml" /tn "JobPilot Daily"
+schtasks /create /xml ".local\jobpilot_drain_task.xml" /tn "JobPilot Drain"
 ```
-
-> `reimport_tasks.ps1` cobre só Apply/Connect/Report/Hired — Engage e Autopost
-> precisam do `schtasks /create` manual acima.
 
 ### 3. Verify
 
@@ -117,13 +112,14 @@ Open `taskschd.msc`, check under `JobPilot` folder. Right-click each task → Ru
 
 ## Task configuration details
 
-| Setting | Apply | Connect | Engage | Autopost | Report | Hired |
-|---------|-------|---------|--------|----------|--------|-------|
-| Trigger | Logon | Logon | Logon | Logon | Logon | Logon + 1h delay |
-| Time limit | 4 hours | 2 hours | 2 hours | 1 hour | 1 hour | 1 hour |
-| Multiple instances | Ignore | Ignore | Ignore | Ignore | Ignore | Ignore |
-| Battery | Always run | Always run | Always run | Always run | Always run | Always run |
-| Hidden | Yes (PowerShell) | Yes | Yes | Yes | Yes | Yes |
+| Setting | Daily | Drain |
+|---------|-------|-------|
+| Trigger | Diário 08h (+ até 30 min aleatório) | De hora em hora |
+| Time limit | 10 hours (soma das etapas; apply sozinho chega a ~4h) | 30 min |
+| Missed run | `StartWhenAvailable`: roda no boot se o PC estava desligado | idem |
+| Multiple instances | Ignore | Ignore |
+| Battery | Always run | Always run |
+| Hidden | Yes (`run_hidden.vbs`) | Yes |
 
 ## Scheduled mode flags
 

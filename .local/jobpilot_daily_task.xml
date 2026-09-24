@@ -2,25 +2,22 @@
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <CalendarTrigger>
-      <StartBoundary>2026-09-15T10:00:00</StartBoundary>
+      <StartBoundary>2026-09-15T08:00:00</StartBoundary>
       <Enabled>true</Enabled>
       <RandomDelay>PT30M</RandomDelay>
-      <ScheduleByWeek>
-        <DaysOfWeek>
-          <Saturday />
-        </DaysOfWeek>
-        <WeeksInterval>1</WeeksInterval>
-      </ScheduleByWeek>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
     </CalendarTrigger>
   </Triggers>
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_hired.bat"</Arguments>
+      <Arguments>"F:\Documentos\Projetos\Code\jobpilot\.local\run_hidden.vbs" "F:\Documentos\Projetos\Code\jobpilot\.local\startup_daily.bat"</Arguments>
     </Exec>
   </Actions>
   <Settings>
-    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <ExecutionTimeLimit>PT10H</ExecutionTimeLimit>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
@@ -28,6 +25,6 @@
     <Enabled>true</Enabled>
   </Settings>
   <RegistrationInfo>
-    <Description>JobPilot - Benchmark de skills de contratados recentes (sabado 10h)</Description>
+    <Description>JobPilot - Cadeia diaria em sequencia: report (seg), autopost (ter/sex), connect, apply, engage, hired (sab)</Description>
   </RegistrationInfo>
 </Task>

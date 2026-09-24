@@ -7,7 +7,10 @@
 #
 # Os triggers deixaram de ser LogonTrigger: com todos disparando no logon, as
 # tarefas brigavam pelo browser lock, o apply segurava o browser por ~1h e o
-# engage morria na fila. Agora cada uma tem sua janela.
+# engage morria na fila. Janelas por horario tambem nao bastaram: com
+# StartWhenAvailable, PC desligado no horario fazia todas as perdidas
+# dispararem juntas no boot. Agora tudo que usa browser e uma cadeia so
+# (startup_daily.ps1), em sequencia; o drain segue a parte por nao usar browser.
 #
 # Rodar como Administrador:
 #   powershell -ExecutionPolicy Bypass -File .local\reimport_tasks.ps1
@@ -26,17 +29,21 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit 1
 }
 
-# Nome antigo com hifen, criado a mao fora deste script.
-$Legacy = @('JobPilot-Engage')
+# Nomes antigos: o hifenizado criado a mao e as tarefas avulsas que viraram
+# etapas da cadeia diaria.
+$Legacy = @(
+    'JobPilot-Engage',
+    'JobPilot Connect',
+    'JobPilot Report',
+    'JobPilot Autopost',
+    'JobPilot Hired',
+    'JobPilot Apply',
+    'JobPilot Engage'
+)
 
 $Tasks = @(
-    @{ Name = 'JobPilot Connect';  Xml = 'jobpilot_connect_task.xml'  }  # diario 08h
-    @{ Name = 'JobPilot Report';   Xml = 'jobpilot_report_task.xml'   }  # segunda 08h30
-    @{ Name = 'JobPilot Autopost'; Xml = 'jobpilot_autopost_task.xml' }  # ter/sex 09h
-    @{ Name = 'JobPilot Hired';    Xml = 'jobpilot_hired_task.xml'    }  # sabado 10h
-    @{ Name = 'JobPilot Apply';    Xml = 'jobpilot_task.xml'          }  # diario 12h
-    @{ Name = 'JobPilot Engage';   Xml = 'jobpilot_engage_task.xml'   }  # diario 19h
-    @{ Name = 'JobPilot Drain';    Xml = 'jobpilot_drain_task.xml'    }  # de hora em hora
+    @{ Name = 'JobPilot Daily'; Xml = 'jobpilot_daily_task.xml' }  # diario 08h, cadeia em sequencia
+    @{ Name = 'JobPilot Drain'; Xml = 'jobpilot_drain_task.xml' }  # de hora em hora
 )
 
 foreach ($name in $Legacy) {

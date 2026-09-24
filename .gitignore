@@ -66,13 +66,10 @@ temp/
 !.local/startup_engage.ps1
 !.local/run_hidden.vbs
 !.local/run_hidden.ps1
-!.local/jobpilot_task.xml
-!.local/jobpilot_connect_task.xml
-!.local/jobpilot_report_task.xml
-!.local/jobpilot_engage_task.xml
-!.local/jobpilot_autopost_task.xml
-!.local/jobpilot_hired_task.xml
+!.local/jobpilot_daily_task.xml
 !.local/jobpilot_drain_task.xml
+!.local/startup_daily.bat
+!.local/startup_daily.ps1
 !.local/startup_autopost.bat
 !.local/startup_autopost.ps1
 !.local/startup_hired.bat
